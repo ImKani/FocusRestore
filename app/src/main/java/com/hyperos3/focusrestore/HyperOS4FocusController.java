@@ -39,6 +39,9 @@ final class HyperOS4FocusController {
         DisplayItem create(Object notificationEntry);
         HookSettings settings();
         boolean clickNotificationRow(Object notificationEntry, String key);
+        boolean showFocusBanner(View anchor, Object notificationEntry, String key);
+        void onNotificationRemoved(Object notificationEntry, String key);
+        void dismissFocusBanner(String reason);
     }
 
     interface Logger {
@@ -176,6 +179,7 @@ final class HyperOS4FocusController {
             activePipeline = pipeline;
             items.clear();
         }
+        itemFactory.dismissFocusBanner("pipeline-replaced");
         logger.log("OS4 notifPipelineListener=registered activeOwner="
                 + System.identityHashCode(pipeline));
         renderBest();
@@ -247,8 +251,11 @@ final class HyperOS4FocusController {
         if (TextUtils.isEmpty(key)) return;
         synchronized (items) {
             if (owner != activePipeline) return;
+            DisplayItem current = items.get(key);
+            if (current != null && current.notificationEntry != entry) return;
             items.remove(key);
         }
+        itemFactory.onNotificationRemoved(entry, key);
         logger.log("OS4 candidate " + stage + " key=" + key);
         renderBest();
     }
@@ -571,7 +578,8 @@ final class HyperOS4FocusController {
                     + " showFocusDivider=" + settings.showFocusDivider
                     + " tint=0x" + Integer.toHexString(currentTint)
                     + " legacyClick=" + settings.allowFocusClick
-                    + " rowClickFallback=" + settings.notificationRowClickFallback);
+                    + " rowClickFallback=" + settings.notificationRowClickFallback
+                    + " independentFocusBanner=" + settings.independentFocusBanner);
         }
     }
 
@@ -799,6 +807,12 @@ final class HyperOS4FocusController {
         }
     }
 
+    boolean isVisibleFocusRegion(float x, float y, int displayId) {
+        FocusHostView host = focusHost;
+        return host != null && host.content != null && !TextUtils.isEmpty(host.currentItemKey)
+                && FocusScrollToTopGuard.containsVisible(host, x, y, displayId);
+    }
+
     private final class FocusHostView extends FrameLayout {
         private ValueAnimator animator;
         private Runnable pendingAnimation;
@@ -812,6 +826,11 @@ final class HyperOS4FocusController {
         private int contentInsetPx;
         private int maxWidthPx = Integer.MAX_VALUE;
         private boolean blockClicks = true;
+        private boolean bannerClicks;
+        private final int bannerTouchSlop;
+        private float bannerDownX;
+        private float bannerDownY;
+        private boolean bannerGestureCancelled;
         private boolean notificationRowClicks;
         private String currentItemKey;
         private Object currentNotificationEntry;
@@ -819,19 +838,27 @@ final class HyperOS4FocusController {
 
         FocusHostView(Context context) {
             super(context);
+            bannerTouchSlop = android.view.ViewConfiguration.get(context).getScaledTouchSlop();
             setClipChildren(true);
             setClipToPadding(true);
         }
 
         void showContent(View nextContent, DisplayItem item, HookSettings settings) {
-            clearContent();
-            blockClicks = !settings.allowFocusClick;
-            notificationRowClicks = settings.allowFocusClick
+            boolean sameBannerTarget = bannerClicks && settings.independentFocusBanner
+                    && currentNotificationEntry == item.notificationEntry
+                    && TextUtils.equals(currentItemKey, item.key);
+            clearContent(sameBannerTarget);
+            bannerClicks = settings.independentFocusBanner;
+            blockClicks = !settings.allowFocusClick && !bannerClicks;
+            notificationRowClicks = !bannerClicks && settings.allowFocusClick
                     && settings.notificationRowClickFallback;
             currentItemKey = item.key;
             currentNotificationEntry = item.notificationEntry;
             currentContentIntent = item.contentIntent;
-            setClickable(notificationRowClicks);
+            setClickable(bannerClicks || notificationRowClicks);
+            setFocusable(bannerClicks || notificationRowClicks);
+            setContentDescription(bannerClicks ? "展开焦点通知："
+                    + (TextUtils.isEmpty(item.text) ? item.packageName : item.text) : null);
             float density = getResources().getDisplayMetrics().density;
             maxWidthPx = settings.limitWidth
                     ? Math.max(1, Math.round(settings.widthDp * density)) : Integer.MAX_VALUE;
@@ -897,7 +924,7 @@ final class HyperOS4FocusController {
         }
 
         private void bindClick(View target, DisplayItem item, HookSettings settings) {
-            if (!settings.allowFocusClick) return;
+            if (settings.independentFocusBanner || !settings.allowFocusClick) return;
             if (settings.notificationRowClickFallback) {
                 target.setOnClickListener(view -> itemFactory.clickNotificationRow(
                         item.notificationEntry, item.key));
@@ -912,6 +939,15 @@ final class HyperOS4FocusController {
         }
 
         void clearContent() {
+            clearContent(false);
+        }
+
+        private void clearContent(boolean preserveBannerGesture) {
+            if (!preserveBannerGesture) {
+                cancelPendingInputEvents();
+                setPressed(false);
+                bannerGestureCancelled = true;
+            }
             if (pendingAnimation != null) {
                 removeCallbacks(pendingAnimation);
                 pendingAnimation = null;
@@ -930,11 +966,14 @@ final class HyperOS4FocusController {
             currentIcon = null;
             currentIconSizeDp = 0;
             contentInsetPx = 0;
+            bannerClicks = false;
             notificationRowClicks = false;
             currentItemKey = null;
             currentNotificationEntry = null;
             currentContentIntent = null;
             setClickable(false);
+            setFocusable(false);
+            setContentDescription(null);
         }
 
         private void startScroll(boolean bounce) {
@@ -1011,12 +1050,38 @@ final class HyperOS4FocusController {
 
         @Override
         public boolean onInterceptTouchEvent(MotionEvent event) {
-            return blockClicks || notificationRowClicks || super.onInterceptTouchEvent(event);
+            return blockClicks || bannerClicks || notificationRowClicks
+                    || super.onInterceptTouchEvent(event);
         }
 
         @Override
         public boolean onTouchEvent(MotionEvent event) {
             if (blockClicks) return true;
+            if (bannerClicks) {
+                int action = event.getActionMasked();
+                if (action == MotionEvent.ACTION_DOWN) {
+                    bannerDownX = event.getX();
+                    bannerDownY = event.getY();
+                    bannerGestureCancelled = false;
+                } else if (action == MotionEvent.ACTION_CANCEL) {
+                    bannerGestureCancelled = true;
+                } else if (!bannerGestureCancelled
+                        && (action == MotionEvent.ACTION_POINTER_DOWN
+                        || (action == MotionEvent.ACTION_MOVE
+                        && (Math.abs(event.getX() - bannerDownX) > bannerTouchSlop
+                        || Math.abs(event.getY() - bannerDownY) > bannerTouchSlop)))) {
+                    bannerGestureCancelled = true;
+                    MotionEvent cancel = MotionEvent.obtain(event);
+                    cancel.setAction(MotionEvent.ACTION_CANCEL);
+                    try { super.onTouchEvent(cancel); }
+                    finally { cancel.recycle(); }
+                    return true;
+                } else if (bannerGestureCancelled) {
+                    return true;
+                }
+                // Let the host's normal click/accessibility path perform the request.
+                return super.onTouchEvent(event);
+            }
             if (notificationRowClicks) {
                 if (event.getActionMasked() == MotionEvent.ACTION_UP) performClick();
                 return true;
@@ -1026,6 +1091,24 @@ final class HyperOS4FocusController {
 
         @Override
         public boolean performClick() {
+            if (bannerClicks) {
+                super.performClick();
+                Object entry = currentNotificationEntry;
+                String key = currentItemKey;
+                boolean current;
+                synchronized (items) {
+                    DisplayItem item = items.get(key);
+                    current = item != null && item.notificationEntry == entry;
+                }
+                if (current) {
+                    boolean accepted = itemFactory.showFocusBanner(this, entry, key);
+                    logger.log("OS4 independent banner request key=" + key
+                            + " accepted=" + accepted);
+                } else {
+                    logger.log("OS4 independent banner rejected key=" + key + " reason=stale-entry");
+                }
+                return true;
+            }
             if (notificationRowClicks) {
                 super.performClick();
                 if (!itemFactory.clickNotificationRow(currentNotificationEntry, currentItemKey)

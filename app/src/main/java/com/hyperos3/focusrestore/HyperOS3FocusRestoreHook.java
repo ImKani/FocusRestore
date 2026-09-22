@@ -13,6 +13,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Parcelable;
 import android.os.SystemClock;
+import android.service.notification.StatusBarNotification;
 import android.database.Cursor;
 import android.graphics.Rect;
 import android.graphics.Color;
@@ -89,6 +90,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private boolean modeHooksInstalled;
     private int installedHookMode;
     private HyperOS4FocusController os4Controller;
+    private volatile FocusBannerController bannerController;
+    private NativeFocusTemplateRenderer nativeBannerRenderer;
+    private final Set<View> os3PromptViews = Collections.newSetFromMap(new WeakHashMap<>());
     private Handler mainHandler;
     private TextView pendingMarqueeText;
     private Runnable pendingMarqueeRunnable;
@@ -132,13 +136,57 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
         }
         classLoader = lpparam.classLoader;
-        log("entry loaded in " + lpparam.packageName + "/" + lpparam.processName);
+        log("entry loaded in " + lpparam.packageName + "/" + lpparam.processName
+                + " version=" + BuildConfig.VERSION_NAME + " code=" + BuildConfig.VERSION_CODE
+                + " debug=" + BuildConfig.DEBUG + " pid=" + android.os.Process.myPid()
+                + " bannerEngine=native-template-v1");
+        hookNativeBannerPlugin();
         hookApplicationAttach();
         hookDynamicIslandSystemProperty();
         disableDynamicIslandFeatureCache();
         log("loading in " + lpparam.packageName + "/" + lpparam.processName
                 + " awaiting persisted hook mode; default=OS"
                 + FocusRestoreSettings.DEFAULT_HOOK_MODE);
+    }
+
+    private void hookNativeBannerPlugin() {
+        try {
+            nativeBannerRenderer = new NativeFocusTemplateRenderer(
+                    new NativeFocusTemplateRenderer.Logger() {
+                        @Override public void log(String message) {
+                            HyperOS3FocusRestoreHook.this.log(message);
+                        }
+                        @Override public void error(String stage, Throwable throwable) {
+                            HyperOS3FocusRestoreHook.this.error(stage, throwable);
+                        }
+                    }, () -> {
+                        FocusBannerController controller = bannerController;
+                        if (controller != null) controller.onNativeSourceChanged();
+                    }, key -> {
+                        WeakReference<Object> reference = notificationEntries.get(key);
+                        Object entry = reference == null ? null : reference.get();
+                        Object row = getField(entry, "row");
+                        return row instanceof View ? (View) row : null;
+                    });
+            new NativeFocusPluginDiscovery(new NativeFocusPluginDiscovery.Listener() {
+                @Override public void onLoader(ClassLoader loader) {
+                    nativeBannerRenderer.install(loader);
+                }
+                @Override public void onUnloaded(ClassLoader loader) {
+                    FocusBannerController controller = bannerController;
+                    if (controller != null) controller.dismiss("native-plugin-unloaded");
+                    nativeBannerRenderer.onPluginDisconnected(loader);
+                }
+                @Override public void log(String message) {
+                    HyperOS3FocusRestoreHook.this.log(message);
+                }
+                @Override public void error(String stage, Throwable throwable) {
+                    HyperOS3FocusRestoreHook.this.error(stage, throwable);
+                }
+            }).install(classLoader);
+        } catch (Throwable throwable) {
+            error("native banner plugin discovery", throwable);
+        }
     }
 
     private void logCapabilities(int hookMode) {
@@ -187,9 +235,34 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         } else {
             installOS3Hooks();
         }
+        new FocusScrollToTopGuard(this::isVisibleFocusRegion, new FocusScrollToTopGuard.Logger() {
+            @Override public void log(String message) { HyperOS3FocusRestoreHook.this.log(message); }
+            @Override public void error(String stage, Throwable error) {
+                HyperOS3FocusRestoreHook.this.error(stage, error);
+            }
+        }).install(classLoader, installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4);
+    }
+
+    private boolean isVisibleFocusRegion(float x, float y, int displayId) {
+        if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4) {
+            return os4Controller != null && os4Controller.isVisibleFocusRegion(x, y, displayId);
+        }
+        synchronized (os3PromptViews) {
+            for (View prompt : os3PromptViews) {
+                if (prompt == null || getField(prompt, "mData") == null) continue;
+                Object content = getField(prompt, "mContent");
+                Object icon = getField(prompt, "mIcon");
+                if ((content instanceof View && FocusScrollToTopGuard.containsVisible((View) content, x, y, displayId))
+                        || (icon instanceof View && FocusScrollToTopGuard.containsVisible((View) icon, x, y, displayId))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void installOS3Hooks() {
+        hookOS3NotificationRemoval();
         hookShowOnStatusBar();
         hookPromptViewSetData();
         hookFocusedParentParams();
@@ -221,6 +294,23 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     @Override
                     public boolean clickNotificationRow(Object notificationEntry, String key) {
                         return performNotificationRowClick(notificationEntry, key, "OS4");
+                    }
+
+                    @Override
+                    public boolean showFocusBanner(View anchor, Object notificationEntry, String key) {
+                        return showIndependentFocusBanner(anchor, notificationEntry, key, "OS4");
+                    }
+
+                    @Override
+                    public void onNotificationRemoved(Object notificationEntry, String key) {
+                        WeakReference<Object> ref = notificationEntries.get(key);
+                        if (ref == null || ref.get() == notificationEntry) removeBannerNotification(key);
+                    }
+
+                    @Override
+                    public void dismissFocusBanner(String reason) {
+                        FocusBannerController controller = bannerController;
+                        if (controller != null) controller.dismiss(reason);
                     }
                 }, new HyperOS4FocusController.Logger() {
                     @Override
@@ -289,15 +379,171 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    private String notificationEntryKey(Object entry) {
+        if (entry == null) return null;
+        Object key = getField(entry, "key");
+        if (key == null) key = getField(entry, "mKey");
+        if (key instanceof String) return (String) key;
+        Object sbn = notificationEntrySbn(entry);
+        return sbn instanceof android.service.notification.StatusBarNotification
+                ? ((android.service.notification.StatusBarNotification) sbn).getKey() : null;
+    }
+
+    private Object notificationEntrySbn(Object entry) {
+        if (entry == null) return null;
+        Object sbn = getField(entry, "mSbn");
+        return sbn != null ? sbn : getField(entry, "sbn");
+    }
+
     private void rememberNotificationEntry(Object entry) {
         if (entry == null) return;
         try {
-            Object keyValue = XposedHelpers.callMethod(entry, "getKey");
-            if (keyValue instanceof String && !TextUtils.isEmpty((String) keyValue)) {
-                notificationEntries.put((String) keyValue, new WeakReference<>(entry));
+            // OS4 exposes the key as a field; getKey() is absent on the tested ROM.
+            String key = notificationEntryKey(entry);
+            if (TextUtils.isEmpty(key)) return;
+            synchronized (notificationEntries) {
+                notificationEntries.put(key, new WeakReference<>(entry));
+                Iterator<Map.Entry<String, WeakReference<Object>>> it =
+                        notificationEntries.entrySet().iterator();
+                while (notificationEntries.size() > 256 && it.hasNext()) {
+                    it.next();
+                    it.remove();
+                }
+            }
+            FocusBannerController controller = bannerController;
+            if (controller != null) {
+                Object sbn = notificationEntrySbn(entry);
+                if (sbn instanceof android.service.notification.StatusBarNotification) {
+                    android.service.notification.StatusBarNotification notification =
+                            (android.service.notification.StatusBarNotification) sbn;
+                    controller.onNotificationChanged(key, notification);
+                }
             }
         } catch (Throwable throwable) {
             error("remember notification entry", throwable);
+        }
+    }
+
+    private void hookOS3NotificationRemoval() {
+        try {
+            Class<?> eventClass = FocusReflection.findClass(classLoader,
+                    "com.android.systemui.statusbar.notification.collection.notifcollection.EntryRemovedEvent");
+            Set<?> hooks = XposedBridge.hookAllMethods(eventClass, "dispatchToListener",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            Object entry = getField(param.thisObject, "entry");
+                            String key = notificationEntryKey(entry);
+                            if (TextUtils.isEmpty(key)) return;
+                            WeakReference<Object> ref = notificationEntries.get(key);
+                            // A delayed removal must not close a newer same-key entry.
+                            if (ref == null || ref.get() == entry) removeBannerNotification(key);
+                        }
+                    });
+            log("OS3 banner removal hooks=" + hooks.size());
+        } catch (Throwable throwable) {
+            error("OS3 banner notification removal", throwable);
+        }
+    }
+
+    private void removeBannerNotification(String key) {
+        if (TextUtils.isEmpty(key)) return;
+        notificationEntries.remove(key);
+        FocusBannerController controller = bannerController;
+        if (controller != null) controller.onNotificationRemoved(key);
+        if (nativeBannerRenderer != null) nativeBannerRenderer.onNotificationRemoved(key);
+    }
+
+    private boolean showIndependentFocusBanner(View anchor, Object directEntry, String key,
+                                               String mode) {
+        if (TextUtils.isEmpty(key)) {
+            log(mode + " independent banner rejected reason=missing-key");
+            return false;
+        }
+        Object entry = directEntry;
+        if (entry == null) {
+            WeakReference<Object> ref = notificationEntries.get(key);
+            entry = ref == null ? null : ref.get();
+        }
+        FocusData data = inspectExpanded(notificationEntrySbn(entry));
+        return showIndependentFocusBanner(anchor, data, key, mode);
+    }
+
+    private boolean showIndependentFocusBanner(View anchor, FocusData data, String key,
+                                               String mode) {
+        if (!currentSettings.independentFocusBanner) return false;
+        if (mainHandler == null || Looper.myLooper() != mainHandler.getLooper()) {
+            log(mode + " independent banner rejected key=" + key + " reason=thread");
+            return false;
+        }
+        if (data == null || data.notification == null || TextUtils.isEmpty(key)) {
+            log(mode + " independent banner rejected key=" + key + " reason=notification");
+            return false;
+        }
+        try {
+            StatusBarNotification sbn = data.sbn;
+            if (sbn == null) {
+                WeakReference<Object> ref = notificationEntries.get(key);
+                Object candidate = notificationEntrySbn(ref == null ? null : ref.get());
+                if (candidate instanceof StatusBarNotification) sbn = (StatusBarNotification) candidate;
+            }
+            if (sbn == null || !key.equals(sbn.getKey()) || nativeBannerRenderer == null) {
+                log(mode + " native banner rejected key=" + key + " reason=real-sbn-or-renderer-missing");
+                return false;
+            }
+            if (bannerController == null) {
+                bannerController = new FocusBannerController(new FocusBannerController.Logger() {
+                    @Override public void log(String message) {
+                        HyperOS3FocusRestoreHook.this.log(message);
+                    }
+                    @Override public void error(String stage, Throwable throwable) {
+                        HyperOS3FocusRestoreHook.this.error(stage, throwable);
+                    }
+                }, nativeBannerRenderer, this::openBannerNotification);
+            }
+            log(mode + " native banner click key=" + key + " version="
+                    + BuildConfig.VERSION_NAME);
+            return bannerController.show(anchor, key, sbn);
+        } catch (Throwable throwable) {
+            error(mode + " independent banner key=" + key, throwable);
+            return false;
+        }
+    }
+
+    private boolean openBannerNotification(String key, StatusBarNotification expected) {
+        if (mainHandler == null || Looper.myLooper() != mainHandler.getLooper()
+                || TextUtils.isEmpty(key)) return false;
+        WeakReference<Object> reference = notificationEntries.get(key);
+        Object entry = reference == null ? null : reference.get();
+        Object value = notificationEntrySbn(entry);
+        if (!(value instanceof StatusBarNotification)
+                || !key.equals(((StatusBarNotification) value).getKey())
+                || !NativeFocusTemplateRenderer.sameNotification(expected, (StatusBarNotification) value)) {
+            log("banner body click rejected key=" + key + " reason=stale-or-removed-notification");
+            return false;
+        }
+        Object row = getField(entry, "row");
+        if (!(row instanceof View)) {
+            log("banner body click unavailable key=" + key + " reason=row");
+            return false;
+        }
+        try {
+            // OS4 getEntry() delegates to the row injector; OS3 may still expose mEntry.
+            Object boundEntry;
+            try { boundEntry = XposedHelpers.callMethod(row, "getEntry"); }
+            catch (NoSuchMethodError missing) { boundEntry = getField(row, "mEntry"); }
+            if (boundEntry != entry) {
+                log("banner body click rejected key=" + key + " reason=row-rebound");
+                return false;
+            }
+            // Preserve the ROM's notification/keyguard/BAL/menu/group policy. No direct PI fallback.
+            boolean handled = ((View) row).performClick();
+            log("banner body click native-row key=" + key + " handled=" + handled
+                    + "; listener dispatch is not proof of app launch");
+            return handled;
+        } catch (Throwable error) {
+            error("banner body click native-row key=" + key, error);
+            return false;
         }
     }
 
@@ -454,6 +700,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
+                            if (param.thisObject instanceof View) {
+                                synchronized (os3PromptViews) { os3PromptViews.add((View) param.thisObject); }
+                            }
                             FocusData data = inspectBean(param.args[0]);
                             log("after setData "
                                     + (data == null ? "bean=null" : data.summary()));
@@ -526,6 +775,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             + " installedMode=OS" + installedHookMode
                             + "; restart SystemUI or device to apply");
                 }
+            }
+            if (!next.independentFocusBanner) {
+                FocusBannerController controller = bannerController;
+                if (controller != null) controller.dismiss("setting-disabled");
             }
             hasSuccessfulProviderSettings = true;
             logProviderSettingsState(true, null);
@@ -1014,6 +1267,23 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             Object bean = getField(param.thisObject, "mData");
                             FocusData data = inspectBean(bean);
+                            if (currentSettings.independentFocusBanner) {
+                                // Consume this explicit banner action even if the window fails;
+                                // a failed expansion must not unexpectedly open the app.
+                                param.setResult(null);
+                                if (param.thisObject instanceof View && data != null) {
+                                    if (data.notification != null) {
+                                        showIndependentFocusBanner((View) param.thisObject,
+                                                data, data.key, "OS3");
+                                    } else {
+                                        showIndependentFocusBanner((View) param.thisObject,
+                                                (Object) null, data.key, "OS3");
+                                    }
+                                } else {
+                                    log("OS3 independent banner rejected reason=focusData");
+                                }
+                                return;
+                            }
                             if (currentSettings.allowFocusClick) {
                                 if (currentSettings.notificationRowClickFallback
                                         && data != null
@@ -1925,6 +2195,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         if (expanded == null) return null;
         try {
             FocusData data = new FocusData();
+            if (expanded instanceof StatusBarNotification) data.sbn = (StatusBarNotification) expanded;
             data.packageName = notificationPackageName(expanded);
             boolean preMarked = preMarkedIslands.contains(expanded);
             boolean originalFocusField = getBooleanField(expanded, "mIsFocusNotification", false);
@@ -2160,6 +2431,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         RemoteViews contentRv;
         RemoteViews contentNightRv;
         Notification notification;
+        StatusBarNotification sbn;
 
         boolean hasDisplayContent() {
             return hasMainRv || hasBarRv || !TextUtils.isEmpty(ticker)

@@ -24,6 +24,7 @@ final class HookSettings {
     final boolean tintIslandIcon;
     final boolean useSmallIconFallback;
     final boolean notificationRowClickFallback;
+    final boolean independentFocusBanner;
     final String generalSeparator;
     final String sideSeparator;
     final Set<String> islandForcePackages;
@@ -34,7 +35,7 @@ final class HookSettings {
                          boolean allowFocusClick, boolean hideNotificationIcons,
                          boolean showFocusDivider, boolean showIslandIcon,
                          boolean tintIslandIcon, boolean useSmallIconFallback,
-                         boolean notificationRowClickFallback,
+                         boolean notificationRowClickFallback, boolean independentFocusBanner,
                          String generalSeparator,
                          String sideSeparator, Set<String> forcePackages) {
         this.hookMode = FocusRestoreSettings.normalizeHookMode(hookMode);
@@ -54,6 +55,7 @@ final class HookSettings {
         this.tintIslandIcon = tintIslandIcon;
         this.useSmallIconFallback = useSmallIconFallback;
         this.notificationRowClickFallback = notificationRowClickFallback;
+        this.independentFocusBanner = independentFocusBanner;
         this.generalSeparator = InputLimits.limitSeparator(generalSeparator == null
                 ? FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR : generalSeparator);
         this.sideSeparator = InputLimits.limitSeparator(sideSeparator == null
@@ -76,6 +78,7 @@ final class HookSettings {
                 FocusRestoreSettings.DEFAULT_TINT_ISLAND_ICON,
                 FocusRestoreSettings.DEFAULT_USE_SMALL_ICON_FALLBACK,
                 FocusRestoreSettings.DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK,
+                FocusRestoreSettings.DEFAULT_INDEPENDENT_FOCUS_BANNER,
                 FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR, FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR,
                 Collections.<String>emptySet());
     }
@@ -152,13 +155,17 @@ final class HookSettings {
                 SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK)
                 ? cursor.getInt(SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK) != 0
                 : FocusRestoreSettings.DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK;
+        boolean independentFocusBanner = hasValue(cursor, columnCount,
+                SettingsContract.INDEPENDENT_FOCUS_BANNER)
+                ? cursor.getInt(SettingsContract.INDEPENDENT_FOCUS_BANNER) != 0
+                : FocusRestoreSettings.DEFAULT_INDEPENDENT_FOCUS_BANNER;
 
         return new HookSettings(hookMode, limitWidth, widthDp, marqueeDelayMs,
                 compatRetry, marqueeBounce,
                 islandCompat, disableIslandProperty, disableIslandFeatureCache,
                 allowFocusClick, hideNotificationIcons, showFocusDivider,
                 showIslandIcon, tintIslandIcon, useSmallIconFallback,
-                notificationRowClickFallback,
+                notificationRowClickFallback, independentFocusBanner,
                 generalSeparator, sideSeparator, forcePackages);
     }
 
@@ -177,6 +184,7 @@ final class HookSettings {
                 + " expandIslandOnClick=false(deprecated)"
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
+                + " independentFocusBanner=" + independentFocusBanner
                 + " forcePackages=" + islandForcePackages
                 + " islandSeparator=" + displaySeparator(generalSeparator)
                 + " islandSideSeparator=" + displaySeparator(sideSeparator);

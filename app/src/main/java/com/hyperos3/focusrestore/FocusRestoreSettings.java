@@ -32,6 +32,7 @@ public final class FocusRestoreSettings {
     public static final String KEY_EXPAND_ISLAND_ON_CLICK = "expand_island_on_click";
     public static final String KEY_USE_SMALL_ICON_FALLBACK = "use_small_icon_fallback";
     public static final String KEY_NOTIFICATION_ROW_CLICK_FALLBACK = "notification_row_click_fallback";
+    public static final String KEY_INDEPENDENT_FOCUS_BANNER = "independent_focus_banner";
     static final String KEY_HOOK_SETTINGS_READY = "hook_settings_ready";
     static final String KEY_SETTINGS_GENERATION = "settings_generation";
     public static final String PACKAGE_SET_SEPARATOR = "\u001f";
@@ -57,6 +58,7 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_TINT_ISLAND_ICON = true;
     public static final boolean DEFAULT_USE_SMALL_ICON_FALLBACK = false;
     public static final boolean DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK = false;
+    public static final boolean DEFAULT_INDEPENDENT_FOCUS_BANNER = false;
     public static final String DEFAULT_ISLAND_SEPARATOR = "·";
 
     public final int hookMode;
@@ -75,6 +77,7 @@ public final class FocusRestoreSettings {
     public final boolean tintIslandIcon;
     public final boolean useSmallIconFallback;
     public final boolean notificationRowClickFallback;
+    public final boolean independentFocusBanner;
     public final String islandGeneralSeparator;
     public final String islandSideSeparator;
     public final Set<String> islandForcePackages;
@@ -85,7 +88,7 @@ public final class FocusRestoreSettings {
                                  boolean allowFocusClick, boolean hideNotificationIcons,
                                  boolean showFocusDivider, boolean showIslandIcon,
                                  boolean tintIslandIcon, boolean useSmallIconFallback,
-                                 boolean notificationRowClickFallback,
+                                 boolean notificationRowClickFallback, boolean independentFocusBanner,
                                  String islandGeneralSeparator,
                                  String islandSideSeparator,
                                  Set<String> islandForcePackages) {
@@ -105,6 +108,7 @@ public final class FocusRestoreSettings {
         this.tintIslandIcon = tintIslandIcon;
         this.useSmallIconFallback = useSmallIconFallback;
         this.notificationRowClickFallback = notificationRowClickFallback;
+        this.independentFocusBanner = independentFocusBanner;
         this.islandGeneralSeparator = valueOrDefault(islandGeneralSeparator);
         this.islandSideSeparator = valueOrDefault(islandSideSeparator);
         this.islandForcePackages = immutablePackages(islandForcePackages);
@@ -117,7 +121,8 @@ public final class FocusRestoreSettings {
                 DEFAULT_DISABLE_ISLAND_PROPERTY, DEFAULT_DISABLE_ISLAND_FEATURE_CACHE,
                 DEFAULT_ALLOW_FOCUS_CLICK, DEFAULT_HIDE_NOTIFICATION_ICONS,
                 DEFAULT_SHOW_FOCUS_DIVIDER, DEFAULT_SHOW_ISLAND_ICON,
-                DEFAULT_TINT_ISLAND_ICON, DEFAULT_USE_SMALL_ICON_FALLBACK, DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK,
+                DEFAULT_TINT_ISLAND_ICON, DEFAULT_USE_SMALL_ICON_FALLBACK,
+                DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK, DEFAULT_INDEPENDENT_FOCUS_BANNER,
                 DEFAULT_ISLAND_SEPARATOR,
                 DEFAULT_ISLAND_SEPARATOR,
                 Collections.<String>emptySet());
@@ -136,6 +141,7 @@ public final class FocusRestoreSettings {
                                                    boolean tintIslandIcon,
                                                    boolean useSmallIconFallback,
                                                    boolean notificationRowClickFallback,
+                                                   boolean independentFocusBanner,
                                                    String islandGeneralSeparator,
                                                    String islandSideSeparator,
                                                    Set<String> islandForcePackages) {
@@ -144,7 +150,7 @@ public final class FocusRestoreSettings {
                 islandCompat, disableIslandProperty, disableIslandFeatureCache,
                 allowFocusClick, hideNotificationIcons, showFocusDivider,
                 showIslandIcon, tintIslandIcon, useSmallIconFallback,
-                notificationRowClickFallback,
+                notificationRowClickFallback, independentFocusBanner,
                 islandGeneralSeparator, islandSideSeparator, islandForcePackages);
     }
 
@@ -182,6 +188,8 @@ public final class FocusRestoreSettings {
                         DEFAULT_USE_SMALL_ICON_FALLBACK),
                 preferences.getBoolean(KEY_NOTIFICATION_ROW_CLICK_FALLBACK,
                         DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK),
+                preferences.getBoolean(KEY_INDEPENDENT_FOCUS_BANNER,
+                        DEFAULT_INDEPENDENT_FOCUS_BANNER),
                 preferences.getString(KEY_ISLAND_GENERAL_SEPARATOR, legacy),
                 preferences.getString(KEY_ISLAND_SIDE_SEPARATOR, legacy),
                 preferences.getStringSet(KEY_ISLAND_FORCE_PACKAGES, Collections.<String>emptySet()));
@@ -201,6 +209,7 @@ public final class FocusRestoreSettings {
                 + " expandIslandOnClick=false(deprecated)"
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
+                + " independentFocusBanner=" + independentFocusBanner
                 + " forcePackages=" + islandForcePackages
                 + " islandSeparator=" + displaySeparator(islandGeneralSeparator)
                 + " islandSideSeparator=" + displaySeparator(islandSideSeparator);
@@ -229,6 +238,7 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_EXPAND_ISLAND_ON_CLICK, false)
                 .putBoolean(KEY_USE_SMALL_ICON_FALLBACK, useSmallIconFallback)
                 .putBoolean(KEY_NOTIFICATION_ROW_CLICK_FALLBACK, notificationRowClickFallback)
+                .putBoolean(KEY_INDEPENDENT_FOCUS_BANNER, independentFocusBanner)
                 .putString(KEY_ISLAND_GENERAL_SEPARATOR, islandGeneralSeparator)
                 .putString(KEY_ISLAND_SIDE_SEPARATOR, islandSideSeparator)
                 .putString(KEY_ISLAND_SEPARATOR, islandGeneralSeparator)

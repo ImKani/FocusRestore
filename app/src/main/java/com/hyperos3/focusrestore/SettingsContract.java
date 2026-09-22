@@ -23,6 +23,7 @@ final class SettingsContract {
     static final int EXPAND_ISLAND_ON_CLICK = 18;
     static final int USE_SMALL_ICON_FALLBACK = 19;
     static final int NOTIFICATION_ROW_CLICK_FALLBACK = 20;
+    static final int INDEPENDENT_FOCUS_BANNER = 21;
 
     static final String[] COLUMNS = {
             "limit_text_width", "text_width_dp", "marquee_delay_ms", "compat_retry",
@@ -31,8 +32,38 @@ final class SettingsContract {
             "disable_island_property", "disable_island_feature_cache", "marquee_bounce",
             "hook_mode", "hide_notification_icons", "show_focus_divider",
             "show_island_icon", "tint_island_icon", "expand_island_on_click",
-            "use_small_icon_fallback", "notification_row_click_fallback"
+            "use_small_icon_fallback", "notification_row_click_fallback", "independent_focus_banner"
     };
+
+    /** Encode the Provider wire format here so column names and values share one contract. */
+    static Object[] toRow(FocusRestoreSettings settings, String legacySeparator) {
+        return new Object[]{settings.limitWidth ? 1 : 0, settings.widthDp,
+                settings.marqueeDelayMs, settings.compatRetry ? 1 : 0,
+                settings.islandCompat ? 1 : 0, legacySeparator,
+                settings.allowFocusClick ? 1 : 0, settings.islandGeneralSeparator,
+                settings.islandSideSeparator, joinPackages(settings.islandForcePackages),
+                settings.disableIslandProperty ? 1 : 0,
+                settings.disableIslandFeatureCache ? 1 : 0,
+                settings.marqueeBounce ? 1 : 0, settings.hookMode,
+                settings.hideNotificationIcons ? 1 : 0,
+                settings.showFocusDivider ? 1 : 0,
+                settings.showIslandIcon ? 1 : 0,
+                settings.tintIslandIcon ? 1 : 0,
+                0, // Retired expand_island_on_click column remains permanently disabled.
+                settings.useSmallIconFallback ? 1 : 0,
+                settings.notificationRowClickFallback ? 1 : 0,
+                settings.independentFocusBanner ? 1 : 0};
+    }
+
+    private static String joinPackages(java.util.Set<String> packages) {
+        if (packages == null || packages.isEmpty()) return "";
+        StringBuilder result = new StringBuilder();
+        for (String value : packages) {
+            if (result.length() > 0) result.append(FocusRestoreSettings.PACKAGE_SET_SEPARATOR);
+            result.append(value);
+        }
+        return result.toString();
+    }
 
     private SettingsContract() {
     }

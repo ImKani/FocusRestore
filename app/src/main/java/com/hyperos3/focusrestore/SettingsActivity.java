@@ -130,13 +130,14 @@ public final class SettingsActivity extends Activity {
     private Switch tintIslandIconSwitch;
     private Switch useSmallIconFallbackSwitch;
     private Switch notificationRowClickFallbackSwitch;
+    private Switch independentFocusBannerSwitch;
     private EditText generalSeparatorInput;
     private EditText sideSeparatorInput;
     private boolean pendingManual, pendingCompatRetry, pendingMarqueeBounce, pendingIslandCompat,
             pendingDisableIslandProperty, pendingDisableIslandFeatureCache, pendingAllowFocusClick,
             pendingHideNotificationIcons, pendingShowFocusDivider, pendingShowIslandIcon,
             pendingTintIslandIcon, pendingUseSmallIconFallback,
-            pendingNotificationRowClickFallback;
+            pendingNotificationRowClickFallback, pendingIndependentFocusBanner;
     private int pendingHookMode, pendingWidthDp, pendingDelayMs;
     private String pendingGeneralSeparator, pendingSideSeparator;
     private Set<String> pendingForcePackages = new HashSet<>();
@@ -447,6 +448,11 @@ public final class SettingsActivity extends Activity {
 
         root.addView(sectionHeader("点击行为"), matchWrap(dp(8)));
         LinearLayout interactionPanel = panel();
+        independentFocusBannerSwitch = createSwitch("点击焦点展开原生横幅（实验性）");
+        interactionPanel.addView(independentFocusBannerSwitch, matchWrap(dp(4)));
+        interactionPanel.addView(text(
+                "使用系统原生模板显示横幅。默认关闭；开启后优先展开，点击外侧收起。模板兼容性仍需测试。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         allowFocusClickSwitch = createSwitch("旧版：打开通知内容（实验性）");
         notificationRowClickFallbackSwitch = createSwitch(
                 "直接打开失败时模拟通知列表点击（实验性）");
@@ -487,6 +493,7 @@ public final class SettingsActivity extends Activity {
         useSmallIconFallbackSwitch.setChecked(pendingUseSmallIconFallback);
         allowFocusClickSwitch.setChecked(pendingAllowFocusClick);
         notificationRowClickFallbackSwitch.setChecked(pendingNotificationRowClickFallback);
+        independentFocusBannerSwitch.setChecked(pendingIndependentFocusBanner);
         marqueeBounceSwitch.setChecked(pendingMarqueeBounce);
         compatRetrySwitch.setChecked(pendingCompatRetry);
         delaySeekBar.setProgress(pendingDelayMs / 100);
@@ -567,6 +574,7 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.tintIslandIcon", pendingTintIslandIcon);
         outState.putBoolean("m3.useSmallIconFallback", pendingUseSmallIconFallback);
         outState.putBoolean("m3.rowClickFallback", pendingNotificationRowClickFallback);
+        outState.putBoolean("m3.independentFocusBanner", pendingIndependentFocusBanner);
         outState.putString("m3.general", pendingGeneralSeparator);
         outState.putString("m3.side", pendingSideSeparator);
         outState.putStringArrayList("m3.packages", new ArrayList<>(pendingForcePackages));
@@ -596,6 +604,8 @@ public final class SettingsActivity extends Activity {
                 pendingUseSmallIconFallback);
         pendingNotificationRowClickFallback = state.getBoolean("m3.rowClickFallback",
                 pendingNotificationRowClickFallback);
+        pendingIndependentFocusBanner = state.getBoolean("m3.independentFocusBanner",
+                pendingIndependentFocusBanner);
         pendingGeneralSeparator = state.getString("m3.general", pendingGeneralSeparator);
         pendingSideSeparator = state.getString("m3.side", pendingSideSeparator);
         ArrayList<String> packages = state.getStringArrayList("m3.packages");
@@ -662,6 +672,12 @@ public final class SettingsActivity extends Activity {
                 markPending();
             });
         }
+        if (independentFocusBannerSwitch != null) {
+            independentFocusBannerSwitch.setOnCheckedChangeListener((b, c) -> {
+                pendingIndependentFocusBanner = c;
+                markPending();
+            });
+        }
         if (hideNotificationIconsSwitch != null) hideNotificationIconsSwitch.setOnCheckedChangeListener((b, c) -> { pendingHideNotificationIcons = c; markPending(); });
         if (showFocusDividerSwitch != null) showFocusDividerSwitch.setOnCheckedChangeListener((b, c) -> { pendingShowFocusDivider = c; markPending(); });
     }
@@ -688,6 +704,7 @@ public final class SettingsActivity extends Activity {
         setModeSpecificSwitchEnabled(tintIslandIconSwitch, true);
         setModeSpecificSwitchEnabled(useSmallIconFallbackSwitch, pendingIslandCompat);
         setModeSpecificSwitchEnabled(notificationRowClickFallbackSwitch, true);
+        setModeSpecificSwitchEnabled(independentFocusBannerSwitch, true);
     }
 
     private void updateWidthControls() {
@@ -1015,6 +1032,7 @@ public final class SettingsActivity extends Activity {
         pendingTintIslandIcon = settings.tintIslandIcon;
         pendingUseSmallIconFallback = settings.useSmallIconFallback;
         pendingNotificationRowClickFallback = settings.notificationRowClickFallback;
+        pendingIndependentFocusBanner = settings.independentFocusBanner;
         pendingGeneralSeparator = settings.islandGeneralSeparator;
         pendingSideSeparator = settings.islandSideSeparator;
         pendingForcePackages = new HashSet<>(settings.islandForcePackages);
@@ -1034,7 +1052,9 @@ public final class SettingsActivity extends Activity {
                 pendingDisableIslandFeatureCache, pendingAllowFocusClick,
                 pendingHideNotificationIcons, pendingShowFocusDivider,
                 pendingShowIslandIcon, pendingTintIslandIcon,
-                pendingUseSmallIconFallback, pendingNotificationRowClickFallback, pendingGeneralSeparator, pendingSideSeparator, pendingForcePackages);
+                pendingUseSmallIconFallback, pendingNotificationRowClickFallback,
+                pendingIndependentFocusBanner, pendingGeneralSeparator, pendingSideSeparator,
+                pendingForcePackages);
         pendingForcePackages = new HashSet<>(settings.islandForcePackages);
         updateForcePackagesButton();
         long generation;

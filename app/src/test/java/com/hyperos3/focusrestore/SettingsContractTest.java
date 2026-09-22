@@ -15,7 +15,7 @@ public class SettingsContractTest {
                 "disable_island_property", "disable_island_feature_cache", "marquee_bounce",
                 "hook_mode", "hide_notification_icons", "show_focus_divider",
                 "show_island_icon", "tint_island_icon", "expand_island_on_click",
-                "use_small_icon_fallback", "notification_row_click_fallback"
+                "use_small_icon_fallback", "notification_row_click_fallback", "independent_focus_banner"
         }, SettingsContract.COLUMNS);
         assertEquals(13, SettingsContract.HOOK_MODE);
         assertEquals(14, SettingsContract.HIDE_NOTIFICATION_ICONS);
@@ -25,5 +25,6 @@ public class SettingsContractTest {
         assertEquals(18, SettingsContract.EXPAND_ISLAND_ON_CLICK);
         assertEquals(19, SettingsContract.USE_SMALL_ICON_FALLBACK);
         assertEquals(20, SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK);
+        assertEquals(21, SettingsContract.INDEPENDENT_FOCUS_BANNER);
     }
 }

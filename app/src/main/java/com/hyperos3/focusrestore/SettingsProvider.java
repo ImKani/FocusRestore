@@ -9,8 +9,6 @@ import android.database.MatrixCursor;
 import android.net.Uri;
 import android.util.Log;
 
-import java.util.Collections;
-
 public final class SettingsProvider extends ContentProvider {
     private static final String TAG = "HyperOS3FocusRestore";
     static final String AUTHORITY = "com.hyperos3.focusrestore.settings";
@@ -42,21 +40,7 @@ public final class SettingsProvider extends ContentProvider {
         String legacySeparator = preferences.getString(FocusRestoreSettings.KEY_ISLAND_SEPARATOR,
                 FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR);
         MatrixCursor cursor = new MatrixCursor(COLUMNS);
-        cursor.addRow(new Object[]{settings.limitWidth ? 1 : 0, settings.widthDp,
-                settings.marqueeDelayMs, settings.compatRetry ? 1 : 0,
-                settings.islandCompat ? 1 : 0, legacySeparator,
-                settings.allowFocusClick ? 1 : 0, settings.islandGeneralSeparator,
-                settings.islandSideSeparator, joinPackages(settings.islandForcePackages),
-                settings.disableIslandProperty ? 1 : 0,
-                settings.disableIslandFeatureCache ? 1 : 0,
-                settings.marqueeBounce ? 1 : 0, settings.hookMode,
-                settings.hideNotificationIcons ? 1 : 0,
-                settings.showFocusDivider ? 1 : 0,
-                settings.showIslandIcon ? 1 : 0,
-                settings.tintIslandIcon ? 1 : 0,
-                0,
-                settings.useSmallIconFallback ? 1 : 0,
-                settings.notificationRowClickFallback ? 1 : 0});
+        cursor.addRow(SettingsContract.toRow(settings, legacySeparator));
         return cursor;
     }
 
@@ -64,16 +48,6 @@ public final class SettingsProvider extends ContentProvider {
         if (diagnostic.equals(lastDiagnostic)) return;
         lastDiagnostic = diagnostic;
         Log.i(TAG, diagnostic);
-    }
-
-    private static String joinPackages(java.util.Set<String> packages) {
-        if (packages == null || packages.isEmpty()) return "";
-        StringBuilder result = new StringBuilder();
-        for (String value : packages) {
-            if (result.length() > 0) result.append(FocusRestoreSettings.PACKAGE_SET_SEPARATOR);
-            result.append(value);
-        }
-        return result.toString();
     }
 
     @Override public String getType(Uri uri) {
