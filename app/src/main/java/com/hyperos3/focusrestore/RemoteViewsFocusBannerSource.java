@@ -58,6 +58,14 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
     /** The ROM's own corner radius for this shape, used when the blurred fill is unavailable. */
     private static final String FOCUS_RADIUS_NAME = "notification_item_bg_radius";
     private static final int FOCUS_RADIUS_FALLBACK_DP = 24;
+    /**
+     * The height the ROM gives a focus notification's layout: {@code focus_notification_template_base}
+     * sets {@code android:layout_height} to this (75dp in the OS4 plugin). A {@code wrap_content} host
+     * collapses a layout that expects that box — a call banner came out at 52dp instead of 75dp — so it
+     * is applied as a minimum, which still lets taller content expand.
+     */
+    private static final String FOCUS_HEIGHT_NAME = "focus_notify_normal_height";
+    private static final int FOCUS_HEIGHT_FALLBACK_DP = 75;
 
     private final View view;
     private final Context context;
@@ -113,6 +121,13 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
         host.addView(content, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         String background = applyContainerBackground(sysuiContext, host, content);
+        // The ROM measures the application's layout inside a fixed-height box and the layout centres
+        // its own rows and buttons in that box. Giving the height to the host alone left the layout at
+        // its natural, shorter size pinned to the top, so everything inside drifted upwards; the same
+        // minimum has to reach the layout itself for its internal centring to work as it does in the ROM.
+        int focusHeight = focusHeightPx(sysuiContext, packageContext);
+        host.setMinimumHeight(focusHeight);
+        content.setMinimumHeight(focusHeight);
         // Report the full display width; the host clamps it to the safe area for this display.
         DisplayMetrics metrics = sysuiContext.getResources().getDisplayMetrics();
         String label = "remoteviews/" + (useDark ? DARK : LIGHT) + "/" + sbn.getPackageName();
@@ -173,18 +188,31 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
 
     /** The ROM's own corner radius, so a substituted fill keeps the ROM's geometry. */
     private static int focusRadiusPx(Context sysuiContext, Context fallbackContext) {
+        return focusDimenPx(sysuiContext, fallbackContext, FOCUS_RADIUS_NAME, FOCUS_RADIUS_FALLBACK_DP);
+    }
+
+    /** The ROM's focus layout height, so the application's layout is measured in the ROM's own box. */
+    private static int focusHeightPx(Context sysuiContext, Context fallbackContext) {
+        return focusDimenPx(sysuiContext, fallbackContext, FOCUS_HEIGHT_NAME, FOCUS_HEIGHT_FALLBACK_DP);
+    }
+
+    private static int focusDimenPx(Context sysuiContext, Context fallbackContext, String name,
+                                    int fallbackDp) {
         for (String packageName : new String[]{PLUGIN_PACKAGE, "com.android.systemui"}) {
             Resources resources = resourcesFor(sysuiContext, packageName);
             if (resources == null) continue;
             try {
-                int id = resources.getIdentifier(FOCUS_RADIUS_NAME, "dimen", packageName);
-                if (id != 0) return resources.getDimensionPixelSize(id);
+                int id = resources.getIdentifier(name, "dimen", packageName);
+                if (id != 0) {
+                    int px = resources.getDimensionPixelSize(id);
+                    if (px > 0) return px;
+                }
             } catch (Throwable ignored) {
                 // Fall through to the next package.
             }
         }
         float density = fallbackContext.getResources().getDisplayMetrics().density;
-        return Math.round(FOCUS_RADIUS_FALLBACK_DP * density);
+        return Math.round(fallbackDp * density);
     }
 
     private static Resources resourcesFor(Context sysuiContext, String packageName) {
@@ -306,6 +334,7 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
                 + " measuredHeight=" + view.getMeasuredHeight()
                 + " contentBackground=" + describeBackground(content)
                 + " containerBackground=" + containerBackground
+                + " romMinHeight=" + view.getMinimumHeight()
                 + " texts=" + textInventory(content == null ? view : content);
     }
 
