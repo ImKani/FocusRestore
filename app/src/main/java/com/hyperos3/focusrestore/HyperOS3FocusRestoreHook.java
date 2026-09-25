@@ -2402,23 +2402,33 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      */
     private long remainingDisplayMillis(FocusData data) {
         float seconds = currentSettings == null ? 0f : currentSettings.focusMaxDisplaySeconds;
-        if (seconds <= 0f || data == null || data.sbn == null || TextUtils.isEmpty(data.key)) {
+        if (seconds <= 0f || data == null || TextUtils.isEmpty(data.key)) {
             return Long.MAX_VALUE;
         }
         long limit = Math.max(1L, (long) (seconds * 1000f));
+        long postTime = generation(data);
         long[] window;
         synchronized (focusDisplayWindows) {
             window = focusDisplayWindows.get(data.key);
         }
-        if (window == null || window[1] != data.sbn.getPostTime()) return limit;
+        if (window == null || window[1] != postTime) return limit;
         long elapsed = SystemClock.elapsedRealtime() - window[0];
         return elapsed >= limit ? 0L : limit - elapsed;
     }
 
+    /**
+     * The notification generation the display window belongs to. Zero when the expanded object is not
+     * a StatusBarNotification (the ROM's own ExpandedNotification is not), which is the normal case —
+     * requiring a post time there is what used to disable the limit entirely.
+     */
+    private static long generation(FocusData data) {
+        return data == null || data.sbn == null ? 0L : data.sbn.getPostTime();
+    }
+
     private void markFocusDisplayed(FocusData data) {
         float seconds = currentSettings == null ? 0f : currentSettings.focusMaxDisplaySeconds;
-        if (seconds <= 0f || data == null || data.sbn == null || TextUtils.isEmpty(data.key)) return;
-        long postTime = data.sbn.getPostTime();
+        if (seconds <= 0f || data == null || TextUtils.isEmpty(data.key)) return;
+        long postTime = generation(data);
         synchronized (focusDisplayWindows) {
             long[] existing = focusDisplayWindows.get(data.key);
             if (existing != null && existing[1] == postTime) return;
@@ -2595,6 +2605,16 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             FocusData data = new FocusData();
             if (expanded instanceof StatusBarNotification) data.sbn = (StatusBarNotification) expanded;
             data.packageName = notificationPackageName(expanded);
+            // Every key-based decision (the display window, the converted-key set, the click guards)
+            // indexes by this. inspectBean reads it from the bean, but the expanded object is also
+            // inspected directly, and the ROM's ExpandedNotification is not a StatusBarNotification —
+            // so without this the key stayed empty and those decisions were silently inert.
+            if (TextUtils.isEmpty(data.key)) {
+                Object key = invokeNoArg(expanded, "getKey");
+                if (key == null) key = getField(expanded, "key");
+                if (key == null) key = getField(expanded, "mKey");
+                data.key = stringValue(key);
+            }
             boolean preMarked = preMarkedIslands.contains(expanded);
             boolean originalFocusField = getBooleanField(expanded, "mIsFocusNotification", false);
             data.originalFocusField = originalFocusField;

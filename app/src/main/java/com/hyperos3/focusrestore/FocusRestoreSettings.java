@@ -65,8 +65,8 @@ public final class FocusRestoreSettings {
     public static final String DEFAULT_ISLAND_SEPARATOR = "·";
     /** Seconds, so the settings input can accept two decimal places. Zero means unlimited. */
     public static final float DEFAULT_FOCUS_MAX_DISPLAY_SECONDS = 0f;
-    public static final float MIN_FOCUS_MAX_DISPLAY_SECONDS = 0.1f;
-    public static final float MAX_FOCUS_MAX_DISPLAY_SECONDS = 86400f;
+    public static final float MIN_FOCUS_MAX_DISPLAY_SECONDS = 2f;
+    public static final float MAX_FOCUS_MAX_DISPLAY_SECONDS = 3600f;
     public static final int ISLAND_TEXT_MODE_FULL = 0;
     public static final int ISLAND_TEXT_MODE_COMPACT = 1;
     public static final int DEFAULT_ISLAND_TEXT_MODE = ISLAND_TEXT_MODE_FULL;

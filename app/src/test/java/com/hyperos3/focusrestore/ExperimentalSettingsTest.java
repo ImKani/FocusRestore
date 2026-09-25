@@ -204,7 +204,11 @@ public class ExperimentalSettingsTest {
     public void focusDisplayLimitParsesTextAndNormalizesRange() {
         assertEquals(0f, FocusRestoreSettings.parseMaxDisplaySeconds("", 3f), 0.0001f);
         assertEquals(0f, FocusRestoreSettings.parseMaxDisplaySeconds("0", 3f), 0.0001f);
-        assertEquals(0.5f, FocusRestoreSettings.parseMaxDisplaySeconds("0.50", 3f), 0.0001f);
+        // The supported range is 2 - 3600 seconds (up to 60 minutes), so sub-second input is raised
+        // to the minimum rather than being kept.
+        assertEquals(2f, FocusRestoreSettings.MIN_FOCUS_MAX_DISPLAY_SECONDS, 0.0001f);
+        assertEquals(3600f, FocusRestoreSettings.MAX_FOCUS_MAX_DISPLAY_SECONDS, 0.0001f);
+        assertEquals(2f, FocusRestoreSettings.parseMaxDisplaySeconds("0.50", 3f), 0.0001f);
         assertEquals(12.34f, FocusRestoreSettings.parseMaxDisplaySeconds("12.34", 3f), 0.0001f);
         // Out-of-range and unparsable text must never silently disable or blow past the limit.
         assertEquals(FocusRestoreSettings.MIN_FOCUS_MAX_DISPLAY_SECONDS,

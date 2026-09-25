@@ -431,14 +431,14 @@ public final class SettingsActivity extends Activity {
         focusPanel.addView(widthRangeRow, matchWrap(dp(4)));
         hideNotificationIconsSwitch = createSwitch("隐藏其他通知图标（HyperOS 4）");
         focusPanel.addView(text("最大显示时间（秒）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
-        focusMaxDisplayInput = input("0 = 不限制，支持两位小数");
+        focusMaxDisplayInput = input("0 = 不限制，2 - 3600 秒");
         focusMaxDisplayInput.setInputType(InputType.TYPE_CLASS_NUMBER
                 | InputType.TYPE_NUMBER_FLAG_DECIMAL);
         focusMaxDisplayInput.setText(FocusRestoreSettings.formatMaxDisplaySeconds(
                 pendingFocusMaxDisplaySeconds));
         focusPanel.addView(focusMaxDisplayInput, matchWrap(dp(4)));
         focusPanel.addView(text(
-                "0 表示不限制；范围 0.1 - 86400 秒。超过时间只隐藏状态栏焦点，不取消通知。",
+                "0 表示不限制；范围 2 - 3600 秒（最长 60 分钟），支持两位小数。超过时间只隐藏状态栏焦点，不取消通知。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
         showFocusDividerSwitch = createSwitch("显示焦点分隔线（HyperOS 4）");
         focusPanel.addView(hideNotificationIconsSwitch, matchWrap(dp(4)));
