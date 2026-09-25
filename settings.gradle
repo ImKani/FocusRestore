@@ -9,3 +9,6 @@ dependencyResolutionManagement {
 }
 rootProject.name = "FocusRestore"
 include(":app")
+// Local test helper: posts focus/island notifications with the real field payloads so the module
+// can be exercised repeatedly without waiting for a genuine travel notification.
+include(":testnotifier")

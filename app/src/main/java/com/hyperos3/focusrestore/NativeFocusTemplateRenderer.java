@@ -3,16 +3,15 @@ package com.hyperos3.focusrestore;
 import android.app.Notification;
 import android.content.Context;
 import android.graphics.Outline;
-import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.service.notification.StatusBarNotification;
-import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
+import android.widget.RemoteViews;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
@@ -45,6 +44,11 @@ final class NativeFocusTemplateRenderer {
     interface Logger {
         void log(String message);
         void error(String stage, Throwable error);
+        /**
+         * Verbose diagnostics. The no-op default keeps existing implementations and test doubles
+         * source-compatible, so adding this channel never forces unrelated callers to change.
+         */
+        default void debug(String message) { }
     }
 
     private static final String FACTORY =
@@ -60,7 +64,6 @@ final class NativeFocusTemplateRenderer {
     private static final String NOTIFICATION_R = "com.android.systemui.miui.notification.R$";
     private static final String QUICKSETTINGS_R = "miui.systemui.quicksettings.common.R$";
     private static final String ISLAND_R = "miui.systemui.dynamicisland.R$";
-    private static final String FOCUS_PARAM = "miui.focus.param";
     private static final String BACKGROUND = "moduleBackground";
     private static final String[] ADAPTER_FIELDS = {
             "islandAdapter", "islandFakeAdapter", "focusAdapter", "focusDarkAdapter",
@@ -95,7 +98,11 @@ final class NativeFocusTemplateRenderer {
     void install(ClassLoader pluginLoader) {
         if (pluginLoader == null) return;
         synchronized (lock) {
-            if (installations.containsKey(pluginLoader)) return;
+            if (installations.containsKey(pluginLoader)) {
+                debug("native renderer install skipped loader=" + identity(pluginLoader)
+                        + " reason=already-installed");
+                return;
+            }
             Installation installation = new Installation(pluginLoader);
             try {
                 Class<?> factoryClass = load(pluginLoader, FACTORY);
@@ -104,6 +111,9 @@ final class NativeFocusTemplateRenderer {
                         load(pluginLoader, CONTENT), load(pluginLoader, CALLBACK));
                 standard.setAccessible(true);
                 installations.put(pluginLoader, installation);
+                debug("native renderer contract resolved " + FACTORY + "#createStandardTemplateView("
+                        + TEMPLATE + ",StatusBarNotification,boolean," + CONTENT + "," + CALLBACK
+                        + ") loader=" + identity(pluginLoader));
                 installation.hooks.addAll(XposedBridge.hookAllConstructors(factoryClass,
                         new XC_MethodHook() {
                             @Override protected void afterHookedMethod(MethodHookParam param) {
@@ -152,11 +162,20 @@ final class NativeFocusTemplateRenderer {
 
     void onNotificationRemoved(String key) {
         if (key == null) return;
+        boolean hadSource;
+        boolean firstRemoval;
         synchronized (lock) {
-            sources.remove(key);
+            hadSource = sources.remove(key) != null;
             // Reject a late coroutine completing an old post after its notification was removed.
+            firstRemoval = !removedKeys.containsKey(key);
             removedKeys.put(key, System.currentTimeMillis());
             trim(removedKeys, MAX_SOURCES);
+        }
+        // A key without a cached template is often removed many times in one burst; logging every
+        // repeat would bury the interesting lines without adding information.
+        if (hadSource || firstRemoval) {
+            debug("native source dropped key=" + key + " hadCachedTemplate=" + hadSource
+                    + " firstRemoval=" + firstRemoval + " removedKeys=" + removedKeys.size());
         }
     }
 
@@ -194,12 +213,16 @@ final class NativeFocusTemplateRenderer {
             pruneSources();
             Long removedAt = removedKeys.get(key);
             if (removedAt != null && requested.postTime <= removedAt) {
-                throw unavailable("notification was removed; refusing a late native source");
+                throw unavailable("notification was removed; refusing a late native source"
+                        + " (postTime=" + requested.postTime + " removedAt=" + removedAt + ")");
             }
             source = sources.get(key);
         }
         if (source == null || !source.installation.connected) {
-            throw unavailable("no observed native V3 template for this key; await normal plugin inflation");
+            throw unavailable("no observed native V3 template for this key; await normal plugin inflation"
+                    + " (paramKey=" + requested.paramKey + ", "
+                    + (source == null ? "cache-miss" : "loader-disconnected") + ", "
+                    + observedSummary() + ")" + customFocusHint(sbn));
         }
         if (!source.stamp.identity.matches(requested.identity)) {
             throw unavailable("native model/SBN identity is stale (key/package/user/uid/postTime/params); "
@@ -323,17 +346,36 @@ final class NativeFocusTemplateRenderer {
                          StatusBarNotification sbn, boolean isFlip) throws Exception {
         Stamp stamp = Stamp.read(sbn);
         // The area-A-empty callback is successful too, but has no standard Builder to reuse.
-        if (mapValue(factory, "templateMap", stamp.key) != template
-                || mapValue(factory, "builderMap", stamp.key) == null) return;
+        Object observedTemplate = mapValue(factory, "templateMap", stamp.key);
+        Object observedBuilder = mapValue(factory, "builderMap", stamp.key);
+        if (observedTemplate != template || observedBuilder == null) {
+            debug("native source ignored key=" + stamp.key + " postTime=" + stamp.postTime
+                    + " reason=" + (observedTemplate != template ? "templateMap-mismatch"
+                    : "builderMap-absent")
+                    + " (area-A-empty callback keeps no reusable standard Builder)");
+            return;
+        }
         rememberFactory(installation, factory);
         boolean firstReady;
         synchronized (lock) {
-            if (!installation.connected) return;
+            if (!installation.connected) {
+                debug("native source ignored key=" + stamp.key
+                        + " reason=loader-disconnected");
+                return;
+            }
             Long removedAt = removedKeys.get(stamp.key);
-            if (removedAt != null && stamp.postTime <= removedAt) return;
+            if (removedAt != null && stamp.postTime <= removedAt) {
+                debug("native source ignored key=" + stamp.key + " postTime=" + stamp.postTime
+                        + " reason=posted-before-removal removedAt=" + removedAt);
+                return;
+            }
             Source previous = sources.get(stamp.key);
             if (previous != null && previous.installation == installation
-                    && previous.stamp.postTime > stamp.postTime) return;
+                    && previous.stamp.postTime > stamp.postTime) {
+                debug("native source ignored key=" + stamp.key + " postTime=" + stamp.postTime
+                        + " reason=older-than-cached cachedPostTime=" + previous.stamp.postTime);
+                return;
+            }
             firstReady = previous == null || previous.installation != installation;
             removedKeys.remove(stamp.key);
             pruneSources();
@@ -342,6 +384,7 @@ final class NativeFocusTemplateRenderer {
         }
         if (firstReady) {
             log("native source-ready key=" + stamp.key + " postTime=" + stamp.postTime
+                    + " paramKey=" + stamp.paramKey
                     + " source=normal-V3-template isFlip=" + isFlip);
         }
         notifySourceChanged();
@@ -362,6 +405,48 @@ final class NativeFocusTemplateRenderer {
             }
         }
         // No scan/bootstrap from builder.lastSbn: native updates do not always refresh that field.
+    }
+
+    /**
+     * Explains the architectural case behind a cache miss. The ROM's {@code hasCustomFocusView}
+     * checks {@code miui.focus.rv}, and a notification that carries it is rendered by
+     * {@code FocusNotifPreHandler.buildNoParamsFocusNotification} through the custom-RemoteViews
+     * path, which never calls {@code TemplateFactoryV3.createStandardTemplateView}. Such a
+     * notification therefore has no standard V3 template to observe, no matter how long we wait.
+     */
+    private static String customFocusHint(StatusBarNotification sbn) {
+        try {
+            Notification notification = sbn == null ? null : sbn.getNotification();
+            Bundle extras = notification == null ? null : notification.extras;
+            if (extras == null) return "";
+            boolean customRemoteViews = extras.getParcelable("miui.focus.rv") instanceof RemoteViews
+                    || extras.getParcelable("miui.focus.rvNight") instanceof RemoteViews;
+            boolean standardParam = extras.getString(FocusParamKeys.PRIMARY) != null;
+            if (customRemoteViews && !standardParam) {
+                return "; custom-RemoteViews focus notification (miui.focus.rv present, "
+                        + FocusParamKeys.PRIMARY + " absent) uses the plugin's custom-view path,"
+                        + " which never produces a standard V3 template";
+            }
+        } catch (Throwable ignored) { }
+        return "";
+    }
+
+    /**
+     * Bounded snapshot of the cached template keys. Answers "was this notification ever observed?"
+     * from the failure line itself instead of needing a second run with extra instrumentation.
+     */
+    private String observedSummary() {
+        synchronized (lock) {
+            if (sources.isEmpty()) return "observedKeys=0";
+            StringBuilder text = new StringBuilder("observedKeys=").append(sources.size()).append('[');
+            int index = 0;
+            for (String observed : sources.keySet()) {
+                if (index > 0) text.append(',');
+                if (++index > 8) { text.append(",..."); break; }
+                text.append(observed);
+            }
+            return text.append(']').toString();
+        }
     }
 
     private void pruneSources() {
@@ -470,7 +555,7 @@ final class NativeFocusTemplateRenderer {
         throw new NoSuchMethodException("owned adapter CoroutineScope cancellation contract missing");
     }
 
-    static final class Render {
+    static final class Render implements FocusBannerSource {
         final View view;
         final Context context;
         final int widthPx;
@@ -510,13 +595,26 @@ final class NativeFocusTemplateRenderer {
             this.body = body;
         }
 
-        String layoutSummary() {
+        @Override public View view() { return view; }
+        @Override public Context context() { return context; }
+        @Override public int widthPx() { return widthPx; }
+        @Override public int minHeightPx() { return minHeightPx; }
+        @Override public String source() { return source; }
+
+        @Override
+        public boolean isCurrent(StatusBarNotification actual) {
+            return owner.isCurrent(this, actual);
+        }
+
+        @Override
+        public String layoutSummary() {
             return "sizing=wrap-content wrapperHeight=" + view.getHeight()
                     + " bodyHeight=" + body.getHeight() + " bodyMeasured=" + body.getMeasuredHeight()
                     + " bodyMin=" + body.getMinimumHeight();
         }
 
-        void onAttached() {
+        @Override
+        public void onAttached() {
             if (closed.get()) return;
             if (Looper.myLooper() != Looper.getMainLooper()) {
                 owner.report("native render attach", new IllegalStateException("main thread required"));
@@ -538,7 +636,8 @@ final class NativeFocusTemplateRenderer {
             });
         }
 
-        void close() {
+        @Override
+        public void close() {
             if (!closed.compareAndSet(false, true)) return;
             Runnable cleanup = () -> {
                 if (timerSession != null) {
@@ -587,11 +686,13 @@ final class NativeFocusTemplateRenderer {
     private static final class Stamp {
         final String key;
         final long postTime;
+        final String paramKey;
         final NativeFocusSourceIdentity identity;
 
-        private Stamp(StatusBarNotification sbn, String focusParam) {
+        private Stamp(StatusBarNotification sbn, String focusParam, String paramKey) {
             key = sbn.getKey();
             postTime = sbn.getPostTime();
+            this.paramKey = paramKey;
             identity = new NativeFocusSourceIdentity(key, sbn.getPackageName(), sbn.getUid(),
                     userIdentifier(sbn), postTime, focusParam);
         }
@@ -609,11 +710,14 @@ final class NativeFocusTemplateRenderer {
                 throw unavailable("real StatusBarNotification identity missing");
             }
             Notification notification = sbn.getNotification();
-            String param = notification.extras == null ? null : notification.extras.getString(FOCUS_PARAM);
+            Bundle extras = notification.extras;
+            FocusParamKeys.ValueSource source = extras == null ? null : extras::get;
+            String param = FocusParamKeys.pick(source);
             if (param == null || param.isEmpty()) {
-                throw unavailable("notification has no native V3 focus parameters");
+                throw unavailable("notification has no native V3 focus parameters ("
+                        + FocusParamKeys.describe(source) + ")");
             }
-            return new Stamp(sbn, param);
+            return new Stamp(sbn, param, FocusParamKeys.pickKey(source));
         }
     }
 
@@ -872,6 +976,12 @@ final class NativeFocusTemplateRenderer {
         if (main == null || Looper.myLooper() != main) throw unavailable("main thread required");
     }
 
+    /** Short loader identity for diagnostics; never null. */
+    private static String identity(ClassLoader loader) {
+        return loader == null ? "null" : loader.getClass().getSimpleName() + '@'
+                + Integer.toHexString(System.identityHashCode(loader));
+    }
+
     private static <T> void trim(LinkedHashMap<String, T> map, int maximum) {
         while (map.size() > maximum) map.remove(map.keySet().iterator().next());
     }
@@ -886,6 +996,11 @@ final class NativeFocusTemplateRenderer {
 
     private void log(String message) {
         try { logger.log(message); }
+        catch (Throwable ignored) { }
+    }
+
+    private void debug(String message) {
+        try { logger.debug(message); }
         catch (Throwable ignored) { }
     }
 

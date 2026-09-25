@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Set;
 
 /** Centralized persisted settings and compatibility defaults. */
@@ -33,6 +34,8 @@ public final class FocusRestoreSettings {
     public static final String KEY_USE_SMALL_ICON_FALLBACK = "use_small_icon_fallback";
     public static final String KEY_NOTIFICATION_ROW_CLICK_FALLBACK = "notification_row_click_fallback";
     public static final String KEY_INDEPENDENT_FOCUS_BANNER = "independent_focus_banner";
+    public static final String KEY_ISLAND_TEXT_MODE = "island_text_mode";
+    public static final String KEY_FOCUS_MAX_DISPLAY_SECONDS = "focus_max_display_seconds";
     static final String KEY_HOOK_SETTINGS_READY = "hook_settings_ready";
     static final String KEY_SETTINGS_GENERATION = "settings_generation";
     public static final String PACKAGE_SET_SEPARATOR = "\u001f";
@@ -60,6 +63,13 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK = false;
     public static final boolean DEFAULT_INDEPENDENT_FOCUS_BANNER = false;
     public static final String DEFAULT_ISLAND_SEPARATOR = "·";
+    /** Seconds, so the settings input can accept two decimal places. Zero means unlimited. */
+    public static final float DEFAULT_FOCUS_MAX_DISPLAY_SECONDS = 0f;
+    public static final float MIN_FOCUS_MAX_DISPLAY_SECONDS = 0.1f;
+    public static final float MAX_FOCUS_MAX_DISPLAY_SECONDS = 86400f;
+    public static final int ISLAND_TEXT_MODE_FULL = 0;
+    public static final int ISLAND_TEXT_MODE_COMPACT = 1;
+    public static final int DEFAULT_ISLAND_TEXT_MODE = ISLAND_TEXT_MODE_FULL;
 
     public final int hookMode;
     public final boolean limitWidth;
@@ -78,80 +88,156 @@ public final class FocusRestoreSettings {
     public final boolean useSmallIconFallback;
     public final boolean notificationRowClickFallback;
     public final boolean independentFocusBanner;
+    public final int islandTextMode;
+    public final float focusMaxDisplaySeconds;
     public final String islandGeneralSeparator;
     public final String islandSideSeparator;
     public final Set<String> islandForcePackages;
 
-    private FocusRestoreSettings(int hookMode, boolean limitWidth, int widthDp, int marqueeDelayMs,
-                                 boolean compatRetry, boolean marqueeBounce, boolean islandCompat,
-                                 boolean disableIslandProperty, boolean disableIslandFeatureCache,
-                                 boolean allowFocusClick, boolean hideNotificationIcons,
-                                 boolean showFocusDivider, boolean showIslandIcon,
-                                 boolean tintIslandIcon, boolean useSmallIconFallback,
-                                 boolean notificationRowClickFallback, boolean independentFocusBanner,
-                                 String islandGeneralSeparator,
-                                 String islandSideSeparator,
-                                 Set<String> islandForcePackages) {
-        this.hookMode = normalizeHookMode(hookMode);
-        this.limitWidth = limitWidth;
-        this.widthDp = clamp(widthDp, MIN_WIDTH_DP, MAX_WIDTH_DP);
-        this.marqueeDelayMs = clamp(marqueeDelayMs, 0, 5000);
-        this.compatRetry = compatRetry;
-        this.marqueeBounce = marqueeBounce;
-        this.islandCompat = islandCompat;
-        this.disableIslandProperty = disableIslandProperty;
-        this.disableIslandFeatureCache = disableIslandFeatureCache;
-        this.allowFocusClick = allowFocusClick;
-        this.hideNotificationIcons = hideNotificationIcons;
-        this.showFocusDivider = showFocusDivider;
-        this.showIslandIcon = showIslandIcon;
-        this.tintIslandIcon = tintIslandIcon;
-        this.useSmallIconFallback = useSmallIconFallback;
-        this.notificationRowClickFallback = notificationRowClickFallback;
-        this.independentFocusBanner = independentFocusBanner;
-        this.islandGeneralSeparator = valueOrDefault(islandGeneralSeparator);
-        this.islandSideSeparator = valueOrDefault(islandSideSeparator);
-        this.islandForcePackages = immutablePackages(islandForcePackages);
+    private FocusRestoreSettings(Editor editor) {
+        this.hookMode = normalizeHookMode(editor.hookMode);
+        this.limitWidth = editor.limitWidth;
+        this.widthDp = clamp(editor.widthDp, MIN_WIDTH_DP, MAX_WIDTH_DP);
+        this.marqueeDelayMs = clamp(editor.marqueeDelayMs, 0, 5000);
+        this.compatRetry = editor.compatRetry;
+        this.marqueeBounce = editor.marqueeBounce;
+        this.islandCompat = editor.islandCompat;
+        this.disableIslandProperty = editor.disableIslandProperty;
+        this.disableIslandFeatureCache = editor.disableIslandFeatureCache;
+        this.allowFocusClick = editor.allowFocusClick;
+        this.hideNotificationIcons = editor.hideNotificationIcons;
+        this.showFocusDivider = editor.showFocusDivider;
+        this.showIslandIcon = editor.showIslandIcon;
+        this.tintIslandIcon = editor.tintIslandIcon;
+        this.useSmallIconFallback = editor.useSmallIconFallback;
+        this.notificationRowClickFallback = editor.notificationRowClickFallback;
+        this.independentFocusBanner = editor.independentFocusBanner;
+        this.islandTextMode = normalizeIslandTextMode(editor.islandTextMode);
+        this.focusMaxDisplaySeconds = normalizeMaxDisplaySeconds(editor.focusMaxDisplaySeconds);
+        this.islandGeneralSeparator = valueOrDefault(editor.islandGeneralSeparator);
+        this.islandSideSeparator = valueOrDefault(editor.islandSideSeparator);
+        this.islandForcePackages = immutablePackages(editor.islandForcePackages);
+    }
+
+    /**
+     * Named-field editor for this immutable snapshot.
+     *
+     * <p>The previous API took twenty-two positional arguments, so a forgotten or swapped value
+     * still compiled and silently produced a wrong snapshot; naming every field makes that class of
+     * mistake impossible.
+     */
+    public static final class Editor {
+        private int hookMode = DEFAULT_HOOK_MODE;
+        private boolean limitWidth = DEFAULT_LIMIT_WIDTH;
+        private int widthDp = DEFAULT_WIDTH_DP;
+        private int marqueeDelayMs = DEFAULT_MARQUEE_DELAY_MS;
+        private boolean compatRetry = DEFAULT_COMPAT_RETRY;
+        private boolean marqueeBounce = DEFAULT_MARQUEE_BOUNCE;
+        private boolean islandCompat = DEFAULT_ISLAND_COMPAT;
+        private boolean disableIslandProperty = DEFAULT_DISABLE_ISLAND_PROPERTY;
+        private boolean disableIslandFeatureCache = DEFAULT_DISABLE_ISLAND_FEATURE_CACHE;
+        private boolean allowFocusClick = DEFAULT_ALLOW_FOCUS_CLICK;
+        private boolean hideNotificationIcons = DEFAULT_HIDE_NOTIFICATION_ICONS;
+        private boolean showFocusDivider = DEFAULT_SHOW_FOCUS_DIVIDER;
+        private boolean showIslandIcon = DEFAULT_SHOW_ISLAND_ICON;
+        private boolean tintIslandIcon = DEFAULT_TINT_ISLAND_ICON;
+        private boolean useSmallIconFallback = DEFAULT_USE_SMALL_ICON_FALLBACK;
+        private boolean notificationRowClickFallback = DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK;
+        private boolean independentFocusBanner = DEFAULT_INDEPENDENT_FOCUS_BANNER;
+        private int islandTextMode = DEFAULT_ISLAND_TEXT_MODE;
+        private float focusMaxDisplaySeconds = DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
+        private String islandGeneralSeparator = DEFAULT_ISLAND_SEPARATOR;
+        private String islandSideSeparator = DEFAULT_ISLAND_SEPARATOR;
+        private Set<String> islandForcePackages = Collections.emptySet();
+
+        private Editor() {
+        }
+
+        private Editor(FocusRestoreSettings source) {
+            this.hookMode = source.hookMode;
+            this.limitWidth = source.limitWidth;
+            this.widthDp = source.widthDp;
+            this.marqueeDelayMs = source.marqueeDelayMs;
+            this.compatRetry = source.compatRetry;
+            this.marqueeBounce = source.marqueeBounce;
+            this.islandCompat = source.islandCompat;
+            this.disableIslandProperty = source.disableIslandProperty;
+            this.disableIslandFeatureCache = source.disableIslandFeatureCache;
+            this.allowFocusClick = source.allowFocusClick;
+            this.hideNotificationIcons = source.hideNotificationIcons;
+            this.showFocusDivider = source.showFocusDivider;
+            this.showIslandIcon = source.showIslandIcon;
+            this.tintIslandIcon = source.tintIslandIcon;
+            this.useSmallIconFallback = source.useSmallIconFallback;
+            this.notificationRowClickFallback = source.notificationRowClickFallback;
+            this.independentFocusBanner = source.independentFocusBanner;
+            this.islandTextMode = source.islandTextMode;
+            this.focusMaxDisplaySeconds = source.focusMaxDisplaySeconds;
+            this.islandGeneralSeparator = source.islandGeneralSeparator;
+            this.islandSideSeparator = source.islandSideSeparator;
+            this.islandForcePackages = source.islandForcePackages;
+        }
+
+        public Editor hookMode(int value) { this.hookMode = value; return this; }
+        public Editor limitWidth(boolean value) { this.limitWidth = value; return this; }
+        public Editor widthDp(int value) { this.widthDp = value; return this; }
+        public Editor marqueeDelayMs(int value) { this.marqueeDelayMs = value; return this; }
+        public Editor compatRetry(boolean value) { this.compatRetry = value; return this; }
+        public Editor marqueeBounce(boolean value) { this.marqueeBounce = value; return this; }
+        public Editor islandCompat(boolean value) { this.islandCompat = value; return this; }
+        public Editor disableIslandProperty(boolean value) {
+            this.disableIslandProperty = value; return this;
+        }
+        public Editor disableIslandFeatureCache(boolean value) {
+            this.disableIslandFeatureCache = value; return this;
+        }
+        public Editor allowFocusClick(boolean value) { this.allowFocusClick = value; return this; }
+        public Editor hideNotificationIcons(boolean value) {
+            this.hideNotificationIcons = value; return this;
+        }
+        public Editor showFocusDivider(boolean value) { this.showFocusDivider = value; return this; }
+        public Editor showIslandIcon(boolean value) { this.showIslandIcon = value; return this; }
+        public Editor tintIslandIcon(boolean value) { this.tintIslandIcon = value; return this; }
+        public Editor useSmallIconFallback(boolean value) {
+            this.useSmallIconFallback = value; return this;
+        }
+        public Editor notificationRowClickFallback(boolean value) {
+            this.notificationRowClickFallback = value; return this;
+        }
+        public Editor independentFocusBanner(boolean value) {
+            this.independentFocusBanner = value; return this;
+        }
+        public Editor islandTextMode(int value) { this.islandTextMode = value; return this; }
+        public Editor focusMaxDisplaySeconds(float value) {
+            this.focusMaxDisplaySeconds = value; return this;
+        }
+        public Editor islandGeneralSeparator(String value) {
+            this.islandGeneralSeparator = value; return this;
+        }
+        public Editor islandSideSeparator(String value) {
+            this.islandSideSeparator = value; return this;
+        }
+        public Editor islandForcePackages(Set<String> value) {
+            this.islandForcePackages = value; return this;
+        }
+
+        public FocusRestoreSettings build() {
+            return new FocusRestoreSettings(this);
+        }
+    }
+
+    /** An editor pre-filled with the compatibility defaults. */
+    public static Editor edit() {
+        return new Editor();
+    }
+
+    /** An editor pre-filled with an existing snapshot. */
+    public static Editor edit(FocusRestoreSettings source) {
+        return new Editor(source);
     }
 
     public static FocusRestoreSettings defaults() {
-        return new FocusRestoreSettings(DEFAULT_HOOK_MODE, DEFAULT_LIMIT_WIDTH, DEFAULT_WIDTH_DP,
-                DEFAULT_MARQUEE_DELAY_MS, DEFAULT_COMPAT_RETRY, DEFAULT_MARQUEE_BOUNCE,
-                DEFAULT_ISLAND_COMPAT,
-                DEFAULT_DISABLE_ISLAND_PROPERTY, DEFAULT_DISABLE_ISLAND_FEATURE_CACHE,
-                DEFAULT_ALLOW_FOCUS_CLICK, DEFAULT_HIDE_NOTIFICATION_ICONS,
-                DEFAULT_SHOW_FOCUS_DIVIDER, DEFAULT_SHOW_ISLAND_ICON,
-                DEFAULT_TINT_ISLAND_ICON, DEFAULT_USE_SMALL_ICON_FALLBACK,
-                DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK, DEFAULT_INDEPENDENT_FOCUS_BANNER,
-                DEFAULT_ISLAND_SEPARATOR,
-                DEFAULT_ISLAND_SEPARATOR,
-                Collections.<String>emptySet());
-    }
-
-    public static FocusRestoreSettings withValues(int hookMode, boolean limitWidth, int widthDp,
-                                                   int marqueeDelayMs,
-                                                   boolean compatRetry, boolean marqueeBounce,
-                                                   boolean islandCompat,
-                                                   boolean disableIslandProperty,
-                                                   boolean disableIslandFeatureCache,
-                                                   boolean allowFocusClick,
-                                                   boolean hideNotificationIcons,
-                                                   boolean showFocusDivider,
-                                                   boolean showIslandIcon,
-                                                   boolean tintIslandIcon,
-                                                   boolean useSmallIconFallback,
-                                                   boolean notificationRowClickFallback,
-                                                   boolean independentFocusBanner,
-                                                   String islandGeneralSeparator,
-                                                   String islandSideSeparator,
-                                                   Set<String> islandForcePackages) {
-        return new FocusRestoreSettings(hookMode, limitWidth, widthDp, marqueeDelayMs,
-                compatRetry, marqueeBounce,
-                islandCompat, disableIslandProperty, disableIslandFeatureCache,
-                allowFocusClick, hideNotificationIcons, showFocusDivider,
-                showIslandIcon, tintIslandIcon, useSmallIconFallback,
-                notificationRowClickFallback, independentFocusBanner,
-                islandGeneralSeparator, islandSideSeparator, islandForcePackages);
+        return edit().build();
     }
 
     public static SharedPreferences hookPreferences(Context context) {
@@ -169,30 +255,42 @@ public final class FocusRestoreSettings {
 
     public static FocusRestoreSettings fromPreferences(SharedPreferences preferences) {
         String legacy = preferences.getString(KEY_ISLAND_SEPARATOR, DEFAULT_ISLAND_SEPARATOR);
-        return new FocusRestoreSettings(
-                preferences.getInt(KEY_HOOK_MODE, DEFAULT_HOOK_MODE),
-                preferences.getBoolean(KEY_LIMIT_WIDTH, DEFAULT_LIMIT_WIDTH),
-                preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_DP),
-                preferences.getInt(KEY_MARQUEE_DELAY_MS, DEFAULT_MARQUEE_DELAY_MS),
-                preferences.getBoolean(KEY_COMPAT_RETRY, DEFAULT_COMPAT_RETRY),
-                preferences.getBoolean(KEY_MARQUEE_BOUNCE, DEFAULT_MARQUEE_BOUNCE),
-                 preferences.getBoolean(KEY_ISLAND_COMPAT, DEFAULT_ISLAND_COMPAT),
-                preferences.getBoolean(KEY_DISABLE_ISLAND_PROPERTY, DEFAULT_DISABLE_ISLAND_PROPERTY),
-                preferences.getBoolean(KEY_DISABLE_ISLAND_FEATURE_CACHE, DEFAULT_DISABLE_ISLAND_FEATURE_CACHE),
-                preferences.getBoolean(KEY_ALLOW_FOCUS_CLICK, DEFAULT_ALLOW_FOCUS_CLICK),
-                preferences.getBoolean(KEY_HIDE_NOTIFICATION_ICONS, DEFAULT_HIDE_NOTIFICATION_ICONS),
-                preferences.getBoolean(KEY_SHOW_FOCUS_DIVIDER, DEFAULT_SHOW_FOCUS_DIVIDER),
-                preferences.getBoolean(KEY_SHOW_ISLAND_ICON, DEFAULT_SHOW_ISLAND_ICON),
-                preferences.getBoolean(KEY_TINT_ISLAND_ICON, DEFAULT_TINT_ISLAND_ICON),
-                preferences.getBoolean(KEY_USE_SMALL_ICON_FALLBACK,
-                        DEFAULT_USE_SMALL_ICON_FALLBACK),
-                preferences.getBoolean(KEY_NOTIFICATION_ROW_CLICK_FALLBACK,
-                        DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK),
-                preferences.getBoolean(KEY_INDEPENDENT_FOCUS_BANNER,
-                        DEFAULT_INDEPENDENT_FOCUS_BANNER),
-                preferences.getString(KEY_ISLAND_GENERAL_SEPARATOR, legacy),
-                preferences.getString(KEY_ISLAND_SIDE_SEPARATOR, legacy),
-                preferences.getStringSet(KEY_ISLAND_FORCE_PACKAGES, Collections.<String>emptySet()));
+        return edit()
+                .hookMode(preferences.getInt(KEY_HOOK_MODE, DEFAULT_HOOK_MODE))
+                .limitWidth(preferences.getBoolean(KEY_LIMIT_WIDTH, DEFAULT_LIMIT_WIDTH))
+                .widthDp(preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_DP))
+                .marqueeDelayMs(preferences.getInt(KEY_MARQUEE_DELAY_MS, DEFAULT_MARQUEE_DELAY_MS))
+                .compatRetry(preferences.getBoolean(KEY_COMPAT_RETRY, DEFAULT_COMPAT_RETRY))
+                .marqueeBounce(preferences.getBoolean(KEY_MARQUEE_BOUNCE, DEFAULT_MARQUEE_BOUNCE))
+                .islandCompat(preferences.getBoolean(KEY_ISLAND_COMPAT, DEFAULT_ISLAND_COMPAT))
+                .disableIslandProperty(preferences.getBoolean(KEY_DISABLE_ISLAND_PROPERTY,
+                        DEFAULT_DISABLE_ISLAND_PROPERTY))
+                .disableIslandFeatureCache(preferences.getBoolean(KEY_DISABLE_ISLAND_FEATURE_CACHE,
+                        DEFAULT_DISABLE_ISLAND_FEATURE_CACHE))
+                .allowFocusClick(preferences.getBoolean(KEY_ALLOW_FOCUS_CLICK,
+                        DEFAULT_ALLOW_FOCUS_CLICK))
+                .hideNotificationIcons(preferences.getBoolean(KEY_HIDE_NOTIFICATION_ICONS,
+                        DEFAULT_HIDE_NOTIFICATION_ICONS))
+                .showFocusDivider(preferences.getBoolean(KEY_SHOW_FOCUS_DIVIDER,
+                        DEFAULT_SHOW_FOCUS_DIVIDER))
+                .showIslandIcon(preferences.getBoolean(KEY_SHOW_ISLAND_ICON,
+                        DEFAULT_SHOW_ISLAND_ICON))
+                .tintIslandIcon(preferences.getBoolean(KEY_TINT_ISLAND_ICON,
+                        DEFAULT_TINT_ISLAND_ICON))
+                .useSmallIconFallback(preferences.getBoolean(KEY_USE_SMALL_ICON_FALLBACK,
+                        DEFAULT_USE_SMALL_ICON_FALLBACK))
+                .notificationRowClickFallback(preferences.getBoolean(
+                        KEY_NOTIFICATION_ROW_CLICK_FALLBACK,
+                        DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK))
+                .independentFocusBanner(preferences.getBoolean(KEY_INDEPENDENT_FOCUS_BANNER,
+                        DEFAULT_INDEPENDENT_FOCUS_BANNER))
+                .islandTextMode(preferences.getInt(KEY_ISLAND_TEXT_MODE, DEFAULT_ISLAND_TEXT_MODE))
+                .focusMaxDisplaySeconds(readMaxDisplaySeconds(preferences))
+                .islandGeneralSeparator(preferences.getString(KEY_ISLAND_GENERAL_SEPARATOR, legacy))
+                .islandSideSeparator(preferences.getString(KEY_ISLAND_SIDE_SEPARATOR, legacy))
+                .islandForcePackages(preferences.getStringSet(KEY_ISLAND_FORCE_PACKAGES,
+                        Collections.<String>emptySet()))
+                .build();
     }
 
     String describe() {
@@ -210,6 +308,8 @@ public final class FocusRestoreSettings {
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
                 + " independentFocusBanner=" + independentFocusBanner
+                + " islandTextMode=" + islandTextMode
+                + " focusMaxDisplaySeconds=" + focusMaxDisplaySeconds
                 + " forcePackages=" + islandForcePackages
                 + " islandSeparator=" + displaySeparator(islandGeneralSeparator)
                 + " islandSideSeparator=" + displaySeparator(islandSideSeparator);
@@ -239,6 +339,8 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_USE_SMALL_ICON_FALLBACK, useSmallIconFallback)
                 .putBoolean(KEY_NOTIFICATION_ROW_CLICK_FALLBACK, notificationRowClickFallback)
                 .putBoolean(KEY_INDEPENDENT_FOCUS_BANNER, independentFocusBanner)
+                .putInt(KEY_ISLAND_TEXT_MODE, islandTextMode)
+                .putFloat(KEY_FOCUS_MAX_DISPLAY_SECONDS, focusMaxDisplaySeconds)
                 .putString(KEY_ISLAND_GENERAL_SEPARATOR, islandGeneralSeparator)
                 .putString(KEY_ISLAND_SIDE_SEPARATOR, islandSideSeparator)
                 .putString(KEY_ISLAND_SEPARATOR, islandGeneralSeparator)
@@ -246,6 +348,66 @@ public final class FocusRestoreSettings {
                 .putLong(KEY_SETTINGS_GENERATION, Math.max(0L, generation))
                 .putBoolean(KEY_HOOK_SETTINGS_READY, true)
                 .commit();
+    }
+
+    static int normalizeIslandTextMode(int value) {
+        return value == ISLAND_TEXT_MODE_COMPACT ? ISLAND_TEXT_MODE_COMPACT : ISLAND_TEXT_MODE_FULL;
+    }
+
+    /**
+     * True when an activity state snapshot predates the last committed write, so replaying it would
+     * resurrect values the user already replaced.
+     */
+    static boolean snapshotIsStale(long snapshotGeneration, long persistedGeneration) {
+        return snapshotGeneration >= 0L && persistedGeneration > snapshotGeneration;
+    }
+
+    /** True when a snapshot holds changes that never reached the store. */
+    static boolean snapshotNeedsReplay(long snapshotGeneration, long persistedGeneration) {
+        return snapshotGeneration >= 0L && persistedGeneration < snapshotGeneration;
+    }
+
+    /** Zero keeps the unlimited behaviour; anything else is clamped and rounded to two decimals. */
+    static float normalizeMaxDisplaySeconds(float value) {
+        if (Float.isNaN(value) || value <= 0f) return DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
+        float clamped = Math.min(MAX_FOCUS_MAX_DISPLAY_SECONDS,
+                Math.max(MIN_FOCUS_MAX_DISPLAY_SECONDS, value));
+        return Math.round(clamped * 100f) / 100f;
+    }
+
+    /** Text as typed in the settings field; empty means unlimited, invalid text keeps the fallback. */
+    static float parseMaxDisplaySeconds(String text, float fallback) {
+        if (text == null) return fallback;
+        String trimmed = text.trim();
+        if (trimmed.length() == 0) return DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
+        try {
+            return normalizeMaxDisplaySeconds(Float.parseFloat(trimmed));
+        } catch (NumberFormatException invalid) {
+            return fallback;
+        }
+    }
+
+    static String formatMaxDisplaySeconds(float seconds) {
+        float normalized = normalizeMaxDisplaySeconds(seconds);
+        if (normalized <= 0f) return "0";
+        if (normalized == Math.round(normalized)) return String.valueOf(Math.round(normalized));
+        String text = String.format(Locale.US, "%.2f", normalized);
+        while (text.endsWith("0")) text = text.substring(0, text.length() - 1);
+        if (text.endsWith(".")) text = text.substring(0, text.length() - 1);
+        return text;
+    }
+
+    /**
+     * Reads the persisted value without assuming its boxed type so a value written by an older
+     * build (int) or a hand-edited preference (string) cannot crash the settings screen.
+     */
+    static float readMaxDisplaySeconds(SharedPreferences preferences) {
+        Object raw = preferences.getAll().get(KEY_FOCUS_MAX_DISPLAY_SECONDS);
+        if (raw instanceof Number) return normalizeMaxDisplaySeconds(((Number) raw).floatValue());
+        if (raw instanceof String) {
+            return parseMaxDisplaySeconds((String) raw, DEFAULT_FOCUS_MAX_DISPLAY_SECONDS);
+        }
+        return DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
     }
 
     private static Set<String> immutablePackages(Set<String> packages) {

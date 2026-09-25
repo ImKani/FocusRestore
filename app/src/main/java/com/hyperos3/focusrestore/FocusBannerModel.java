@@ -174,7 +174,11 @@ final class FocusBannerModel {
         JSONObject big = object(island, "bigIslandArea");
         title = firstIslandTitle(big, "imageTextInfoLeft");
         if (!empty(title)) return title;
-        return firstIslandTitle(big, "imageTextInfoRight");
+        title = firstIslandTitle(big, "imageTextInfoRight");
+        if (!empty(title)) return title;
+        // Some ROM payloads label the island on bigIslandArea.textInfo instead of a side area.
+        return firstText(firstObject(big, "textInfo", "miui.focus.paramtextInfo"),
+                "title", "frontTitle", "content");
     }
 
     private static String firstIslandTitle(JSONObject area, String key) {
@@ -212,8 +216,13 @@ final class FocusBannerModel {
         addFields(text, step, "title", "content", "subContent", "step");
         addStepText(text, step);
 
-        addFields(text, data, "content", "subContent", "aodTitle");
+        addFields(text, data, "content", "subContent");
         addIslandText(text, firstObject(data, "param_island", "paramIsland"));
+        // aodTitle is the always-on-display label, not the focus body. In the field sample it
+        // duplicated the island title ("检票口 检票口"), so use it only when nothing else was found.
+        if (text.isEmpty()) {
+            addFields(text, data, "aodTitle");
+        }
     }
 
     private static void addIslandText(TextCollector text, JSONObject island) {
@@ -224,6 +233,8 @@ final class FocusBannerModel {
         addIslandSideText(text, big, "imageTextInfoLeft");
         addIslandSideText(text, big, "imageTextInfoRight");
         addFields(text, big, "title", "content", "subContent");
+        JSONObject bigText = firstObject(big, "textInfo", "miui.focus.paramtextInfo");
+        addFields(text, bigText, "frontTitle", "title", "content", "subContent");
 
         JSONObject small = firstObject(island, "smallIslandArea", "smallIsland");
         addFields(text, small, "title", "frontTitle", "content", "subContent");

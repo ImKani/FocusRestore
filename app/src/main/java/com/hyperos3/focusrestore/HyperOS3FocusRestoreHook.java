@@ -14,13 +14,13 @@ import android.os.Looper;
 import android.os.Parcelable;
 import android.os.SystemClock;
 import android.service.notification.StatusBarNotification;
-import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import org.json.JSONObject;
-import android.net.Uri;
 import android.text.TextUtils;
 import android.util.Log;
 import android.widget.RemoteViews;
@@ -35,6 +35,7 @@ import java.lang.ref.WeakReference;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -53,8 +54,28 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     // OS3 rejects the legacy miui.focus.rv when used as contentRemoteViews.
     private static final boolean FALLBACK_MAIN_RV_FOR_STATUS_BAR = false;
-    // Let HyperOS own the prompt lifecycle; forcing true leaves stale icons after clicks.
-    private static final boolean FORCE_SHOULD_SHOW = false;
+
+    /** Verbose diagnostics are debug-build only; see {@link #debug(String)}. */
+    private static final boolean VERBOSE_LOG = BuildConfig.DEBUG;
+    /** Cap on remembered notification keys for one-shot extras diagnosis. */
+    private static final int MAX_DIAGNOSED_KEYS = 64;
+    /** Insertion-ordered so eviction drops the oldest diagnosed key first. */
+    private final Set<String> diagnosedExtrasKeys =
+            Collections.newSetFromMap(new LinkedHashMap<String, Boolean>());
+    /**
+     * Island text most recently applied to each prompt view. {@code updateRemoteViews} runs on every
+     * layout pass (the marquee animation alone causes many), so this lets a repeat pass skip both the
+     * payload re-parse and the redundant view writes.
+     */
+    private final Map<Object, String> appliedIslandTexts = new WeakHashMap<>();
+    /**
+     * Notification keys whose focus prompt this module has already forced visible once. Forcing
+     * {@code shouldShow} on every false leaves a stale icon after the user clicks the prompt, so the
+     * override is deliberately one-shot: it pushes the converted notification onto the status bar and
+     * then hands the prompt lifecycle back to HyperOS.
+     */
+    private final Set<String> forcedShouldShowKeys = Collections.synchronizedSet(new LinkedHashSet<>());
+    private static final int MAX_FORCED_SHOULD_SHOW_KEYS = 64;
 
     private static final long SETTINGS_REFRESH_INTERVAL_MS = 1000L;
     private static final long CONVERTED_KEY_TTL_MS = 10L * 60L * 1000L;
@@ -118,9 +139,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Collections.synchronizedMap(new WeakHashMap<>());
     private final Map<View, Map<View, Integer>> remoteViewsHiddenContainers =
             Collections.synchronizedMap(new WeakHashMap<>());
+    /** Which notification the containers were hidden for, so a leaked hide can name itself. */
+    private final Map<View, String> remoteViewsHiddenKeys =
+            Collections.synchronizedMap(new WeakHashMap<>());
     private final LinkedHashMap<String, Long> convertedNotificationKeys =
             new LinkedHashMap<>(16, 0.75f, true);
     private final Map<String, WeakReference<Object>> notificationEntries =
+            Collections.synchronizedMap(new LinkedHashMap<>());
+    /** key -> {displayStartElapsedRealtime, notificationPostTime} for the display limit. */
+    private final Map<String, long[]> focusDisplayWindows =
             Collections.synchronizedMap(new LinkedHashMap<>());
 
     @Override
@@ -158,6 +185,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         }
                         @Override public void error(String stage, Throwable throwable) {
                             HyperOS3FocusRestoreHook.this.error(stage, throwable);
+                        }
+                        @Override public void debug(String message) {
+                            HyperOS3FocusRestoreHook.debug(message);
                         }
                     }, () -> {
                         FocusBannerController controller = bannerController;
@@ -279,11 +309,29 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             error("installOS4Hooks", new IllegalStateException("SystemUI context unavailable"));
             return;
         }
+        synchronized (focusDisplayWindows) {
+            focusDisplayWindows.clear();
+        }
         os4Controller = new HyperOS4FocusController(classLoader, context,
                 new HyperOS4FocusController.ItemFactory() {
                     @Override
                     public HyperOS4FocusController.DisplayItem create(Object notificationEntry) {
                         return createOS4DisplayItem(notificationEntry);
+                    }
+
+                    @Override
+                    public boolean isExpired(Object notificationEntry) {
+                        return remainingDisplayMillis(notificationEntry) == 0L;
+                    }
+
+                    @Override
+                    public long expiryRemainingMillis(Object notificationEntry) {
+                        return remainingDisplayMillis(notificationEntry);
+                    }
+
+                    @Override
+                    public void onDisplayed(Object notificationEntry) {
+                        markFocusDisplayed(inspectExpanded(notificationEntrySbn(notificationEntry)));
                     }
 
                     @Override
@@ -303,6 +351,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
                     @Override
                     public void onNotificationRemoved(Object notificationEntry, String key) {
+                        forgetFocusDisplay(key);
                         WeakReference<Object> ref = notificationEntries.get(key);
                         if (ref == null || ref.get() == notificationEntry) removeBannerNotification(key);
                     }
@@ -501,6 +550,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     }
                 }, nativeBannerRenderer, this::openBannerNotification);
             }
+            Notification bannerNotification = sbn.getNotification();
+            Bundle bannerExtras = bannerNotification == null ? null : bannerNotification.extras;
+            FocusParamKeys.ValueSource bannerValues =
+                    bannerExtras == null ? null : bannerExtras::get;
+            debug(mode + " native banner preflight key=" + key + " postTime=" + sbn.getPostTime()
+                    + " " + FocusParamKeys.describe(bannerValues)
+                    + " " + focusExtrasInventory(bannerExtras));
             log(mode + " native banner click key=" + key + " version="
                     + BuildConfig.VERSION_NAME);
             return bannerController.show(anchor, key, sbn);
@@ -630,6 +686,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             if (!currentSettings.islandCompat) return;
                             FocusData data = inspectExpanded(param.args[0]);
+                            if (isFocusDisplayExpired(data)) {
+                                clearPreMark(param.args[0], true);
+                                log("focus display limit reached before show key="
+                                        + (data == null ? "null" : data.key));
+                                return;
+                            }
                             IslandText islandText = (data != null && shouldConvert(data))
                                     ? extractIslandContent(data) : null;
                             if (islandText != null && !TextUtils.isEmpty(islandText.text)) {
@@ -651,6 +713,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         protected void afterHookedMethod(MethodHookParam param) {
                             FocusData data = inspectExpanded(param.args[0]);
                             if (data == null) return;
+                            if (isFocusDisplayExpired(data)) {
+                                clearPreMark(param.args[0], true);
+                                param.setResult(false);
+                                log("focus display limit reached key=" + data.key);
+                                return;
+                            }
 
                             boolean original = Boolean.TRUE.equals(param.getResult());
                             IslandText islandText = (!data.isOriginalFocus && currentSettings.islandCompat)
@@ -662,6 +730,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                     error("markIslandFocus", t);
                                 }
                                 param.setResult(true);
+                                markFocusDisplayed(data);
                                 log("island converted to focus source=" + islandText.source
                                         + " content=" + islandText.text);
                                 return;
@@ -670,6 +739,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             boolean fallback = data.isFocus && data.hasMainRv;
                             if (!original && fallback) {
                                 param.setResult(true);
+                                markFocusDisplayed(data);
                                 log("showOnStatusBar fallback=true " + data.summary());
                             } else {
                                 log("showOnStatusBar=" + original + " " + data.summary());
@@ -695,7 +765,20 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            patchBean(param.args[0], "before setData");
+                            Object bean = param.args[0];
+                            patchBean(bean, "before setData");
+                            // The application's own RemoteViews are hidden on this prompt view when
+                            // this module writes its own text, and the ROM only ever puts them back
+                            // through updateRemoteViews — which it does not call for a notification
+                            // that carries no miui.focus.rv. The prompt view is reused across
+                            // notifications, so a container left GONE for an earlier notification
+                            // would blank the pill of any later one this module does not manage.
+                            if (!convertedBeans.contains(bean)) {
+                                String reverted = restoreRemoteViewsPrompt(param.thisObject);
+                                if (reverted != null) {
+                                    debug("setData reverted a leaked RemoteViews hide " + reverted);
+                                }
+                            }
                         }
 
                         @Override
@@ -708,6 +791,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                     + (data == null ? "bean=null" : data.summary()));
                             reloadSettings(false);
                             applyTextWidth(param.thisObject);
+                            // A focus notification that carries no miui.focus.rv of its own never
+                            // reaches updateRemoteViews, so this is the only point at which its pill
+                            // can be given the parsed island text; without it the pill shows whatever
+                            // the ROM derived from a notification whose text lives in the payload.
+                            // Idempotent: preferConvertedIslandText reuses the text already applied
+                            // to this view and only touches the view tree when that text changes.
+                            preferConvertedIslandText(param.thisObject, data);
                             scheduleNativeMarquee(param.thisObject);
                         }
                     });
@@ -1242,13 +1332,29 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             FocusData data = inspectBean(value);
                             boolean result = Boolean.TRUE.equals(param.getResult());
                             log("shouldShow=" + result + (data == null ? " bean=null" : " " + data.summary()));
+                            if (result || data == null) return;
 
-                            if (FORCE_SHOULD_SHOW && !result && data != null
-                                    && data.isFocus && (data.hasDisplayContent()
-                                    || hasConvertibleIslandContent(data))) {
+                            // HyperOS answers shouldShow=true only for a notification carrying its own
+                            // miui.focus.rv. A whitelisted island notification is otherwise parsed and
+                            // written into the bean and then never displayed, which is exactly the
+                            // "nothing shows up" report. The prompt is therefore forced visible once
+                            // per key. Scoped to the whitelist because that is the user's explicit
+                            // statement that this package's island content should appear as focus.
+                            boolean whitelisted = currentSettings.islandCompat
+                                    && currentSettings.islandForcePackages.contains(data.packageName);
+                            // Bound to the notification generation, not just the key: re-posting the
+                            // same id keeps the key but is a new post time, and that must be shown
+                            // again instead of being suppressed by the earlier override.
+                            if (whitelisted && hasConvertibleIslandContent(data)
+                                    && markForcedShouldShow(data.key, data.sbn)) {
                                 param.setResult(true);
                                 log("shouldShow forced=true key=" + data.key
-                                        + " island=" + data.hasIslandParam);
+                                        + " package=" + data.packageName);
+                            } else if (firstDiagnosis("shouldShowNotForced|" + data.key)) {
+                                debug("shouldShow not forced key=" + data.key
+                                        + " package=" + data.packageName
+                                        + " whitelisted=" + whitelisted
+                                        + " islandParam=" + data.hasIslandParam);
                             }
                         }
                     });
@@ -1308,6 +1414,25 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * Records that this notification generation has had its prompt forced visible, returning false on
+     * a repeat call. The set is bounded because notification keys are unbounded in principle and this
+     * hook runs for every prompt evaluation.
+     */
+    private boolean markForcedShouldShow(String key, StatusBarNotification sbn) {
+        if (TextUtils.isEmpty(key)) return false;
+        String generation = key + "@" + (sbn == null ? 0L : sbn.getPostTime());
+        synchronized (forcedShouldShowKeys) {
+            if (!forcedShouldShowKeys.add(generation)) return false;
+            Iterator<String> oldest = forcedShouldShowKeys.iterator();
+            while (forcedShouldShowKeys.size() > MAX_FORCED_SHOULD_SHOW_KEYS && oldest.hasNext()) {
+                oldest.next();
+                oldest.remove();
+            }
+            return true;
+        }
+    }
+
     private synchronized void rememberConvertedNotificationKey(String key) {
         if (TextUtils.isEmpty(key)) return;
         long now = SystemClock.elapsedRealtime();
@@ -1358,7 +1483,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         error("updateRemoteViews throwable", failure);
                         Object bean = getField(param.thisObject, "mData");
                         FocusData data = inspectBean(bean);
-                        String fallback = data == null ? null : data.content;
+                        // The module's own parse is the better fallback: the notification's content
+                        // text is frequently empty on a focus notification whose wording lives in the
+                        // RemoteViews that just failed, and the app's own layout has already been
+                        // hidden by this point, so an empty fallback leaves an empty pill.
+                        String fallback = parsedIslandText(data);
+                        if (TextUtils.isEmpty(fallback) && data != null) fallback = data.content;
                         if (TextUtils.isEmpty(fallback) && data != null) fallback = data.ticker;
                         RemoteViewsFailurePolicy.Action action = RemoteViewsFailurePolicy.decide(
                                 failure, !TextUtils.isEmpty(fallback));
@@ -1370,7 +1500,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 && content instanceof TextView) {
                             TextView textView = (TextView) content;
                             restoreRemoteViewsPrompt(param.thisObject);
-                            hideKnownRemoteViewsContainers(param.thisObject, textView);
+                            hideKnownRemoteViewsContainers(param.thisObject, textView,
+                                    data == null ? null : data.key);
                             textView.setText(fallback);
                             textView.setVisibility(View.VISIBLE);
                             scheduleNativeMarquee(param.thisObject);
@@ -1384,13 +1515,107 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 + " key=" + (data == null ? null : data.key));
                     } else {
                         restoreRemoteViewsPrompt(param.thisObject);
+                        FocusData data = inspectBean(getField(param.thisObject, "mData"));
+                        // The pill hosts the notification's own RemoteViews next to a text view. For a
+                        // converted island notification those RemoteViews show the application's own
+                        // wording and cover the text this module produced, so the parsed content was
+                        // never visible on the status bar. Prefer our text when we have it.
+                        if (!preferConvertedIslandText(param.thisObject, data)) {
+                            scheduleNativeMarquee(param.thisObject);
+                        }
+                        logPillTextState(param.thisObject, data);
                         log("updateRemoteViews end");
-                        scheduleNativeMarquee(param.thisObject);
                     }
                 }
             });
         } catch (Throwable t) {
             error("hookRemoteViewsErrors", t);
+        }
+    }
+
+    /**
+     * Shows the text this module parsed out of the island payload instead of the notification's own
+     * RemoteViews. Only the known RemoteViews container fields are hidden, so unrelated parts of the
+     * pill keep the ROM's behaviour, and when no converted text exists this does nothing at all —
+     * the ROM then renders its RemoteViews exactly as before.
+     */
+    private boolean preferConvertedIslandText(Object promptObject, FocusData data) {
+        if (!(promptObject instanceof View) || data == null) return false;
+        if (!currentSettings.islandCompat || !data.hasIslandParam) return false;
+        Object content = getField(promptObject, "mContentText");
+        if (!(content instanceof TextView)) return false;
+        TextView textView = (TextView) content;
+
+        String applied;
+        synchronized (appliedIslandTexts) {
+            applied = appliedIslandTexts.get(promptObject);
+        }
+        String text;
+        String source = null;
+        if (applied != null && TextUtils.equals(data.content, applied)) {
+            // Same payload as the previous pass: reuse the conversion instead of re-parsing the JSON.
+            text = applied;
+        } else {
+            IslandText parsed = shouldConvert(data) ? extractIslandContent(data) : null;
+            if (parsed == null || TextUtils.isEmpty(parsed.text)) return false;
+            text = parsed.text;
+            source = parsed.source;
+        }
+
+        // updateRemoteViews runs for every layout pass and its before-hook restores the
+        // notification's own RemoteViews each time, so the containers must be hidden again here. The
+        // text and marquee only need attention when the converted text actually changed, otherwise a
+        // marquee-driven layout pass would rewrite the view tree and log on every frame.
+        hideKnownRemoteViewsContainers(promptObject, textView, data.key);
+        boolean changed = !TextUtils.equals(applied, text);
+        if (!TextUtils.equals(textView.getText(), text)) textView.setText(text);
+        textView.setVisibility(View.VISIBLE);
+        if (changed) {
+            synchronized (appliedIslandTexts) {
+                appliedIslandTexts.put(promptObject, text);
+            }
+            scheduleNativeMarquee(promptObject);
+            log("updateRemoteViews prefers converted island text key=" + data.key
+                    + " source=" + source + " text=" + preview(text));
+        }
+        return true;
+    }
+
+    /** The island text this module parsed for the notification, or null when there is none to use. */
+    private String parsedIslandText(FocusData data) {
+        if (data == null || !shouldConvert(data)) return null;
+        IslandText parsed = extractIslandContent(data);
+        return parsed == null || TextUtils.isEmpty(parsed.text) ? null : parsed.text;
+    }
+
+    /**
+     * One line per notification reporting what the focus pill displays after this module's write.
+     * Hiding the application's RemoteViews without knowing whether our own text landed would leave an
+     * empty pill with no way to tell from the log which half happened, so the state is read back and
+     * reported directly. Bounded to the first pass per key: {@code updateRemoteViews} runs for every
+     * layout pass, and the value only changes when the text or the view does.
+     */
+    private void logPillTextState(Object promptObject, FocusData data) {
+        if (data == null || !firstDiagnosis("pillText|" + data.key)) return;
+        Object content = getField(promptObject, "mContentText");
+        boolean isTextView = content instanceof TextView;
+        CharSequence shown = isTextView ? ((TextView) content).getText() : null;
+        debug("pill text state key=" + data.key
+                + " writeTarget=" + (isTextView ? "mContentText" : content == null ? "absent" : "not-a-textview")
+                + " text=" + preview(shown == null ? null : shown.toString())
+                + " textVisibility=" + visibilityName(content)
+                + " promptVisibility=" + visibilityName(promptObject)
+                + " attached=" + (promptObject instanceof View
+                        && ((View) promptObject).isAttachedToWindow()));
+    }
+
+    private static String visibilityName(Object view) {
+        if (!(view instanceof View)) return "-";
+        switch (((View) view).getVisibility()) {
+            case View.VISIBLE: return "VISIBLE";
+            case View.INVISIBLE: return "INVISIBLE";
+            case View.GONE: return "GONE";
+            default: return "unexpected";
         }
     }
 
@@ -1405,8 +1630,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         prompt.setVisibility(View.GONE);
     }
 
-    private void restoreRemoteViewsPrompt(Object promptObject) {
-        if (!(promptObject instanceof View)) return;
+    /**
+     * Reverts this module's own mutations on a prompt view. Returns null when there was nothing to
+     * revert (the normal case) or a short description of what was reverted. The description is what
+     * makes a leak observable: the normal result is "nothing", so anything else means an earlier
+     * notification had left this reused view altered, and the named key says which one.
+     */
+    private String restoreRemoteViewsPrompt(Object promptObject) {
+        if (!(promptObject instanceof View)) return null;
         View prompt = (View) promptObject;
         Integer visibility;
         synchronized (remoteViewsHiddenPrompts) {
@@ -1417,14 +1648,20 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         synchronized (remoteViewsHiddenContainers) {
             containers = remoteViewsHiddenContainers.remove(prompt);
         }
+        String hiddenFor;
+        synchronized (remoteViewsHiddenKeys) {
+            hiddenFor = remoteViewsHiddenKeys.remove(prompt);
+        }
         if (containers != null) {
             for (Map.Entry<View, Integer> entry : containers.entrySet()) {
                 entry.getKey().setVisibility(entry.getValue());
             }
+            return "containers=" + containers.size() + " hiddenFor=" + hiddenFor;
         }
+        return visibility != null ? "prompt-visibility" : null;
     }
 
-    private void hideKnownRemoteViewsContainers(Object promptObject, TextView contentText) {
+    private void hideKnownRemoteViewsContainers(Object promptObject, TextView contentText, String key) {
         if (!(promptObject instanceof View)) return;
         View prompt = (View) promptObject;
         Map<View, Integer> containers = new WeakHashMap<>();
@@ -1443,6 +1680,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             synchronized (remoteViewsHiddenContainers) {
                 remoteViewsHiddenContainers.put(prompt, containers);
             }
+            synchronized (remoteViewsHiddenKeys) {
+                remoteViewsHiddenKeys.put(prompt, key);
+            }
         }
         log("updateRemoteViews textFallback hiddenRemoteContainers=" + hidden);
     }
@@ -1457,10 +1697,25 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     private boolean shouldConvert(FocusData data) {
-        if (data == null || !data.hasIslandParam || !currentSettings.islandCompat) return false;
-        return !data.isOriginalFocus
-                || currentSettings.islandForcePackages.contains(data.packageName)
-                || isSmsVerificationCode(data);
+        if (data == null || !data.hasIslandParam || !currentSettings.islandCompat) {
+            // Called from several hooks on every layout pass, so a per-outcome one-shot diagnosis
+            // replaces what would otherwise flood the debug log.
+            if (firstDiagnosis("shouldConvert|" + (data == null ? "-" : data.key) + "|false")) {
+                debug("shouldConvert=false reason=" + (data == null ? "no-data"
+                        : !data.hasIslandParam ? "no-island-param" : "island-compat-disabled")
+                        + " package=" + (data == null ? "-" : data.packageName));
+            }
+            return false;
+        }
+        boolean whitelisted = currentSettings.islandForcePackages.contains(data.packageName);
+        boolean smsVerification = isSmsVerificationCode(data);
+        boolean convert = !data.isOriginalFocus || whitelisted || smsVerification;
+        if (firstDiagnosis("shouldConvert|" + data.key + "|" + convert)) {
+            debug("shouldConvert=" + convert + " package=" + data.packageName
+                    + " isOriginalFocus=" + data.isOriginalFocus
+                    + " whitelist=" + whitelisted + " smsVerification=" + smsVerification);
+        }
+        return convert;
     }
 
     private boolean isSmsVerificationCode(FocusData data) {
@@ -1497,7 +1752,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             data.isFocus = savedState.originalFocus || data.hasExplicitFocusData;
             data.isOriginalFocus = savedState.originalFocus || data.hasExplicitFocusData;
         }
-        IslandText islandText = shouldConvert(data) ? extractIslandContent(data) : null;
+        boolean convert = shouldConvert(data);
+        IslandText islandText = convert ? extractIslandContent(data) : null;
         if (islandText != null && !TextUtils.isEmpty(islandText.text)) {
             try {
                 // Keep the OEM value so a reused Bean can be restored when the
@@ -1531,11 +1787,16 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 convertedBeans.add(bean);
                 rememberConvertedNotificationKey(data.key);
                 log(stage + " applied island focus source=" + islandText.source
-                        + " replaced=" + !TextUtils.isEmpty(current));
+                        + " oemContent=" + preview(current));
             } catch (Throwable t) {
                 error(stage + " applyIslandContent", t);
             }
         } else {
+            if (firstDiagnosis(stage + "|" + data.key)) {
+                debug(stage + " island not applied key=" + data.key + " package=" + data.packageName
+                        + " shouldConvert=" + convert + " parsedText="
+                        + (islandText == null ? "none" : "empty"));
+            }
             restoreOriginalBean(bean, data, stage);
             Object expanded = getField(bean, "sbn");
             preMarkedIslands.remove(expanded);
@@ -1740,9 +2001,42 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private IslandText extractIslandContent(FocusData data) {
         if (data == null || TextUtils.isEmpty(data.islandParam)) return null;
-        IslandPayloadParser.ParsedText parsed = IslandPayloadParser.parse(
-                data.islandParam, currentSettings.generalSeparator, currentSettings.sideSeparator);
-        return parsed == null ? null : new IslandText(parsed.text, parsed.source);
+        IslandPayloadParser.ParsedText parsed = currentSettings.islandTextMode
+                == FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT
+                ? IslandPayloadParser.parseCompact(data.islandParam, currentSettings.sideSeparator)
+                : null;
+        if (parsed == null) {
+            parsed = IslandPayloadParser.parse(
+                    data.islandParam, currentSettings.generalSeparator, currentSettings.sideSeparator);
+        }
+        if (parsed == null) {
+            debug("island parse failed package=" + data.packageName + " mode="
+                    + (currentSettings.islandTextMode == FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT
+                    ? "compact-then-full" : "full")
+                    + " " + IslandPayloadParser.describeStructure(data.islandParam));
+            debug("island payload package=" + data.packageName + " "
+                    + boundedPayload(data.islandParam));
+            return null;
+        }
+        debug("island parse ok package=" + data.packageName + " source=" + parsed.source
+                + " textLength=" + parsed.text.length() + " text=" + preview(parsed.text));
+        if (firstDiagnosis("payload:" + data.packageName)) {
+            debug("island payload package=" + data.packageName + " "
+                    + boundedPayload(data.islandParam));
+        }
+        return new IslandText(parsed.text, parsed.source);
+    }
+
+    /**
+     * The raw payload for verbose diagnostics, bounded so one line stays readable. Needed because a
+     * wrong join cannot be corrected from the extracted text alone: the observed duplication
+     * ({@code D8396·检票口·检票口 检票口}) depends on which fields of which island node held which value.
+     */
+    private static String boundedPayload(String payload) {
+        if (payload == null) return "payload=null";
+        String flat = payload.replace('\n', ' ').replace('\r', ' ');
+        return flat.length() <= 2000 ? flat : flat.substring(0, 2000) + "...<truncated "
+                + flat.length() + " chars>";
     }
 
     private SelectedFocusIcon selectFocusIcon(Notification notification, String islandParam,
@@ -1753,26 +2047,27 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         Bundle pictures = extras == null ? null : extras.getBundle("miui.focus.pics");
         String directReference = extras == null ? null : extras.getString(
                 dark ? "miui.focus.pic_ticker_dark" : "miui.focus.pic_ticker");
-        Icon icon = null;
-        if (currentSettings.showIslandIcon) {
-            icon = iconFromBundle(pictures, directReference);
-            if (icon != null) return new SelectedFocusIcon(icon,
-                    currentSettings.tintIslandIcon, true, "ticker:" + directReference);
+        Icon icon = iconFromBundle(pictures, directReference);
+        if (icon != null) {
+            return new SelectedFocusIcon(icon, false, false, "ticker:" + directReference);
+        }
+        if (dark && extras != null) {
+            icon = iconFromBundle(pictures, extras.getString("miui.focus.pic_ticker"));
+            if (icon != null) return new SelectedFocusIcon(icon, false, false, "tickerLight");
+        }
+        String payloadTicker = IslandPayloadParser.findTickerPictureReference(islandParam, dark);
+        icon = iconFromBundle(pictures, payloadTicker);
+        if (icon != null) {
+            return new SelectedFocusIcon(icon, false, false, "tickerPayload:" + payloadTicker);
+        }
 
+        if (currentSettings.showIslandIcon) {
             String payloadReference = IslandPayloadParser.findPictureReference(islandParam, dark);
             icon = iconFromBundle(pictures, payloadReference);
             if (icon != null) return new SelectedFocusIcon(icon,
                     currentSettings.tintIslandIcon, true, "island:" + payloadReference);
         }
 
-        if (dark && currentSettings.showIslandIcon) {
-            String lightReference = extras == null ? null
-                    : extras.getString("miui.focus.pic_ticker");
-            icon = iconFromBundle(pictures, lightReference);
-            if (icon != null) return new SelectedFocusIcon(icon,
-                    currentSettings.tintIslandIcon, true,
-                    "tickerLight:" + lightReference);
-        }
         if (!allowFallback) return null;
         if (currentSettings.useSmallIconFallback) {
             icon = notification.getSmallIcon();
@@ -1788,8 +2083,37 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         Context context = systemUiContext;
         if (context == null || TextUtils.isEmpty(packageName)) return null;
         try {
+            Class<?> managerClass = FocusReflection.findClass(
+                    "com.miui.systemui.graphics.AppIconsManager", classLoader);
+            Class<?> interfaces = FocusReflection.findClass(
+                    "com.miui.systemui.interfacesmanager.InterfacesImplManager", classLoader);
+            if (managerClass != null && interfaces != null) {
+                Object manager = XposedHelpers.callStaticMethod(interfaces, "getImpl", managerClass);
+                int userId = 0;
+                try {
+                    userId = ((Number) XposedHelpers.callStaticMethod(
+                            android.os.UserHandle.class, "myUserId")).intValue();
+                } catch (Throwable ignored) { }
+                Object value = XposedHelpers.callMethod(manager, "getAppIconBitmap", userId, packageName);
+                if (value instanceof Bitmap && !((Bitmap) value).isRecycled()) {
+                    log("application icon source=systemui-theme package=" + packageName);
+                    return Icon.createWithBitmap((Bitmap) value);
+                }
+            }
+        } catch (Throwable throwable) {
+            log("application icon themed pipeline unavailable package=" + packageName
+                    + " reason=" + throwable.getClass().getSimpleName());
+        }
+        try {
             ApplicationInfo info = context.getPackageManager().getApplicationInfo(packageName, 0);
-            return info.icon == 0 ? null : Icon.createWithResource(packageName, info.icon);
+            Drawable drawable = info.loadIcon(context.getPackageManager());
+            if (drawable == null) return null;
+            int size = Math.max(1, Math.round(32f * context.getResources().getDisplayMetrics().density));
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            drawable.setBounds(0, 0, size, size);
+            drawable.draw(new Canvas(bitmap));
+            log("application icon source=package-manager package=" + packageName);
+            return Icon.createWithBitmap(bitmap);
         } catch (PackageManager.NameNotFoundException exception) {
             log("application icon unavailable package=" + packageName);
             return null;
@@ -1896,13 +2220,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             if (TextUtils.isEmpty(result)) {
                 result = joinTexts(hint, "title", "subTitle", "content", "subContent");
                 if (!TextUtils.isEmpty(result)) {
-                    String aodTitle = firstText(v2, "aodTitle");
-                    if (!TextUtils.isEmpty(aodTitle)) {
-                        result = joinText(aodTitle, result);
-                    } else {
-                        String ticker = cleanText(v2.optString("ticker", null));
-                        if (!TextUtils.isEmpty(ticker)) result = ticker;
-                    }
+                    // aodTitle is the always-on-display label; merging it into focus text duplicated
+                    // the title on real payloads. This legacy extractor is currently unused, but the
+                    // trap is removed so wiring it back up cannot reintroduce that bug.
                     source = "hintInfo";
                 }
             }
@@ -2069,13 +2389,71 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         return value.length() == 0 ? null : value;
     }
 
+    private boolean isFocusDisplayExpired(FocusData data) {
+        return remainingDisplayMillis(data) == 0L;
+    }
+
+    /**
+     * Milliseconds left in the user's display window, {@link Long#MAX_VALUE} when unlimited and 0
+     * once it has passed. The window starts when FocusRestore actually shows the focus, so a
+     * notification that already existed when the limit was configured is still shown once instead
+     * of being filtered out forever. A new post time (new notification generation) starts a new
+     * window; plain content updates do not extend the current one.
+     */
+    private long remainingDisplayMillis(FocusData data) {
+        float seconds = currentSettings == null ? 0f : currentSettings.focusMaxDisplaySeconds;
+        if (seconds <= 0f || data == null || data.sbn == null || TextUtils.isEmpty(data.key)) {
+            return Long.MAX_VALUE;
+        }
+        long limit = Math.max(1L, (long) (seconds * 1000f));
+        long[] window;
+        synchronized (focusDisplayWindows) {
+            window = focusDisplayWindows.get(data.key);
+        }
+        if (window == null || window[1] != data.sbn.getPostTime()) return limit;
+        long elapsed = SystemClock.elapsedRealtime() - window[0];
+        return elapsed >= limit ? 0L : limit - elapsed;
+    }
+
+    private void markFocusDisplayed(FocusData data) {
+        float seconds = currentSettings == null ? 0f : currentSettings.focusMaxDisplaySeconds;
+        if (seconds <= 0f || data == null || data.sbn == null || TextUtils.isEmpty(data.key)) return;
+        long postTime = data.sbn.getPostTime();
+        synchronized (focusDisplayWindows) {
+            long[] existing = focusDisplayWindows.get(data.key);
+            if (existing != null && existing[1] == postTime) return;
+            if (focusDisplayWindows.size() > 64) focusDisplayWindows.clear();
+            focusDisplayWindows.put(data.key, new long[]{SystemClock.elapsedRealtime(), postTime});
+        }
+    }
+
+    private void forgetFocusDisplay(String key) {
+        if (TextUtils.isEmpty(key)) return;
+        synchronized (focusDisplayWindows) {
+            focusDisplayWindows.remove(key);
+        }
+    }
+
+    private long remainingDisplayMillis(Object entry) {
+        return remainingDisplayMillis(inspectExpanded(notificationEntrySbn(entry)));
+    }
+
+    private String keyFromEntry(Object entry) {
+        Object value = getField(entry, "key");
+        if (value == null) value = getField(entry, "mKey");
+        return stringValue(value);
+    }
+
     private HyperOS4FocusController.DisplayItem createOS4DisplayItem(Object entry) {
         rememberNotificationEntry(entry);
         reloadSettings(false);
-        Object expanded = getField(entry, "mSbn");
-        if (expanded == null) expanded = getField(entry, "sbn");
+        Object expanded = notificationEntrySbn(entry);
         if (expanded == null) return null;
         FocusData data = inspectExpanded(expanded);
+        if (isFocusDisplayExpired(data)) {
+            log("OS4 display expired key=" + keyFromEntry(entry));
+            return null;
+        }
         if (data == null) return null;
         Object keyValue = getField(entry, "key");
         if (keyValue == null) keyValue = getField(entry, "mKey");
@@ -2126,6 +2504,26 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             log("OS4 native focus icon key=" + key + " light="
                     + (focusIcon == null ? "none" : focusIcon.source) + " dark="
                     + (focusIconDark == null ? "none" : focusIconDark.source));
+            // The ROM's own bar RemoteViews carry the application's wording and cover the text this
+            // module parses, which is why the pill showed the notification's own content instead of
+            // the island sides and why the focus content mode had no effect on OS4 at all. For a
+            // whitelisted package the user has said this app's island content should be the focus
+            // text, so the parse wins here exactly as it does on the OS3 pill.
+            IslandText whitelisted = currentSettings.islandForcePackages.contains(data.packageName)
+                    ? extractIslandContent(data) : null;
+            if (whitelisted != null && !TextUtils.isEmpty(whitelisted.text)) {
+                log("OS4 whitelist parse wins over native content key=" + key
+                        + " source=" + whitelisted.source + " text=" + preview(whitelisted.text));
+                return new HyperOS4FocusController.DisplayItem(entry, key, data.packageName,
+                        whitelisted.text, "whitelistParsed:" + whitelisted.source, null, null,
+                        contentIntent, focusIcon == null ? null : focusIcon.icon,
+                        focusIconDark == null ? null : focusIconDark.icon,
+                        focusIcon != null && focusIcon.tint,
+                        focusIconDark != null && focusIconDark.tint,
+                        focusIcon != null && focusIcon.islandIcon,
+                        focusIconDark != null && focusIconDark.islandIcon,
+                        OS4FocusPriorityPolicy.PRIORITY_ISLAND_WHITELIST);
+            }
             return new HyperOS4FocusController.DisplayItem(entry, key, data.packageName,
                     cleanText(data.ticker), "nativeFocus", data.barRv, data.barNightRv,
                     contentIntent, focusIcon == null ? null : focusIcon.icon,
@@ -2216,11 +2614,16 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             boolean explicitFocus = extras.getBoolean("miui.focus.isFocus", false);
             data.explicitFocus = explicitFocus;
             data.isFocus = data.isFocus || explicitFocus;
-            data.islandParam = extras.getString("miui.focus.param");
-            if (TextUtils.isEmpty(data.islandParam)) {
-                data.islandParam = extras.getString("miui.focus.param.custom");
-            }
+            // Shared key policy: some system apps publish the island schema under
+            // miui.focus.param.custom instead of miui.focus.param.
+            data.islandParam = FocusParamKeys.pick(extras::get);
             data.hasIslandParam = !TextUtils.isEmpty(data.islandParam);
+            String diagnosisKey = data.sbn == null ? null : data.sbn.getKey();
+            if (firstDiagnosis(diagnosisKey)) {
+                debug("focus extras key=" + diagnosisKey + " package=" + data.packageName
+                        + " " + FocusParamKeys.describe(extras::get) + " "
+                        + focusExtrasInventory(extras));
+            }
             data.ticker = extras.getString("miui.focus.ticker");
             data.mainRv = getRemoteViews(extras, "miui.focus.rv");
             data.mainNightRv = getRemoteViews(extras, "miui.focus.rvNight");
@@ -2323,6 +2726,63 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private static void log(String value) {
         Log.i(TAG, value);
         XposedBridge.log(TAG + ": " + value);
+    }
+
+    /**
+     * Verbose diagnostics for debug builds only, so release logging keeps its previous volume.
+     * The {@code DIAG} marker keeps these greppable in a captured logcat or LSPosed log.
+     */
+    private static void debug(String value) {
+        if (!VERBOSE_LOG) return;
+        Log.i(TAG, "DIAG " + value);
+        XposedBridge.log(TAG + ": DIAG " + value);
+    }
+
+    /**
+     * Bounded single-line preview with an ASCII-escaped copy for non-ASCII text; see
+     * {@link DebugText#preview(String)} for why the escaped form matters in captured logs.
+     */
+    private static String preview(String value) {
+        return DebugText.preview(value);
+    }
+
+    /**
+     * Every {@code miui.focus.*} extras key with its value kind, so a missing or mistyped key is
+     * visible directly instead of being inferred from a later failure.
+     */
+    private static String focusExtrasInventory(Bundle extras) {
+        if (extras == null) return "focusExtras=none";
+        StringBuilder text = new StringBuilder("focusExtras=[");
+        int count = 0;
+        for (String name : extras.keySet()) {
+            if (name == null || !name.startsWith("miui.focus.")) continue;
+            if (count > 0) text.append(',');
+            if (++count > 24) { text.append(",..."); break; }
+            Object value = extras.get(name);
+            text.append(name).append(':');
+            if (value == null) text.append("null");
+            else if (value instanceof String) text.append(((String) value).trim().length());
+            else if (value instanceof Bundle) text.append("Bundle(").append(((Bundle) value).keySet().size()).append(')');
+            else text.append(value.getClass().getSimpleName());
+        }
+        return text.append(']').toString();
+    }
+
+    /**
+     * True only the first time a notification key is diagnosed. {@code inspectExpanded} runs on
+     * every layout pass, so an unguarded inventory line would flood the log and hide the signal.
+     */
+    private boolean firstDiagnosis(String key) {
+        if (key == null) return false;
+        synchronized (diagnosedExtrasKeys) {
+            if (!diagnosedExtrasKeys.add(key)) return false;
+            while (diagnosedExtrasKeys.size() > MAX_DIAGNOSED_KEYS) {
+                Iterator<String> oldest = diagnosedExtrasKeys.iterator();
+                oldest.next();
+                oldest.remove();
+            }
+            return true;
+        }
     }
 
     private static void error(String stage, Throwable t) {

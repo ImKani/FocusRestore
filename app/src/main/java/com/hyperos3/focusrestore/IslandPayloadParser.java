@@ -5,7 +5,70 @@ import org.json.JSONObject;
 
 /** Package-private parser for HyperOS Dynamic Island payloads. */
 final class IslandPayloadParser {
+    /**
+     * Nested payload containers, in priority order. Verified against the ROM: the SystemUI plugin
+     * declares {@code param_v2}, {@code param_v3} and {@code param_voip_v2} in
+     * {@code miui.systemui.notification.focus.Const$Param}. Only {@code param_v2} was read before,
+     * so a notification that shipped its content solely under {@code param_v3} fell back to the
+     * root object and lost every section.
+     */
+    private static final String[] CONTAINERS = {"param_v2", "param_v3", "param_voip_v2"};
+
+    /** Content sections that carry user-visible text; reported by {@link #describeStructure}. */
+    private static final String[] SECTIONS = {"baseInfo", "highlightInfo", "highlightInfoV3",
+            "chatInfo", "iconTextInfo", "animTextInfo", "coverInfo", "hintInfo", "progressInfo",
+            "multiProgressInfo", "stepInfo", "param_island"};
+
     private IslandPayloadParser() {
+    }
+
+    /** The nested container that holds the schema, or the root object when none is present. */
+    private static JSONObject container(JSONObject root) {
+        for (String key : CONTAINERS) {
+            JSONObject nested = root.optJSONObject(key);
+            if (nested != null) return nested;
+        }
+        return root;
+    }
+
+    /**
+     * Structural summary of one payload for verbose diagnostics: byte length, which container was
+     * used, protocol/scene and every section that is actually present. It never throws, so it is
+     * safe to log for any payload the parser refused.
+     */
+    static String describeStructure(String payload) {
+        if (payload == null) return "payload=null";
+        if (!InputLimits.isPayloadAllowed(payload) || payload.trim().length() == 0) {
+            return "bytes=" + payload.length() + " payload=empty";
+        }
+        try {
+            JSONObject root = new JSONObject(payload);
+            StringBuilder text = new StringBuilder("bytes=").append(payload.length());
+            for (String key : CONTAINERS) {
+                if (root.optJSONObject(key) != null) text.append(' ').append(key).append("=yes");
+            }
+            JSONObject v2 = container(root);
+            text.append(" container=").append(v2 == root ? "root" : "nested");
+            text.append(" protocol=").append(root.optString("protocol", "-"));
+            text.append(" scene=").append(root.optString("scene", "-"));
+            for (String key : SECTIONS) {
+                if (v2.optJSONObject(key) != null) text.append(' ').append(key).append("=yes");
+            }
+            JSONObject island = v2.optJSONObject("param_island");
+            if (island == null) {
+                text.append(" island=none");
+            } else if (island.optJSONObject("bigIslandArea") != null) {
+                text.append(" island=big");
+            } else if (island.optJSONObject("smallIslandArea") != null) {
+                text.append(" island=small");
+            } else {
+                text.append(" island=empty");
+            }
+            if (!empty(root.optString("title", null))) text.append(" legacyTitle=yes");
+            return text.toString();
+        } catch (Throwable ignored) {
+            return "bytes=" + payload.length() + " unparsable";
+        }
     }
 
     static ParsedText parse(String payload, String generalSeparator, String sideSeparator) {
@@ -14,15 +77,13 @@ final class IslandPayloadParser {
         String side = separator(sideSeparator);
         try {
             JSONObject root = new JSONObject(payload);
-            JSONObject v2 = root.optJSONObject("param_v2");
-            if (v2 == null) v2 = root;
+            JSONObject v2 = container(root);
 
-            if (root.optInt("protocol", 3) == 1
-                    || "verifyCode".equals(root.optString("scene"))) {
-                String legacy = joinTexts(root, general, "title", "desc1", "desc2");
-                return empty(legacy) ? null
-                        : new ParsedText(legacy, "protocol1:" + root.optString("scene", "legacy"));
-            }
+            // Legacy protocol-1 fields. They are only a last resort: payloads such as the MIUI
+            // travel assistant use protocol=1 *and* ship a complete param_island block, so an
+            // early return here would discard the only meaningful content.
+            String legacyText = joinTexts(root, general, "title", "desc1", "desc2");
+            String legacySource = "protocol1:" + root.optString("scene", "legacy");
 
             JSONObject base = v2.optJSONObject("baseInfo");
             String result = joinTexts(base, general, "title", "subTitle", "specialTitle",
@@ -87,8 +148,18 @@ final class IslandPayloadParser {
             if (empty(result) && !empty(islandText)) source = "param_island";
             result = appendDistinctText(result, islandText, general);
 
-            String aodTitle = firstText(v2, "aodTitle");
-            result = appendDistinctText(result, aodTitle, general);
+            if (empty(result)) {
+                // aodTitle names the always-on-display surface, not the focus body. Appending it
+                // unconditionally duplicated the island title in the visible text: the MIUI travel
+                // payload carries island title "检票口" plus aodTitle "检票口 检票口", which produced
+                // "D8396·检票口·检票口 检票口". Only use it when nothing else produced text.
+                result = firstText(v2, "aodTitle");
+                if (!empty(result)) source = "aodTitle";
+            }
+            if (empty(result)) {
+                result = legacyText;
+                if (!empty(result)) source = legacySource;
+            }
             if (!empty(result)) return new ParsedText(result, source == null ? "composite" : source);
 
             result = clean(v2.optString("ticker", null));
@@ -103,12 +174,30 @@ final class IslandPayloadParser {
         return null;
     }
 
+    static String findTickerPictureReference(String payload, boolean dark) {
+        if (!InputLimits.isPayloadAllowed(payload) || payload.trim().length() == 0) return null;
+        try {
+            JSONObject root = new JSONObject(payload);
+            JSONObject v2 = container(root);
+            String result = cleanPictureReference(v2.opt(dark ? "tickerPicDark" : "tickerPic"));
+            if (result == null && dark) {
+                result = cleanPictureReference(v2.opt("tickerPic"));
+            }
+            if (result == null && v2 != root) {
+                result = cleanPictureReference(root.opt(dark ? "tickerPicDark" : "tickerPic"));
+                if (result == null && dark) result = cleanPictureReference(root.opt("tickerPic"));
+            }
+            return result;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     static String findPictureReference(String payload, boolean dark) {
         if (!InputLimits.isPayloadAllowed(payload) || payload.trim().length() == 0) return null;
         try {
             JSONObject root = new JSONObject(payload);
-            JSONObject v2 = root.optJSONObject("param_v2");
-            if (v2 == null) v2 = root;
+            JSONObject v2 = container(root);
             String result = findKnownPictureReference(v2, dark);
             if (result == null && dark) result = findKnownPictureReference(v2, false);
             return result;
@@ -150,8 +239,8 @@ final class IslandPayloadParser {
         JSONObject object = (JSONObject) value;
         String[] directKeys = dark
                 ? new String[]{"picDark", "picFunctionDark", "picProfileDark",
-                "iconDark", "tickerPicDark"}
-                : new String[]{"pic", "picFunction", "picProfile", "icon", "tickerPic"};
+                "iconDark"}
+                : new String[]{"pic", "picFunction", "picProfile", "icon"};
         for (String key : directKeys) {
             String result = cleanPictureReference(object.opt(key));
             if (result != null) return result;
@@ -174,6 +263,45 @@ final class IslandPayloadParser {
         if (value == null || value == JSONObject.NULL) return null;
         String reference = String.valueOf(value).trim();
         return reference.startsWith("miui.focus.pic_") ? reference : null;
+    }
+
+    static ParsedText parseCompact(String payload, String sideSeparator) {
+        if (!InputLimits.isPayloadAllowed(payload) || payload.trim().length() == 0) return null;
+        try {
+            JSONObject root = new JSONObject(payload);
+            JSONObject v2 = container(root);
+            JSONObject island = v2.optJSONObject("param_island");
+            if (island == null) return null;
+            String side = separator(sideSeparator);
+            JSONObject big = island.optJSONObject("bigIslandArea");
+            String left = islandSideText(big == null ? null : big.optJSONObject("imageTextInfoLeft"),
+                    side);
+            String right = islandSideText(big == null ? null : big.optJSONObject("imageTextInfoRight"),
+                    side);
+            if (empty(right)) {
+                // The travel payload carries its primary label on bigIslandArea.textInfo instead of an
+                // explicit imageTextInfoRight, and the ROM's own collapsed pill still shows it as the
+                // right side (left image-text plus this label). Dropping it here lost half the pill.
+                String areaText = islandSideText(big, side);
+                if (!empty(areaText) && !areaText.equals(left)) right = areaText;
+            }
+            if (empty(left) && empty(right)) {
+                left = islandSideText(island.optJSONObject("smallIslandArea"), side);
+                right = null;
+            }
+            String result = joinText(left, right, side);
+            return empty(result) ? null : new ParsedText(result, "param_island.compact");
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String islandSideText(JSONObject area, String sideSeparator) {
+        if (area == null) return null;
+        JSONObject text = firstObject(area, "textInfo", "miui.focus.paramtextInfo");
+        String result = joinTexts(text == null ? area : text, sideSeparator,
+                "frontTitle", "title", "content", "subContent", "label");
+        return empty(result) ? firstText(area, "title", "content", "subContent", "label") : result;
     }
 
     static final class ParsedText {
@@ -224,6 +352,11 @@ final class IslandPayloadParser {
         text = right == null ? null : firstObject(right, "textInfo", "miui.focus.paramtextInfo");
         String rightText = joinTexts(text, general, "frontTitle", "title", "content", "subContent");
         result = appendDistinctText(result, appendDistinctText(leftText, rightText, side), general);
+        // Some ROM payloads put the primary label directly on bigIslandArea.textInfo instead of a
+        // side area (field sample: personalassistant travel, title=检票口, left side=D8396).
+        result = appendDistinctText(result, joinTexts(big == null ? null : firstObject(big,
+                "textInfo", "miui.focus.paramtextInfo"), general,
+                "frontTitle", "title", "content", "subContent"), general);
         result = appendDistinctText(result, progressText(big == null ? null : firstObject(big,
                 "progressTextInfo", "fixedWidthDigitInfo", "sameWidthDigitInfo"), general), general);
         result = appendDistinctText(result, joinTexts(island.optJSONObject("smallIslandArea"), general,
@@ -236,7 +369,12 @@ final class IslandPayloadParser {
         JSONObject big = island.optJSONObject("bigIslandArea");
         JSONObject left = big == null ? null : big.optJSONObject("imageTextInfoLeft");
         JSONObject text = left == null ? null : firstObject(left, "textInfo", "miui.focus.paramtextInfo");
-        return firstText(text, "title", "frontTitle", "content");
+        String title = firstText(text, "title", "frontTitle", "content");
+        if (empty(title)) {
+            title = firstText(big == null ? null : firstObject(big, "textInfo",
+                    "miui.focus.paramtextInfo"), "title", "frontTitle", "content");
+        }
+        return title;
     }
 
     private static JSONObject firstObject(JSONObject object, String... keys) {

@@ -24,6 +24,8 @@ final class SettingsContract {
     static final int USE_SMALL_ICON_FALLBACK = 19;
     static final int NOTIFICATION_ROW_CLICK_FALLBACK = 20;
     static final int INDEPENDENT_FOCUS_BANNER = 21;
+    static final int ISLAND_TEXT_MODE = 22;
+    static final int FOCUS_MAX_DISPLAY_SECONDS = 23;
 
     static final String[] COLUMNS = {
             "limit_text_width", "text_width_dp", "marquee_delay_ms", "compat_retry",
@@ -32,7 +34,8 @@ final class SettingsContract {
             "disable_island_property", "disable_island_feature_cache", "marquee_bounce",
             "hook_mode", "hide_notification_icons", "show_focus_divider",
             "show_island_icon", "tint_island_icon", "expand_island_on_click",
-            "use_small_icon_fallback", "notification_row_click_fallback", "independent_focus_banner"
+            "use_small_icon_fallback", "notification_row_click_fallback", "independent_focus_banner",
+             "island_text_mode", "focus_max_display_seconds"
     };
 
     /** Encode the Provider wire format here so column names and values share one contract. */
@@ -52,7 +55,8 @@ final class SettingsContract {
                 0, // Retired expand_island_on_click column remains permanently disabled.
                 settings.useSmallIconFallback ? 1 : 0,
                 settings.notificationRowClickFallback ? 1 : 0,
-                settings.independentFocusBanner ? 1 : 0};
+                settings.independentFocusBanner ? 1 : 0,
+                settings.islandTextMode, settings.focusMaxDisplaySeconds};
     }
 
     private static String joinPackages(java.util.Set<String> packages) {

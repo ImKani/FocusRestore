@@ -18,7 +18,6 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
-import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
@@ -35,11 +34,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import android.text.Editable;
+import android.text.InputType;
 import android.text.TextWatcher;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -121,6 +120,9 @@ public final class SettingsActivity extends Activity {
     private Switch compatRetrySwitch;
     private Switch marqueeBounceSwitch;
     private Switch islandCompatSwitch;
+    private Button islandTextModeFullButton;
+    private Button islandTextModeCompactButton;
+    private EditText focusMaxDisplayInput;
     private Switch disableIslandPropertySwitch;
     private Switch disableIslandFeatureCacheSwitch;
     private Switch allowFocusClickSwitch;
@@ -138,8 +140,10 @@ public final class SettingsActivity extends Activity {
             pendingHideNotificationIcons, pendingShowFocusDivider, pendingShowIslandIcon,
             pendingTintIslandIcon, pendingUseSmallIconFallback,
             pendingNotificationRowClickFallback, pendingIndependentFocusBanner;
-    private int pendingHookMode, pendingWidthDp, pendingDelayMs;
+    private int pendingHookMode, pendingWidthDp, pendingDelayMs, pendingIslandTextMode;
+    private float pendingFocusMaxDisplaySeconds;
     private String pendingGeneralSeparator, pendingSideSeparator;
+    private boolean focusMaxDisplaySyncing;
     private Set<String> pendingForcePackages = new HashSet<>();
     private Button forcePackagesButton;
     private List<ApplicationInfo> dialogAllApps = new ArrayList<>();
@@ -170,9 +174,7 @@ public final class SettingsActivity extends Activity {
         loadSettings();
         if (savedInstanceState != null) restorePendingState(savedInstanceState);
         showPage(currentPage);
-        if (savedInstanceState != null && savedInstanceState.getBoolean("m3.savePending", false)) {
-            saveSettings();
-        }
+        if (savedInstanceState != null) resumeInterruptedSave(savedInstanceState);
     }
 
     @Override
@@ -392,6 +394,17 @@ public final class SettingsActivity extends Activity {
         LinearLayout islandPanel = panel();
         islandCompatSwitch = createSwitch("转换超级岛内容为焦点通知");
         islandPanel.addView(islandCompatSwitch, matchWrap(dp(4)));
+        islandPanel.addView(text("焦点内容模式", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        islandTextModeFullButton = createChoiceButton("展开全文本解析",
+                () -> selectIslandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_FULL));
+        islandTextModeCompactButton = createChoiceButton("药丸左右拼接",
+                () -> selectIslandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT));
+        islandPanel.addView(twoChoiceSelector(islandTextModeFullButton, islandTextModeCompactButton),
+                matchWrap(dp(4)));
+        islandPanel.addView(text(
+                "全文本解析：汇总岛内所有可读文字。药丸左右拼接：只取药丸左右两侧文字并去重。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(4)));
+
         forcePackagesButton = new Button(this);
         forcePackagesButton.setText(forcePackagesLabel());
         forcePackagesButton.setAllCaps(false);
@@ -417,6 +430,16 @@ public final class SettingsActivity extends Activity {
         widthRangeRow = rangeRow("80 dp", "400 dp");
         focusPanel.addView(widthRangeRow, matchWrap(dp(4)));
         hideNotificationIconsSwitch = createSwitch("隐藏其他通知图标（HyperOS 4）");
+        focusPanel.addView(text("最大显示时间（秒）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        focusMaxDisplayInput = input("0 = 不限制，支持两位小数");
+        focusMaxDisplayInput.setInputType(InputType.TYPE_CLASS_NUMBER
+                | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        focusMaxDisplayInput.setText(FocusRestoreSettings.formatMaxDisplaySeconds(
+                pendingFocusMaxDisplaySeconds));
+        focusPanel.addView(focusMaxDisplayInput, matchWrap(dp(4)));
+        focusPanel.addView(text(
+                "0 表示不限制；范围 0.1 - 86400 秒。超过时间只隐藏状态栏焦点，不取消通知。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
         showFocusDividerSwitch = createSwitch("显示焦点分隔线（HyperOS 4）");
         focusPanel.addView(hideNotificationIconsSwitch, matchWrap(dp(4)));
         focusPanel.addView(showFocusDividerSwitch, matchWrap(0));
@@ -426,6 +449,7 @@ public final class SettingsActivity extends Activity {
         widthSeekBar.setProgress(pendingWidthDp - MIN_WIDTH_DP);
         widthValue.setText(pendingWidthDp + " dp");
         islandCompatSwitch.setChecked(pendingIslandCompat);
+        updateIslandTextModeButtons();
         hideNotificationIconsSwitch.setChecked(pendingHideNotificationIcons);
         showFocusDividerSwitch.setChecked(pendingShowFocusDivider);
         updateModeButtons();
@@ -565,6 +589,8 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.retry", pendingCompatRetry);
         outState.putBoolean("m3.bounce", pendingMarqueeBounce);
         outState.putBoolean("m3.island", pendingIslandCompat);
+        outState.putInt("m3.islandTextMode", pendingIslandTextMode);
+        outState.putFloat("m3.focusMaxSeconds", pendingFocusMaxDisplaySeconds);
         outState.putBoolean("m3.property", pendingDisableIslandProperty);
         outState.putBoolean("m3.cache", pendingDisableIslandFeatureCache);
         outState.putBoolean("m3.click", pendingAllowFocusClick);
@@ -581,11 +607,21 @@ public final class SettingsActivity extends Activity {
         synchronized (saveLock) {
             outState.putBoolean("m3.savePending", saveWorkerRunning || queuedSettings != null);
         }
+        // Lets a later restore detect that the store has moved on since this snapshot.
+        outState.putLong("m3.generation", settingsGeneration);
         super.onSaveInstanceState(outState);
     }
 
     private void restorePendingState(Bundle state) {
         currentPage = Math.max(0, Math.min(1, state.getInt("m3.page", 0)));
+        if (isSnapshottedAfterStore(state)) {
+            // Keep the freshly loaded store: replaying this snapshot would resurrect values the
+            // user already replaced and, via m3.savePending, write them back permanently.
+            android.util.Log.i(TAG, "ignoring stale activity snapshot snapshotGeneration="
+                    + state.getLong("m3.generation", -1L) + " persistedGeneration="
+                    + persistedGeneration() + " loaded=" + settings.describe());
+            return;
+        }
         pendingHookMode = state.getInt("m3.mode", pendingHookMode);
         pendingManual = state.getBoolean("m3.manual", pendingManual);
         pendingWidthDp = state.getInt("m3.width", pendingWidthDp);
@@ -593,6 +629,9 @@ public final class SettingsActivity extends Activity {
         pendingCompatRetry = state.getBoolean("m3.retry", pendingCompatRetry);
         pendingMarqueeBounce = state.getBoolean("m3.bounce", pendingMarqueeBounce);
         pendingIslandCompat = state.getBoolean("m3.island", pendingIslandCompat);
+        pendingIslandTextMode = state.getInt("m3.islandTextMode", pendingIslandTextMode);
+        pendingFocusMaxDisplaySeconds = state.getFloat("m3.focusMaxSeconds",
+                pendingFocusMaxDisplaySeconds);
         pendingDisableIslandProperty = state.getBoolean("m3.property", pendingDisableIslandProperty);
         pendingDisableIslandFeatureCache = state.getBoolean("m3.cache", pendingDisableIslandFeatureCache);
         pendingAllowFocusClick = state.getBoolean("m3.click", pendingAllowFocusClick);
@@ -613,6 +652,38 @@ public final class SettingsActivity extends Activity {
             pendingForcePackages = new HashSet<>(InputLimits.sanitizePackages(
                     new java.util.LinkedHashSet<>(packages)));
         }
+    }
+
+    private long persistedGeneration() {
+        return Math.max(FocusRestoreSettings.generation(preferences),
+                FocusRestoreSettings.generation(hookPreferences));
+    }
+
+    /**
+     * True when the saved activity snapshot predates the last committed settings write, which means
+     * the snapshot is history and must not be replayed over the store.
+     */
+    private boolean isSnapshottedAfterStore(Bundle state) {
+        return FocusRestoreSettings.snapshotIsStale(
+                state.getLong("m3.generation", -1L), persistedGeneration());
+    }
+
+    /**
+     * Replays a save that the previous process never finished. A snapshot whose generation is
+     * already committed has nothing to replay, so it is deliberately skipped.
+     */
+    private void resumeInterruptedSave(Bundle state) {
+        if (!state.getBoolean("m3.savePending", false)) return;
+        long snapshotGeneration = state.getLong("m3.generation", -1L);
+        long persisted = persistedGeneration();
+        if (!FocusRestoreSettings.snapshotNeedsReplay(snapshotGeneration, persisted)) {
+            android.util.Log.i(TAG, "restored snapshot needs no save snapshotGeneration="
+                    + snapshotGeneration + " persistedGeneration=" + persisted);
+            return;
+        }
+        android.util.Log.i(TAG, "replaying interrupted save snapshotGeneration="
+                + snapshotGeneration + " persistedGeneration=" + persisted);
+        saveSettings();
     }
 
     private void installSettingsListeners() {
@@ -645,6 +716,34 @@ public final class SettingsActivity extends Activity {
             updateExperimentalControls();
             markPending();
         });
+        if (islandTextModeFullButton != null) islandTextModeFullButton.setOnClickListener(v ->
+                selectIslandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_FULL));
+        if (islandTextModeCompactButton != null) islandTextModeCompactButton.setOnClickListener(v ->
+                selectIslandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT));
+        if (generalSeparatorInput != null) {
+            generalSeparatorInput.addTextChangedListener(
+                    separatorWatcher(generalSeparatorInput, true));
+        }
+        if (sideSeparatorInput != null) {
+            sideSeparatorInput.addTextChangedListener(separatorWatcher(sideSeparatorInput, false));
+        }
+        if (focusMaxDisplayInput != null) {
+            focusMaxDisplayInput.setOnFocusChangeListener((v, hasFocus) -> {
+                if (!hasFocus) syncFocusMaxDisplayInput();
+            });
+            focusMaxDisplayInput.addTextChangedListener(new TextWatcher() {
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+                public void onTextChanged(CharSequence s, int start, int before, int count) {
+                    if (focusMaxDisplaySyncing) return;
+                    float parsed = FocusRestoreSettings.parseMaxDisplaySeconds(
+                            s.toString(), pendingFocusMaxDisplaySeconds);
+                    if (parsed == pendingFocusMaxDisplaySeconds) return;
+                    pendingFocusMaxDisplaySeconds = parsed;
+                    if (focusMaxDisplayInput.hasFocus()) markPending();
+                }
+                public void afterTextChanged(Editable s) { }
+            });
+        }
         if (disableIslandPropertySwitch != null) disableIslandPropertySwitch.setOnCheckedChangeListener((b, c) -> { pendingDisableIslandProperty = c; markPending(); });
         if (disableIslandFeatureCacheSwitch != null) disableIslandFeatureCacheSwitch.setOnCheckedChangeListener((b, c) -> { pendingDisableIslandFeatureCache = c; markPending(); });
         if (showIslandIconSwitch != null) showIslandIconSwitch.setOnCheckedChangeListener((b, c) -> {
@@ -659,6 +758,7 @@ public final class SettingsActivity extends Activity {
         if (useSmallIconFallbackSwitch != null) {
             useSmallIconFallbackSwitch.setOnCheckedChangeListener((b, c) -> {
                 pendingUseSmallIconFallback = c;
+                updateExperimentalControls();
                 markPending();
             });
         }
@@ -701,10 +801,47 @@ public final class SettingsActivity extends Activity {
     private void updateExperimentalControls() {
         boolean islandIconEnabled = pendingIslandCompat;
         setModeSpecificSwitchEnabled(showIslandIconSwitch, islandIconEnabled);
-        setModeSpecificSwitchEnabled(tintIslandIconSwitch, true);
+        boolean modeEnabled = pendingIslandCompat;
+        for (Button button : new Button[]{islandTextModeFullButton, islandTextModeCompactButton}) {
+            if (button == null) continue;
+            button.setEnabled(modeEnabled);
+            button.setAlpha(modeEnabled ? 1f : 0.38f);
+        }
+        setModeSpecificSwitchEnabled(tintIslandIconSwitch,
+                pendingIslandCompat && (pendingShowIslandIcon || pendingUseSmallIconFallback));
         setModeSpecificSwitchEnabled(useSmallIconFallbackSwitch, pendingIslandCompat);
         setModeSpecificSwitchEnabled(notificationRowClickFallbackSwitch, true);
         setModeSpecificSwitchEnabled(independentFocusBannerSwitch, true);
+    }
+
+    private void selectIslandTextMode(int mode) {
+        if (pendingIslandTextMode == mode) return;
+        pendingIslandTextMode = mode;
+        updateIslandTextModeButtons();
+        markPending();
+    }
+
+    /** Rewrites the seconds field with the normalized value without re-entering its watcher. */
+    private void syncFocusMaxDisplayInput() {
+        if (focusMaxDisplayInput == null || focusMaxDisplaySyncing) return;
+        pendingFocusMaxDisplaySeconds =
+                FocusRestoreSettings.normalizeMaxDisplaySeconds(pendingFocusMaxDisplaySeconds);
+        String text = FocusRestoreSettings.formatMaxDisplaySeconds(pendingFocusMaxDisplaySeconds);
+        if (text.contentEquals(focusMaxDisplayInput.getText().toString())) return;
+        focusMaxDisplaySyncing = true;
+        try {
+            focusMaxDisplayInput.setText(text);
+            focusMaxDisplayInput.setSelection(text.length());
+        } finally {
+            focusMaxDisplaySyncing = false;
+        }
+    }
+
+    private void updateIslandTextModeButtons() {
+        styleModeButton(islandTextModeFullButton,
+                pendingIslandTextMode == FocusRestoreSettings.ISLAND_TEXT_MODE_FULL);
+        styleModeButton(islandTextModeCompactButton,
+                pendingIslandTextMode == FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT);
     }
 
     private void updateWidthControls() {
@@ -1001,28 +1138,34 @@ public final class SettingsActivity extends Activity {
         e.setHintTextColor(COLOR_TEXT_SECONDARY);
         e.setPadding(dp(16), 0, dp(16), 0);
         e.setBackground(inputBackground());
-        e.addTextChangedListener(new TextWatcher() {
+        return e;
+    }
+
+    /** Keeps a separator field's pending value in sync and saves while the user types. */
+    private TextWatcher separatorWatcher(EditText field, boolean general) {
+        return new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             public void onTextChanged(CharSequence s, int start, int before, int count) {
-                boolean settingInput = e == generalSeparatorInput || e == sideSeparatorInput;
-                if (e == generalSeparatorInput) pendingGeneralSeparator = s.toString();
-                if (e == sideSeparatorInput) pendingSideSeparator = s.toString();
-                if (settingInput && e.hasFocus()) markPending();
+                if (general) pendingGeneralSeparator = s.toString();
+                else pendingSideSeparator = s.toString();
+                if (field.hasFocus()) markPending();
             }
             public void afterTextChanged(Editable s) { }
-        });
-        return e;
+        };
     }
 
     private void loadSettings() {
         settings = FocusRestoreSettings.fromPreferences(preferences);
+        android.util.Log.i(TAG, "settings loaded " + settings.describe());
         pendingHookMode = settings.hookMode;
         pendingManual = settings.limitWidth;
         pendingWidthDp = settings.widthDp;
         pendingDelayMs = settings.marqueeDelayMs;
         pendingCompatRetry = settings.compatRetry;
-         pendingMarqueeBounce = settings.marqueeBounce;
+        pendingMarqueeBounce = settings.marqueeBounce;
         pendingIslandCompat = settings.islandCompat;
+        pendingIslandTextMode = settings.islandTextMode;
+        pendingFocusMaxDisplaySeconds = settings.focusMaxDisplaySeconds;
         pendingDisableIslandProperty = settings.disableIslandProperty;
         pendingDisableIslandFeatureCache = settings.disableIslandFeatureCache;
         pendingAllowFocusClick = settings.allowFocusClick;
@@ -1041,20 +1184,42 @@ public final class SettingsActivity extends Activity {
     private void captureCurrentInputs() {
         if (generalSeparatorInput != null) pendingGeneralSeparator = generalSeparatorInput.getText().toString();
         if (sideSeparatorInput != null) pendingSideSeparator = sideSeparatorInput.getText().toString();
+        if (focusMaxDisplayInput != null) {
+            pendingFocusMaxDisplaySeconds = FocusRestoreSettings.parseMaxDisplaySeconds(
+                    focusMaxDisplayInput.getText().toString(), pendingFocusMaxDisplaySeconds);
+        }
+    }
+
+    /** The whole screen state as a named snapshot; call {@link FocusRestoreSettings.Editor#build()}. */
+    private FocusRestoreSettings.Editor pendingSettings() {
+        return FocusRestoreSettings.edit()
+                .hookMode(pendingHookMode)
+                .limitWidth(pendingManual)
+                .widthDp(pendingWidthDp)
+                .marqueeDelayMs(pendingDelayMs)
+                .compatRetry(pendingCompatRetry)
+                .marqueeBounce(pendingMarqueeBounce)
+                .islandCompat(pendingIslandCompat)
+                .disableIslandProperty(pendingDisableIslandProperty)
+                .disableIslandFeatureCache(pendingDisableIslandFeatureCache)
+                .allowFocusClick(pendingAllowFocusClick)
+                .hideNotificationIcons(pendingHideNotificationIcons)
+                .showFocusDivider(pendingShowFocusDivider)
+                .showIslandIcon(pendingShowIslandIcon)
+                .tintIslandIcon(pendingTintIslandIcon)
+                .useSmallIconFallback(pendingUseSmallIconFallback)
+                .notificationRowClickFallback(pendingNotificationRowClickFallback)
+                .independentFocusBanner(pendingIndependentFocusBanner)
+                .islandTextMode(pendingIslandTextMode)
+                .focusMaxDisplaySeconds(pendingFocusMaxDisplaySeconds)
+                .islandGeneralSeparator(pendingGeneralSeparator)
+                .islandSideSeparator(pendingSideSeparator)
+                .islandForcePackages(pendingForcePackages);
     }
 
     private void saveSettings() {
-        if (generalSeparatorInput != null) pendingGeneralSeparator = generalSeparatorInput.getText().toString();
-        if (sideSeparatorInput != null) pendingSideSeparator = sideSeparatorInput.getText().toString();
-        settings = FocusRestoreSettings.withValues(pendingHookMode, pendingManual,
-                pendingWidthDp, pendingDelayMs,
-                pendingCompatRetry, pendingMarqueeBounce, pendingIslandCompat, pendingDisableIslandProperty,
-                pendingDisableIslandFeatureCache, pendingAllowFocusClick,
-                pendingHideNotificationIcons, pendingShowFocusDivider,
-                pendingShowIslandIcon, pendingTintIslandIcon,
-                pendingUseSmallIconFallback, pendingNotificationRowClickFallback,
-                pendingIndependentFocusBanner, pendingGeneralSeparator, pendingSideSeparator,
-                pendingForcePackages);
+        captureCurrentInputs();
+        settings = pendingSettings().build();
         pendingForcePackages = new HashSet<>(settings.islandForcePackages);
         updateForcePackagesButton();
         long generation;
@@ -1067,6 +1232,8 @@ public final class SettingsActivity extends Activity {
             if (saveWorkerRunning) return;
             saveWorkerRunning = true;
         }
+        android.util.Log.i(TAG, "settings save queued generation=" + generation + " "
+                + settings.describe());
         Future<?> future = saveExecutor.submit(this::drainSettingsSaves);
         synchronized (saveLock) {
             saveFuture = future;
@@ -1175,7 +1342,7 @@ public final class SettingsActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 21) button.setStateListAnimator(null);
     }
 
-    private Button createModeButton(String label, int mode) {
+    private Button createChoiceButton(String label, Runnable onSelect) {
         Button button = new Button(this);
         button.setText(label);
         button.setTextSize(14);
@@ -1183,13 +1350,28 @@ public final class SettingsActivity extends Activity {
         button.setMinHeight(dp(40));
         button.setMinWidth(dp(48));
         button.setPadding(dp(8), 0, dp(8), 0);
-        button.setOnClickListener(v -> {
+        button.setOnClickListener(v -> onSelect.run());
+        return button;
+    }
+
+    /** Two mutually exclusive options side by side, matching the system version selector. */
+    private LinearLayout twoChoiceSelector(Button left, Button right) {
+        LinearLayout selector = new LinearLayout(this);
+        selector.setOrientation(LinearLayout.HORIZONTAL);
+        selector.addView(left, new LinearLayout.LayoutParams(0, dp(40), 1f));
+        LinearLayout.LayoutParams rightParams = new LinearLayout.LayoutParams(0, dp(40), 1f);
+        rightParams.leftMargin = dp(8);
+        selector.addView(right, rightParams);
+        return selector;
+    }
+
+    private Button createModeButton(String label, int mode) {
+        return createChoiceButton(label, () -> {
             if (pendingHookMode == mode) return;
             pendingHookMode = mode;
             updateModeButtons();
             markPending();
         });
-        return button;
     }
 
     private void updateModeButtons() {

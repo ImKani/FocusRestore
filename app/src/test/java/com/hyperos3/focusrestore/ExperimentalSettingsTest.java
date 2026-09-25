@@ -34,11 +34,23 @@ public class ExperimentalSettingsTest {
             boolean allowClick = (mask & 1) != 0;
             boolean rowFallback = (mask & 2) != 0;
             boolean banner = (mask & 4) != 0;
-            FocusRestoreSettings settings = FocusRestoreSettings.withValues(
-                    FocusRestoreSettings.HOOK_MODE_OS4, true, 160, 200,
-                    false, true, false, true, true,
-                    allowClick, true, true, true, true, false, rowFallback, banner,
-                    "·", "·", Collections.<String>emptySet());
+            FocusRestoreSettings settings = FocusRestoreSettings.edit()
+                    .hookMode(FocusRestoreSettings.HOOK_MODE_OS4)
+                    .marqueeBounce(true)
+                    .islandCompat(false)
+                    .disableIslandProperty(true)
+                    .disableIslandFeatureCache(true)
+                    .allowFocusClick(allowClick)
+                    .hideNotificationIcons(true)
+                    .showFocusDivider(true)
+                    .showIslandIcon(true)
+                    .tintIslandIcon(true)
+                    .useSmallIconFallback(false)
+                    .notificationRowClickFallback(rowFallback)
+                    .independentFocusBanner(banner)
+                    .islandGeneralSeparator("·")
+                    .islandSideSeparator("·")
+                    .build();
             assertEquals(allowClick, settings.allowFocusClick);
             assertEquals(rowFallback, settings.notificationRowClickFallback);
             assertEquals(banner, settings.independentFocusBanner);
@@ -158,6 +170,141 @@ public class ExperimentalSettingsTest {
         }
     }
 
+    @Test
+    public void islandTextModeAndFocusDisplayLimitSurviveSaveReloadAndProvider() {
+        FocusRestoreSettings saved = FocusRestoreSettings.edit()
+                .hookMode(FocusRestoreSettings.HOOK_MODE_OS4)
+                .marqueeBounce(true)
+                .islandCompat(true)
+                .islandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT)
+                .focusMaxDisplaySeconds(7.25f)
+                .islandGeneralSeparator("·")
+                .islandSideSeparator("·")
+                .build();
+        Map<String, Object> values = legacyPreferences();
+        assertEquals(7.25f, saved.focusMaxDisplaySeconds, 0.0001f);
+
+        assertTrue(saved.save(memoryPreferences(values), 12L));
+
+        // Same values must come back from the app store after a restart.
+        FocusRestoreSettings reloaded = FocusRestoreSettings.fromPreferences(
+                memoryPreferences(values));
+        assertEquals(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT, reloaded.islandTextMode);
+        assertEquals(7.25f, reloaded.focusMaxDisplaySeconds, 0.0001f);
+
+        // ...and reach SystemUI through the provider wire format.
+        Object[] row = SettingsContract.toRow(reloaded, "·");
+        assertEquals(SettingsContract.COLUMNS.length, row.length);
+        HookSettings hook = HookSettings.fromCursor(positionedCursor(row));
+        assertEquals(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT, hook.islandTextMode);
+        assertEquals(7.25f, hook.focusMaxDisplaySeconds, 0.0001f);
+    }
+
+    @Test
+    public void focusDisplayLimitParsesTextAndNormalizesRange() {
+        assertEquals(0f, FocusRestoreSettings.parseMaxDisplaySeconds("", 3f), 0.0001f);
+        assertEquals(0f, FocusRestoreSettings.parseMaxDisplaySeconds("0", 3f), 0.0001f);
+        assertEquals(0.5f, FocusRestoreSettings.parseMaxDisplaySeconds("0.50", 3f), 0.0001f);
+        assertEquals(12.34f, FocusRestoreSettings.parseMaxDisplaySeconds("12.34", 3f), 0.0001f);
+        // Out-of-range and unparsable text must never silently disable or blow past the limit.
+        assertEquals(FocusRestoreSettings.MIN_FOCUS_MAX_DISPLAY_SECONDS,
+                FocusRestoreSettings.parseMaxDisplaySeconds("0.001", 3f), 0.0001f);
+        assertEquals(FocusRestoreSettings.MAX_FOCUS_MAX_DISPLAY_SECONDS,
+                FocusRestoreSettings.parseMaxDisplaySeconds("999999", 3f), 0.0001f);
+        assertEquals(3f, FocusRestoreSettings.parseMaxDisplaySeconds("abc", 3f), 0.0001f);
+        // A value written by the previous build as an int must still load as seconds.
+        Map<String, Object> legacy = legacyPreferences();
+        legacy.put("focus_max_display_seconds", 30);
+        assertEquals(30f, FocusRestoreSettings.fromPreferences(memoryPreferences(legacy))
+                .focusMaxDisplaySeconds, 0.0001f);
+        assertEquals("7.25", FocusRestoreSettings.formatMaxDisplaySeconds(7.25f));
+        assertEquals("0", FocusRestoreSettings.formatMaxDisplaySeconds(0f));
+    }
+
+    @Test
+    public void staleActivitySnapshotNeverOverridesNewerStoredSettings() {
+        // The island-conversion switch regression: a snapshot captured before the last save must
+        // never be replayed over the store, otherwise the switch turns itself back off.
+        assertTrue(FocusRestoreSettings.snapshotIsStale(7L, 8L));
+        assertFalse(FocusRestoreSettings.snapshotIsStale(8L, 8L));
+        assertFalse(FocusRestoreSettings.snapshotIsStale(9L, 8L));
+        assertFalse(FocusRestoreSettings.snapshotIsStale(-1L, 8L));
+        // A save interrupted by process death still has to be replayed.
+        assertTrue(FocusRestoreSettings.snapshotNeedsReplay(9L, 8L));
+        assertFalse(FocusRestoreSettings.snapshotNeedsReplay(8L, 8L));
+        assertFalse(FocusRestoreSettings.snapshotNeedsReplay(7L, 8L));
+        assertFalse(FocusRestoreSettings.snapshotNeedsReplay(-1L, 8L));
+    }
+
+    @Test
+    public void editorSetsEveryFieldAndSurvivesTheStore() {
+        FocusRestoreSettings all = FocusRestoreSettings.edit()
+                .hookMode(FocusRestoreSettings.HOOK_MODE_OS4)
+                .limitWidth(false)
+                .widthDp(244)
+                .marqueeDelayMs(1700)
+                .compatRetry(true)
+                .marqueeBounce(false)
+                .islandCompat(true)
+                .disableIslandProperty(false)
+                .disableIslandFeatureCache(false)
+                .allowFocusClick(true)
+                .hideNotificationIcons(false)
+                .showFocusDivider(false)
+                .showIslandIcon(true)
+                .tintIslandIcon(false)
+                .useSmallIconFallback(true)
+                .notificationRowClickFallback(true)
+                .independentFocusBanner(true)
+                .islandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT)
+                .focusMaxDisplaySeconds(12.5f)
+                .islandGeneralSeparator("general")
+                .islandSideSeparator("side")
+                .islandForcePackages(Collections.singleton("com.example.focus"))
+                .build();
+
+        assertEquals(FocusRestoreSettings.HOOK_MODE_OS4, all.hookMode);
+        assertFalse(all.limitWidth);
+        assertEquals(244, all.widthDp);
+        assertEquals(1700, all.marqueeDelayMs);
+        assertTrue(all.compatRetry);
+        assertFalse(all.marqueeBounce);
+        assertTrue(all.islandCompat);
+        assertFalse(all.disableIslandProperty);
+        assertFalse(all.disableIslandFeatureCache);
+        assertTrue(all.allowFocusClick);
+        assertFalse(all.hideNotificationIcons);
+        assertFalse(all.showFocusDivider);
+        assertTrue(all.showIslandIcon);
+        assertFalse(all.tintIslandIcon);
+        assertTrue(all.useSmallIconFallback);
+        assertTrue(all.notificationRowClickFallback);
+        assertTrue(all.independentFocusBanner);
+        assertEquals(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT, all.islandTextMode);
+        assertEquals(12.5f, all.focusMaxDisplaySeconds, 0.0001f);
+        assertEquals("general", all.islandGeneralSeparator);
+        assertEquals("side", all.islandSideSeparator);
+        assertEquals(Collections.singleton("com.example.focus"), all.islandForcePackages);
+
+        // SystemUI must see the very same values, including the fields added in 0.13.48.
+        HookSettings hook = HookSettings.fromCursor(positionedCursor(
+                SettingsContract.toRow(all, "general")));
+        assertTrue(hook.islandCompat);
+        assertEquals(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT, hook.islandTextMode);
+        assertEquals(12.5f, hook.focusMaxDisplaySeconds, 0.0001f);
+        assertEquals(FocusRestoreSettings.HOOK_MODE_OS4, hook.hookMode);
+        assertEquals("side", hook.sideSeparator);
+
+        // defaults() and HookSettings.defaults() must not drift apart either.
+        HookSettings hookDefaults = HookSettings.defaults();
+        FocusRestoreSettings defaults = FocusRestoreSettings.defaults();
+        assertEquals(defaults.islandCompat, hookDefaults.islandCompat);
+        assertEquals(defaults.islandTextMode, hookDefaults.islandTextMode);
+        assertEquals(defaults.focusMaxDisplaySeconds, hookDefaults.focusMaxDisplaySeconds, 0.0001f);
+        assertEquals(defaults.showIslandIcon, hookDefaults.showIslandIcon);
+        assertEquals(defaults.tintIslandIcon, hookDefaults.tintIslandIcon);
+    }
+
     /** Fixed pre-banner wire fixture, independent of current schema constants. */
     private static Object[] legacyWireRow() {
         return new Object[]{0, 244, 1700, 1, 1, "legacy", 1, "general", "side",
@@ -198,6 +345,7 @@ public class ExperimentalSettingsTest {
                         case "getColumnCount": return row.length;
                         case "isNull": return row[(Integer) args[0]] == null;
                         case "getInt": return ((Number) row[(Integer) args[0]]).intValue();
+                        case "getFloat": return ((Number) row[(Integer) args[0]]).floatValue();
                         case "getString": return (String) row[(Integer) args[0]];
                         default: throw new AssertionError("Unexpected Cursor call: " + method.getName());
                     }
@@ -211,9 +359,12 @@ public class ExperimentalSettingsTest {
                         case "getBoolean":
                         case "getInt":
                         case "getLong":
+                        case "getFloat":
                         case "getString":
                         case "getStringSet":
                             return values.containsKey(args[0]) ? values.get(args[0]) : args[1];
+                        case "getAll":
+                            return new HashMap<>(values);
                         case "edit":
                             Map<String, Object> pending = new HashMap<>();
                             return Proxy.newProxyInstance(SharedPreferences.Editor.class.getClassLoader(),
@@ -222,6 +373,7 @@ public class ExperimentalSettingsTest {
                                             case "putBoolean":
                                             case "putInt":
                                             case "putLong":
+                                            case "putFloat":
                                             case "putString":
                                             case "putStringSet":
                                                 pending.put((String) fields[0], fields[1]);

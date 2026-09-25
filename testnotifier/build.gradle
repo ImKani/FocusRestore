@@ -1,7 +1,7 @@
 plugins { id 'com.android.application' }
 
 android {
-    namespace 'com.hyperos3.focusrestore'
+    namespace 'com.hyperos3.focustestnotifier'
     compileSdk 35
 
     buildFeatures {
@@ -9,16 +9,16 @@ android {
     }
 
     defaultConfig {
-        applicationId 'com.hyperos3.focusrestore'
+        applicationId 'com.hyperos3.focustestnotifier'
         minSdk 27
         targetSdk 35
-        versionCode 125
-        versionName '0.15.6'
+        versionCode 3
+        versionName '1.0.2'
     }
 
     signingConfigs {
+        // Same preserved test certificate as :app, so both install over each other cleanly.
         preservedDebug {
-            // Keep the certificate used by the existing published test APKs.
             storeFile file('../.android/debug.keystore')
             storePassword 'android'
             keyAlias 'androiddebugkey'
@@ -31,22 +31,13 @@ android {
             signingConfig signingConfigs.preservedDebug
         }
         release {
-            // Sign local release test builds so ADB can install them.
             signingConfig signingConfigs.preservedDebug
         }
     }
 
     applicationVariants.all { variant ->
         variant.outputs.all {
-            outputFileName = "FocusRestore-${variant.versionName}-${variant.buildType.name}.apk"
+            outputFileName = "FocusTestNotifier-${variant.versionName}-${variant.buildType.name}.apk"
         }
     }
 }
-
-dependencies {
-    compileOnly 'de.robv.android.xposed:api:82'
-    testImplementation 'de.robv.android.xposed:api:82'
-    testImplementation 'junit:junit:4.13.2'
-    testImplementation 'org.json:json:20240303'
-}
-

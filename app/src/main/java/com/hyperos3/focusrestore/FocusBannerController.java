@@ -258,6 +258,10 @@ public final class FocusBannerController {
             windowParams.x = geometry.left;
             windowParams.y = geometry.top;
             windowParams.setTitle("FocusRestore independent native focus banner");
+            if (prepared.render instanceof RemoteViewsFocusBannerSource) {
+                event(key, "banner container background="
+                        + ((RemoteViewsFocusBannerSource) prepared.render).containerBackground());
+            }
             if (Build.VERSION.SDK_INT >= 30) {
                 windowParams.layoutInDisplayCutoutMode =
                         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
@@ -280,9 +284,9 @@ public final class FocusBannerController {
             windowAdded = true;
             mainHandler().postDelayed(monitor, MONITOR_MS);
             event(key, "show accepted: addView returned type=2009 display=" + displayId
-                    + " source=" + safe(prepared.render.source, 240)
+                    + " source=" + safe(prepared.render.source(), 240)
                     + " width=" + geometry.width + " measuredHeight=" + prepared.measuredHeight
-                    + " nativeMinHeight=" + prepared.render.minHeightPx + " maxHeight=" + geometry.maxHeight
+                    + " nativeMinHeight=" + prepared.render.minHeightPx() + " maxHeight=" + geometry.maxHeight
                     + " x=" + geometry.left + " y=" + geometry.top
                     + "; awaiting native Ready/onLayout/draw; visibility unverified");
             return true;
@@ -311,7 +315,7 @@ public final class FocusBannerController {
         if (nativeOperation) return;
         runMain("native-source-changed", () -> {
             if (nativeOperation || banner == null || removalPending || currentSbn == null) return;
-            if (renderer.isCurrent(banner.render, currentSbn)) return;
+            if (banner.render.isCurrent(currentSbn)) return;
             scheduleUpdate(UPDATE_MS);
         });
     }
@@ -381,32 +385,44 @@ public final class FocusBannerController {
 
     private Prepared prepareNative(View anchor, Display display) throws Throwable {
         lastRenderAttempt = SystemClock.uptimeMillis();
-        NativeFocusTemplateRenderer.Render candidate = null;
+        FocusBannerSource candidate = null;
         beginNativeOperation();
         try {
-            candidate = renderer.create(currentKey, currentSbn);
-            if (candidate == null || candidate.view == null || candidate.context == null) {
+            try {
+                candidate = renderer.create(currentKey, currentSbn);
+            } catch (Throwable nativeError) {
+                // A focusType=CUSTOM notification is rendered by FocusNotifPreHandler through
+                // buildNoParamsFocusNotification, which never calls createStandardTemplateView, so the
+                // native-template route can never become ready for it however long we wait. Fall back
+                // to inflating a fresh copy of the notification's own miui.focus.rv; when the
+                // notification carries none, rethrow so the original diagnosis is what gets logged.
+                if (!RemoteViewsFocusBannerSource.isAvailable(currentSbn)) throw nativeError;
+                event(currentKey, "native template unavailable; using the notification's own RemoteViews");
+                candidate = RemoteViewsFocusBannerSource.create(anchor.getContext(), currentSbn,
+                        isNightMode(anchor));
+            }
+            if (candidate == null || candidate.view() == null || candidate.context() == null) {
                 throw new IllegalStateException("native source/template not ready");
             }
             if (banner != null && (candidate == banner.render
-                    || (banner.render != null && candidate.view == banner.render.view))) {
+                    || (banner.render != null && candidate.view() == banner.render.view()))) {
                 // Never dispose a session whose view is still being displayed.
                 candidate = null;
                 throw new IllegalStateException("renderer reused the currently displayed native session");
             }
-            if (candidate.view.getParent() != null || candidate.view.isAttachedToWindow()) {
+            if (candidate.view().getParent() != null || candidate.view().isAttachedToWindow()) {
                 throw new IllegalStateException("native template is not an independent unattached view");
             }
-            if (candidate.widthPx <= 0 || candidate.minHeightPx < 0) {
+            if (candidate.widthPx() <= 0 || candidate.minHeightPx() < 0) {
                 throw new IllegalStateException("native template has invalid dimensions");
             }
-            Geometry geometry = geometry(anchor, display, candidate.widthPx);
+            Geometry geometry = geometry(anchor, display, candidate.widthPx());
             if (geometry.width <= 0 || geometry.maxHeight <= 0) {
                 throw new IllegalStateException("no safe display area for native template");
             }
-            candidate.view.measure(View.MeasureSpec.makeMeasureSpec(geometry.width, View.MeasureSpec.EXACTLY),
+            candidate.view().measure(View.MeasureSpec.makeMeasureSpec(geometry.width, View.MeasureSpec.EXACTLY),
                     View.MeasureSpec.makeMeasureSpec(geometry.maxHeight, View.MeasureSpec.AT_MOST));
-            int measuredHeight = Math.min(geometry.maxHeight, candidate.view.getMeasuredHeight());
+            int measuredHeight = Math.min(geometry.maxHeight, candidate.view().getMeasuredHeight());
             if (measuredHeight <= 0) throw new IllegalStateException("native template measured empty");
             return new Prepared(candidate, geometry, measuredHeight);
         } catch (Throwable error) {
@@ -415,6 +431,14 @@ public final class FocusBannerController {
         } finally {
             endNativeOperation();
         }
+    }
+
+    /** Chooses the RemoteViews variant the ROM would show: the night layout in night mode. */
+    private static boolean isNightMode(View anchor) {
+        if (anchor == null) return false;
+        int mode = anchor.getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES;
     }
 
     private void retainPreviousFrame(Throwable error) {
@@ -427,7 +451,7 @@ public final class FocusBannerController {
         if (nativeGraceDeadline == 0L) {
             nativeGraceDeadline = Math.min(hardDeadline, now + NATIVE_GRACE_MS);
             fail("native refresh not ready: retaining same-key previous frame briefly", error);
-            event(currentKey, "native not ready: retaining source=" + safe(banner.render.source, 240)
+            event(currentKey, "native not ready: retaining source=" + safe(banner.render.source(), 240)
                     + " for at most " + Math.max(0L, nativeGraceDeadline - now) + "ms");
             mainHandler().postAtTime(expireNativeGrace, nativeGraceDeadline);
         }
@@ -455,7 +479,7 @@ public final class FocusBannerController {
         nativeOperation = nativeOperationDepth != 0;
     }
 
-    private void closeRender(NativeFocusTemplateRenderer.Render render, String key) {
+    private void closeRender(FocusBannerSource render, String key) {
         if (render == null) return;
         beginNativeOperation();
         try { render.close(); }
@@ -695,7 +719,7 @@ public final class FocusBannerController {
     /** Transparent exception boundary; all visible content and actions belong to the native root. */
     private final class BannerFrame extends FrameLayout {
         private final String notificationKey;
-        private NativeFocusTemplateRenderer.Render render;
+        private FocusBannerSource render;
         private int maxHeight;
         private boolean renderAttached;
         private int lastLayoutWidth = -1;
@@ -723,10 +747,10 @@ public final class FocusBannerController {
         private void openNotificationBody() {
             if (bodyClickInProgress || banner != this || removalPending || renderingFailed
                     || updateScheduled || nativeGraceDeadline != 0L
-                    || !renderer.isCurrent(render, currentSbn)) return;
+                    || !render.isCurrent(currentSbn)) return;
             String blocked = displayBlockedReason();
             if (blocked != null) { dismiss(blocked); return; }
-            NativeFocusTemplateRenderer.Render clicked = render;
+            FocusBannerSource clicked = render;
             bodyClickInProgress = true;
             try {
                 boolean dispatched = notificationOpener.open(notificationKey, currentSbn);
@@ -752,7 +776,7 @@ public final class FocusBannerController {
                 layoutLogCount = 0;
                 drawnLogged = false;
                 renderingFailed = false;
-                addView(render.view, new FrameLayout.LayoutParams(
+                addView(render.view(), new FrameLayout.LayoutParams(
                         LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.LEFT));
                 if (isAttachedToWindow()) mainHandler().post(attachedCallback);
                 requestLayout();
@@ -765,10 +789,10 @@ public final class FocusBannerController {
         void releaseContent() {
             cancelNativeGesture();
             mainHandler().removeCallbacks(attachedCallback);
-            NativeFocusTemplateRenderer.Render previous = render;
+            FocusBannerSource previous = render;
             if (previous == null) return;
-            if (previous.view.getParent() == this) removeView(previous.view);
-            if (previous.view.getParent() != null || previous.view.isAttachedToWindow()) {
+            if (previous.view().getParent() == this) removeView(previous.view());
+            if (previous.view().getParent() != null || previous.view().isAttachedToWindow()) {
                 throw new IllegalStateException("native root still attached; session close deferred");
             }
             render = null;
@@ -778,14 +802,14 @@ public final class FocusBannerController {
 
         private void notifyNativeAttached() {
             if (banner != this || removalPending || renderingFailed || renderAttached || render == null
-                    || !isAttachedToWindow() || !render.view.isAttachedToWindow()) return;
-            NativeFocusTemplateRenderer.Render attached = render;
+                    || !isAttachedToWindow() || !render.view().isAttachedToWindow()) return;
+            FocusBannerSource attached = render;
             beginNativeOperation();
             try {
                 attached.onAttached();
                 renderAttached = true;
-                event(notificationKey, "native Ready source=" + safe(attached.source, 240)
-                        + " attached=true width=" + attached.widthPx + " minHeight=" + attached.minHeightPx);
+                event(notificationKey, "native Ready source=" + safe(attached.source(), 240)
+                        + " attached=true width=" + attached.widthPx() + " minHeight=" + attached.minHeightPx());
             } catch (Throwable error) {
                 renderingFailure("native onAttached", error);
             } finally {
@@ -797,7 +821,7 @@ public final class FocusBannerController {
             if (renderingFailed) return;
             renderingFailed = true;
             fail(notificationKey, stage + " failed", error);
-            NativeFocusTemplateRenderer.Render failedRender = render;
+            FocusBannerSource failedRender = render;
             mainHandler().post(() -> {
                 if (banner == this && renderingFailed && render == failedRender) {
                     dismissMain(stage + "-failed");
@@ -851,7 +875,7 @@ public final class FocusBannerController {
                 super.dispatchDraw(canvas);
                 if (!drawnLogged && getWidth() > 0 && getHeight() > 0 && render != null) {
                     drawnLogged = true;
-                    event(notificationKey, "native draw source=" + safe(render.source, 240)
+                    event(notificationKey, "native draw source=" + safe(render.source(), 240)
                             + " width=" + getWidth() + " height=" + getHeight()
                             + " shown=" + isShown() + "; not proof of unobscured pixels");
                 }
@@ -885,7 +909,7 @@ public final class FocusBannerController {
             if (blocked != null) { dismiss(blocked); return true; }
             // A superseded frame may remain visible briefly while native binding catches up,
             // but its old PendingIntents must never accept a new gesture.
-            if (updateScheduled || nativeGraceDeadline != 0L || !renderer.isCurrent(render, currentSbn)) {
+            if (updateScheduled || nativeGraceDeadline != 0L || !render.isCurrent(currentSbn)) {
                 cancelNativeGesture();
                 return true;
             }
@@ -992,11 +1016,11 @@ public final class FocusBannerController {
     private static final class Geometry { int width; int left; int top; int maxHeight; }
 
     private static final class Prepared {
-        final NativeFocusTemplateRenderer.Render render;
+        final FocusBannerSource render;
         final Geometry geometry;
         final int measuredHeight;
 
-        Prepared(NativeFocusTemplateRenderer.Render render, Geometry geometry, int measuredHeight) {
+        Prepared(FocusBannerSource render, Geometry geometry, int measuredHeight) {
             this.render = render;
             this.geometry = geometry;
             this.measuredHeight = measuredHeight;

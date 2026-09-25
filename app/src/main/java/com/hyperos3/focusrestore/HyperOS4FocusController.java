@@ -7,6 +7,8 @@ import android.content.res.Configuration;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.drawable.Icon;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -37,6 +39,11 @@ import de.robv.android.xposed.XposedHelpers;
 final class HyperOS4FocusController {
     interface ItemFactory {
         DisplayItem create(Object notificationEntry);
+        boolean isExpired(Object notificationEntry);
+        /** Milliseconds until the display limit is reached, or {@link Long#MAX_VALUE} when unlimited. */
+        long expiryRemainingMillis(Object notificationEntry);
+        /** Called once when this entry actually starts being displayed; starts the display window. */
+        void onDisplayed(Object notificationEntry);
         HookSettings settings();
         boolean clickNotificationRow(Object notificationEntry, String key);
         boolean showFocusBanner(View anchor, Object notificationEntry, String key);
@@ -112,6 +119,9 @@ final class HyperOS4FocusController {
     private boolean renderPosted;
     private FocusHostView renderPostHost;
     private TextView statusBarClock;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Runnable expiryCheck = this::runExpiryCheck;
+    private String displayedKey;
     private final NotificationIconsVisibilityState notificationIconsVisibility =
             new NotificationIconsVisibilityState(View.GONE);
     private View notificationIcons;
@@ -446,6 +456,7 @@ final class HyperOS4FocusController {
         renderGeneration++;
         renderPosted = false;
         renderPostHost = null;
+        mainHandler.removeCallbacks(expiryCheck);
         restoreNotificationIcons();
         unregisterDarkReceiver();
         FocusHostView host = focusHost;
@@ -495,6 +506,7 @@ final class HyperOS4FocusController {
         synchronized (items) {
             DisplayItem selected = null;
             for (DisplayItem candidate : items.values()) {
+                if (itemFactory.isExpired(candidate.notificationEntry)) continue;
                 if (selected == null || OS4FocusPriorityPolicy.compare(
                         candidate.priority, candidate.updateSequence,
                         selected.priority, selected.updateSequence) > 0) {
@@ -504,6 +516,33 @@ final class HyperOS4FocusController {
             best = selected;
         }
         render(host, best, generation);
+        if (best == null) {
+            displayedKey = null;
+        } else if (!best.key.equals(displayedKey)) {
+            // The display window starts here, not at the notification post time.
+            displayedKey = best.key;
+            itemFactory.onDisplayed(best.notificationEntry);
+        }
+        scheduleExpiryCheck(best);
+    }
+
+    /**
+     * The candidate list only changes on notification events, so a displayed focus with a finite
+     * limit needs its own wake-up to disappear exactly when the user's time is up.
+     */
+    private void scheduleExpiryCheck(DisplayItem item) {
+        mainHandler.removeCallbacks(expiryCheck);
+        if (item == null) return;
+        long remaining = itemFactory.expiryRemainingMillis(item.notificationEntry);
+        if (remaining == Long.MAX_VALUE) return;
+        mainHandler.postDelayed(expiryCheck, Math.max(0L, remaining) + 32L);
+    }
+
+    private void runExpiryCheck() {
+        FocusHostView host = focusHost;
+        if (host == null) return;
+        logger.log("OS4 display limit reached; re-evaluating focus candidates");
+        renderBest();
     }
 
     private synchronized boolean isRenderCurrent(FocusHostView host, long generation) {

@@ -7,6 +7,8 @@ import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
+import android.os.Binder;
+import android.os.Process;
 import android.util.Log;
 
 public final class SettingsProvider extends ContentProvider {
@@ -16,6 +18,8 @@ public final class SettingsProvider extends ContentProvider {
     static final String[] COLUMNS = SettingsContract.COLUMNS;
     static final String KEY_MARQUEE_DELAY_MS = FocusRestoreSettings.KEY_MARQUEE_DELAY_MS;
     static final int DEFAULT_MARQUEE_DELAY_MS = FocusRestoreSettings.DEFAULT_MARQUEE_DELAY_MS;
+    /** The only external reader: SystemUI hosts the hooks and reads this provider across processes. */
+    private static final String SYSTEM_UI = "com.android.systemui";
     private String lastDiagnostic;
 
     @Override
@@ -27,6 +31,10 @@ public final class SettingsProvider extends ContentProvider {
     public Cursor query(Uri uri, String[] projection, String selection,
                         String[] selectionArgs, String sortOrder) {
         if (!URI.equals(uri) || getContext() == null) return null;
+        if (!isTrustedCaller()) {
+            logDiagnostic("provider settings rejected callerUid=" + Binder.getCallingUid());
+            return null;
+        }
         Context context = getContext();
         SharedPreferences preferences = FocusRestoreSettings.hookPreferences(context);
         if (!FocusRestoreSettings.hasHookSettings(preferences)) {
@@ -42,6 +50,31 @@ public final class SettingsProvider extends ContentProvider {
         MatrixCursor cursor = new MatrixCursor(COLUMNS);
         cursor.addRow(SettingsContract.toRow(settings, legacySeparator));
         return cursor;
+    }
+
+    /**
+     * The provider must stay exported because SystemUI reads it from another process, and a
+     * signature permission cannot be used either (SystemUI is not signed with the module key), so
+     * the caller identity is checked instead: our own process, the system uid, or SystemUI itself.
+     *
+     * <p>An inconclusive identity lookup deliberately allows the read: the payload contains only
+     * this module's own display settings, and silently breaking the hooks on an unusual ROM would
+     * be worse than the marginal disclosure. Ordinary third-party apps are rejected because their
+     * uid is neither system nor SystemUI.
+     */
+    private boolean isTrustedCaller() {
+        try {
+            int uid = Binder.getCallingUid();
+            if (uid == Process.myUid() || uid == Process.SYSTEM_UID) return true;
+            String[] packages = getContext().getPackageManager().getPackagesForUid(uid);
+            if (packages == null || packages.length == 0) return true;
+            for (String name : packages) {
+                if (SYSTEM_UI.equals(name)) return true;
+            }
+            return false;
+        } catch (Throwable unsupported) {
+            return true;
+        }
     }
 
     private void logDiagnostic(String diagnostic) {

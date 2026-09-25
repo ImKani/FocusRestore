@@ -25,6 +25,8 @@ final class HookSettings {
     final boolean useSmallIconFallback;
     final boolean notificationRowClickFallback;
     final boolean independentFocusBanner;
+    final int islandTextMode;
+    final float focusMaxDisplaySeconds;
     final String generalSeparator;
     final String sideSeparator;
     final Set<String> islandForcePackages;
@@ -36,6 +38,7 @@ final class HookSettings {
                          boolean showFocusDivider, boolean showIslandIcon,
                          boolean tintIslandIcon, boolean useSmallIconFallback,
                          boolean notificationRowClickFallback, boolean independentFocusBanner,
+                         int islandTextMode, float focusMaxDisplaySeconds,
                          String generalSeparator,
                          String sideSeparator, Set<String> forcePackages) {
         this.hookMode = FocusRestoreSettings.normalizeHookMode(hookMode);
@@ -56,6 +59,9 @@ final class HookSettings {
         this.useSmallIconFallback = useSmallIconFallback;
         this.notificationRowClickFallback = notificationRowClickFallback;
         this.independentFocusBanner = independentFocusBanner;
+        this.islandTextMode = FocusRestoreSettings.normalizeIslandTextMode(islandTextMode);
+        this.focusMaxDisplaySeconds =
+                FocusRestoreSettings.normalizeMaxDisplaySeconds(focusMaxDisplaySeconds);
         this.generalSeparator = InputLimits.limitSeparator(generalSeparator == null
                 ? FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR : generalSeparator);
         this.sideSeparator = InputLimits.limitSeparator(sideSeparator == null
@@ -64,23 +70,24 @@ final class HookSettings {
     }
 
     static HookSettings defaults() {
-        return new HookSettings(FocusRestoreSettings.DEFAULT_HOOK_MODE,
-                FocusRestoreSettings.DEFAULT_LIMIT_WIDTH,
-                FocusRestoreSettings.DEFAULT_WIDTH_DP, FocusRestoreSettings.DEFAULT_MARQUEE_DELAY_MS,
-                FocusRestoreSettings.DEFAULT_COMPAT_RETRY, FocusRestoreSettings.DEFAULT_MARQUEE_BOUNCE,
-                 FocusRestoreSettings.DEFAULT_ISLAND_COMPAT,
-                FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_PROPERTY,
-                FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_FEATURE_CACHE,
-                FocusRestoreSettings.DEFAULT_ALLOW_FOCUS_CLICK,
-                FocusRestoreSettings.DEFAULT_HIDE_NOTIFICATION_ICONS,
-                FocusRestoreSettings.DEFAULT_SHOW_FOCUS_DIVIDER,
-                FocusRestoreSettings.DEFAULT_SHOW_ISLAND_ICON,
-                FocusRestoreSettings.DEFAULT_TINT_ISLAND_ICON,
-                FocusRestoreSettings.DEFAULT_USE_SMALL_ICON_FALLBACK,
-                FocusRestoreSettings.DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK,
-                FocusRestoreSettings.DEFAULT_INDEPENDENT_FOCUS_BANNER,
-                FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR, FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR,
-                Collections.<String>emptySet());
+        return fromSettings(FocusRestoreSettings.defaults());
+    }
+
+    /**
+     * Maps a stored snapshot onto the SystemUI-side view. Keeping the single positional mapping
+     * here means the hook defaults cannot drift away from the settings defaults.
+     */
+    static HookSettings fromSettings(FocusRestoreSettings source) {
+        return new HookSettings(source.hookMode, source.limitWidth, source.widthDp,
+                source.marqueeDelayMs, source.compatRetry, source.marqueeBounce,
+                source.islandCompat, source.disableIslandProperty,
+                source.disableIslandFeatureCache, source.allowFocusClick,
+                source.hideNotificationIcons, source.showFocusDivider, source.showIslandIcon,
+                source.tintIslandIcon, source.useSmallIconFallback,
+                source.notificationRowClickFallback, source.independentFocusBanner,
+                source.islandTextMode, source.focusMaxDisplaySeconds,
+                source.islandGeneralSeparator, source.islandSideSeparator,
+                source.islandForcePackages);
     }
 
     static HookSettings fromCursor(Cursor cursor) {
@@ -129,6 +136,14 @@ final class HookSettings {
                 SettingsContract.ISLAND_FORCE_PACKAGES)
                 ? splitPackages(cursor.getString(SettingsContract.ISLAND_FORCE_PACKAGES))
                 : Collections.<String>emptySet();
+
+        int islandTextMode = hasValue(cursor, columnCount, SettingsContract.ISLAND_TEXT_MODE)
+                ? cursor.getInt(SettingsContract.ISLAND_TEXT_MODE)
+                : FocusRestoreSettings.DEFAULT_ISLAND_TEXT_MODE;
+        float focusMaxDisplaySeconds = hasValue(cursor, columnCount,
+                SettingsContract.FOCUS_MAX_DISPLAY_SECONDS)
+                ? maxDisplaySeconds(cursor, SettingsContract.FOCUS_MAX_DISPLAY_SECONDS)
+                : FocusRestoreSettings.DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
         int hookMode = hasValue(cursor, columnCount, SettingsContract.HOOK_MODE)
                 ? cursor.getInt(SettingsContract.HOOK_MODE) : FocusRestoreSettings.DEFAULT_HOOK_MODE;
         boolean hideNotificationIcons = hasValue(cursor, columnCount,
@@ -166,17 +181,18 @@ final class HookSettings {
                 allowFocusClick, hideNotificationIcons, showFocusDivider,
                 showIslandIcon, tintIslandIcon, useSmallIconFallback,
                 notificationRowClickFallback, independentFocusBanner,
+                islandTextMode, focusMaxDisplaySeconds,
                 generalSeparator, sideSeparator, forcePackages);
     }
 
     String describe() {
         return "hookMode=OS" + hookMode + " limit=" + limitWidth + " widthDp=" + widthDp
                 + " delayMs=" + marqueeDelayMs + " compatRetry=" + compatRetry
-                 + " marqueeBounce=" + marqueeBounce
+                + " marqueeBounce=" + marqueeBounce
                 + " islandCompat=" + islandCompat
-                 + " disableIslandProperty=" + disableIslandProperty
-                 + " disableIslandFeatureCache=" + disableIslandFeatureCache
-                 + " allowFocusClick=" + allowFocusClick
+                + " disableIslandProperty=" + disableIslandProperty
+                + " disableIslandFeatureCache=" + disableIslandFeatureCache
+                + " allowFocusClick=" + allowFocusClick
                 + " hideNotificationIcons=" + hideNotificationIcons
                 + " showFocusDivider=" + showFocusDivider
                 + " showIslandIcon=" + showIslandIcon
@@ -185,9 +201,31 @@ final class HookSettings {
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
                 + " independentFocusBanner=" + independentFocusBanner
+                + " islandTextMode=" + islandTextMode
+                + " focusMaxDisplaySeconds=" + focusMaxDisplaySeconds
                 + " forcePackages=" + islandForcePackages
                 + " islandSeparator=" + displaySeparator(generalSeparator)
                 + " islandSideSeparator=" + displaySeparator(sideSeparator);
+    }
+
+    /** Reads the seconds column without assuming int/float/string storage from older builds. */
+    private static float maxDisplaySeconds(Cursor cursor, int index) {
+        try {
+            return FocusRestoreSettings.normalizeMaxDisplaySeconds(cursor.getFloat(index));
+        } catch (Throwable ignored) {
+            // Column stored as int or string; fall through to the safer readers below.
+        }
+        try {
+            return FocusRestoreSettings.normalizeMaxDisplaySeconds(cursor.getInt(index));
+        } catch (Throwable ignored) {
+            // Not an integer column either.
+        }
+        try {
+            return FocusRestoreSettings.parseMaxDisplaySeconds(cursor.getString(index),
+                    FocusRestoreSettings.DEFAULT_FOCUS_MAX_DISPLAY_SECONDS);
+        } catch (Throwable ignored) {
+            return FocusRestoreSettings.DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
+        }
     }
 
     private static boolean hasValue(Cursor cursor, int columnCount, int index) {
