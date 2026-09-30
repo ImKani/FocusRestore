@@ -122,6 +122,7 @@ final class HyperOS4FocusController {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Runnable expiryCheck = this::runExpiryCheck;
     private String displayedKey;
+    private final NotificationIconHider notificationIconHider;
     private final NotificationIconsVisibilityState notificationIconsVisibility =
             new NotificationIconsVisibilityState(View.GONE);
     private View notificationIcons;
@@ -140,13 +141,18 @@ final class HyperOS4FocusController {
         this.context = context;
         this.itemFactory = itemFactory;
         this.logger = logger;
+        this.notificationIconHider = new NotificationIconHider(new NotificationIconHider.Logger() {
+            @Override public void log(String message) { HyperOS4FocusController.this.logger.log("OS4 " + message); }
+            @Override public void error(String stage, Throwable throwable) {
+                HyperOS4FocusController.this.logger.error("OS4 " + stage, throwable);
+            }
+        });
     }
 
     void install() {
         hookNotifPipeline();
         hookStatusBarView();
-        hookNotificationIconsVisibility();
-        hookNotificationIconsAttachment();
+        notificationIconHider.install();
         hookClockTint();
     }
 
@@ -436,6 +442,10 @@ final class HyperOS4FocusController {
             focusHost = host;
             notificationIconsId = statusBarView.getResources().getIdentifier(
                     "notificationIcons", "id", context.getPackageName());
+            View resolvedNotificationIcons = notificationIconsId == 0
+                    ? null : statusBarView.findViewById(notificationIconsId);
+            notificationIconHider.bindRoot(resolvedNotificationIcons instanceof ViewGroup
+                    ? (ViewGroup) resolvedNotificationIcons : null, notificationIconsId);
             resolveStatusBarClock();
             registerDarkReceiver();
             // HyperOS 4 hides this legacy XML slot before installing its Compose
@@ -458,6 +468,7 @@ final class HyperOS4FocusController {
         renderPostHost = null;
         mainHandler.removeCallbacks(expiryCheck);
         restoreNotificationIcons();
+        notificationIconHider.clear();
         unregisterDarkReceiver();
         FocusHostView host = focusHost;
         focusHost = null;
@@ -742,6 +753,14 @@ final class HyperOS4FocusController {
 
     private void setNotificationIconsHidden(boolean hidden) {
         notificationIconsHideRequested = hidden;
+        HookSettings settings = itemFactory.settings();
+        int hideMode = settings == null ? NotificationIconHider.MODE_CONTAINER
+                : settings.notificationIconHideMode;
+        notificationIconHider.request(hidden, hideMode);
+        if (hidden && hideMode == NotificationIconHider.MODE_SYSTEM_ONLY) {
+            logger.log("OS4 notificationIcons selective request applied; container preserved");
+            return;
+        }
         if (!hidden) {
             restoreTrackedNotificationIcons();
             return;
@@ -899,8 +918,14 @@ final class HyperOS4FocusController {
             setContentDescription(bannerClicks ? "展开焦点通知："
                     + (TextUtils.isEmpty(item.text) ? item.packageName : item.text) : null);
             float density = getResources().getDisplayMetrics().density;
+            boolean landscape = getResources().getConfiguration().orientation
+                    == Configuration.ORIENTATION_LANDSCAPE;
+            int configuredWidthDp = landscape ? settings.widthLandscapeDp : settings.widthDp;
             maxWidthPx = settings.limitWidth
-                    ? Math.max(1, Math.round(settings.widthDp * density)) : Integer.MAX_VALUE;
+                    ? Math.max(1, Math.round(configuredWidthDp * density)) : Integer.MAX_VALUE;
+            logger.log("OS4 focus width select orientation=" + (landscape ? "landscape" : "portrait")
+                    + " widthDp=" + configuredWidthDp + " portraitDp=" + settings.widthDp
+                    + " landscapeDp=" + settings.widthLandscapeDp);
             if (settings.showFocusDivider) {
                 int dividerWidth = Math.max(1, Math.round(density));
                 int dividerHeight = Math.max(1, Math.round(12f * density));

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Unselected "关于" tab: an outline circle with a plain "i" inside.
+  The navigation code tints the drawable, so the shape carries the meaning and the colours here only
+  matter as the un-tinted fallback.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path android:strokeColor="#42474B" android:strokeWidth="2" android:pathData="M12,3.4 C16.7497,3.4 20.6,7.2503 20.6,12 C20.6,16.7497 16.7497,20.6 12,20.6 C7.2503,20.6 3.4,16.7497 3.4,12 C3.4,7.2503 7.2503,3.4 12,3.4 Z" />
+    <path android:fillColor="#42474B" android:pathData="M12,7 C12.6075,7 13.1,7.4925 13.1,8.1 C13.1,8.7075 12.6075,9.2 12,9.2 C11.3925,9.2 10.9,8.7075 10.9,8.1 C10.9,7.4925 11.3925,7 12,7 Z" />
+    <path android:fillColor="#42474B" android:pathData="M12,10.6 C12.5523,10.6 13,11.0477 13,11.6 L13,16.4 C13,16.9523 12.5523,17.4 12,17.4 C11.4477,17.4 11,16.9523 11,16.4 L11,11.6 C11,11.0477 11.4477,10.6 12,10.6 Z" />
+</vector>

@@ -37,6 +37,9 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -106,7 +109,7 @@ public final class SettingsActivity extends Activity {
     private Dialog activeDialog;
     private Toast feedbackToast;
     private ScrollView pageScroll;
-    private final int[] scrollPositions = new int[2];
+    private final int[] scrollPositions = new int[3];
 
     private Button os3ModeButton;
     private Button os4ModeButton;
@@ -133,8 +136,17 @@ public final class SettingsActivity extends Activity {
     private Switch useSmallIconFallbackSwitch;
     private Switch notificationRowClickFallbackSwitch;
     private Switch independentFocusBannerSwitch;
+    private EditText islandCustomRulesInput;
     private EditText generalSeparatorInput;
     private EditText sideSeparatorInput;
+    private Switch mediaFocusSwitch;
+    private Switch specialBannerNormalBackgroundSwitch;
+    private Switch notificationIconSelectiveSwitch;
+    private int pendingWidthLandscapeDp;
+    private boolean pendingSpecialBannerNormalBackground;
+    private boolean pendingMediaFocusEnabled;
+    private int pendingNotificationIconHideMode;
+    private String pendingIslandCustomRules = "";
     private boolean pendingManual, pendingCompatRetry, pendingMarqueeBounce, pendingIslandCompat,
             pendingDisableIslandProperty, pendingDisableIslandFeatureCache, pendingAllowFocusClick,
             pendingHideNotificationIcons, pendingShowFocusDivider, pendingShowIslandIcon,
@@ -145,7 +157,12 @@ public final class SettingsActivity extends Activity {
     private String pendingGeneralSeparator, pendingSideSeparator;
     private boolean focusMaxDisplaySyncing;
     private Set<String> pendingForcePackages = new HashSet<>();
+    private Set<String> pendingTimeoutExemptPackages = new HashSet<>();
     private Button forcePackagesButton;
+    private Button customRulesButton;
+    private Button timeoutExemptButton;
+    /** Which list the shared app picker is editing. */
+    private boolean dialogEditsExempt;
     private List<ApplicationInfo> dialogAllApps = new ArrayList<>();
     private List<ApplicationInfo> dialogVisibleApps = new ArrayList<>();
     private Set<String> dialogSelectedPackages;
@@ -307,7 +324,7 @@ public final class SettingsActivity extends Activity {
         nav.setGravity(Gravity.CENTER);
         nav.setBackgroundColor(COLOR_BACKGROUND);
         nav.setPadding(0, dp(8), 0, dp(8));
-        String[] names = {"主页", "高级"};
+        String[] names = {"主页", "高级", "关于"};
         navButtons = new ImageButton[names.length];
         for (int i = 0; i < names.length; i++) {
             final int page = i;
@@ -319,7 +336,7 @@ public final class SettingsActivity extends Activity {
             item.setPadding(0, 0, 0, 0);
             item.setScaleType(ImageView.ScaleType.CENTER);
             item.setBackground(roundedBg(Color.TRANSPARENT, 22));
-            item.setImageResource(page == 0 ? R.drawable.nav_home_off : R.drawable.nav_advanced_off);
+            item.setImageResource(navIcon(page, false));
             flattenButton(item);
             item.setOnClickListener(v -> showPage(page));
             navButtons[i] = item;
@@ -342,7 +359,8 @@ public final class SettingsActivity extends Activity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(16), dp(12), dp(16), dp(24));
         if (page == 0) buildSettingsPage(content);
-        else buildAdvancedPage(content);
+        else if (page == 1) buildAdvancedPage(content);
+        else buildAboutSections(content);
         scroll.addView(content);
         pageContainer.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
         scroll.post(() -> scroll.scrollTo(0, scrollPositions[page]));
@@ -411,8 +429,13 @@ public final class SettingsActivity extends Activity {
         forcePackagesButton.setTextSize(14);
         flattenButton(forcePackagesButton);
         forcePackagesButton.setMinHeight(dp(52));
-        forcePackagesButton.setOnClickListener(v -> showForcePackagesDialog());
+        forcePackagesButton.setOnClickListener(v -> showForcePackagesDialog(false));
         islandPanel.addView(forcePackagesButton, matchWrap(0));
+        customRulesButton = new Button(this);
+        customRulesButton.setText("按应用编辑超级岛字段规则");
+        customRulesButton.setAllCaps(false);
+        customRulesButton.setOnClickListener(v -> showCustomRulesDialog());
+        islandPanel.addView(customRulesButton, matchWrap(0));
         root.addView(islandPanel, matchWrap(dp(12)));
 
         root.addView(sectionHeader("焦点显示"), matchWrap(dp(8)));
@@ -427,9 +450,29 @@ public final class SettingsActivity extends Activity {
         styleSeekBar(widthSeekBar);
         widthSeekBar.setMax(MAX_WIDTH_DP - MIN_WIDTH_DP);
         focusPanel.addView(widthSeekBar, matchWrap(dp(2)));
-        widthRangeRow = rangeRow("80 dp", "400 dp");
-        focusPanel.addView(widthRangeRow, matchWrap(dp(4)));
+        LinearLayout landscapeWidthRow = valueRow("横屏最大宽度", pendingWidthLandscapeDp + " dp");
+        focusPanel.addView(landscapeWidthRow, matchWrap(dp(2)));
+        SeekBar landscapeWidthSeekBar = new SeekBar(this);
+        styleSeekBar(landscapeWidthSeekBar);
+        landscapeWidthSeekBar.setMax(MAX_WIDTH_DP - MIN_WIDTH_DP);
+        landscapeWidthSeekBar.setProgress(pendingWidthLandscapeDp - MIN_WIDTH_DP);
+        landscapeWidthSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
+                pendingWidthLandscapeDp = MIN_WIDTH_DP + value;
+                ((TextView) landscapeWidthRow.getChildAt(1)).setText(pendingWidthLandscapeDp + " dp");
+                if (fromUser) markPending();
+            }
+            public void onStartTrackingTouch(SeekBar bar) { }
+            public void onStopTrackingTouch(SeekBar bar) { }
+        });
+        focusPanel.addView(landscapeWidthSeekBar, matchWrap(dp(2)));
+        specialBannerNormalBackgroundSwitch = createSwitch("特殊横幅使用普通通知背景");
+        focusPanel.addView(specialBannerNormalBackgroundSwitch, matchWrap(dp(4)));
+        mediaFocusSwitch = createSwitch("启用媒体焦点通知");
+        focusPanel.addView(mediaFocusSwitch, matchWrap(dp(4)));
         hideNotificationIconsSwitch = createSwitch("隐藏其他通知图标（HyperOS 4）");
+        notificationIconSelectiveSwitch = createSwitch("仅隐藏系统图标（保留容器）");
+        focusPanel.addView(notificationIconSelectiveSwitch, matchWrap(dp(4)));
         focusPanel.addView(text("最大显示时间（秒）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
         focusMaxDisplayInput = input("0 = 不限制，2 - 3600 秒");
         focusMaxDisplayInput.setInputType(InputType.TYPE_CLASS_NUMBER
@@ -439,6 +482,17 @@ public final class SettingsActivity extends Activity {
         focusPanel.addView(focusMaxDisplayInput, matchWrap(dp(4)));
         focusPanel.addView(text(
                 "0 表示不限制；范围 2 - 3600 秒（最长 60 分钟），支持两位小数。超过时间只隐藏状态栏焦点，不取消通知。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
+        timeoutExemptButton = new Button(this);
+        timeoutExemptButton.setText(timeoutExemptLabel());
+        timeoutExemptButton.setAllCaps(false);
+        timeoutExemptButton.setTextSize(14);
+        flattenButton(timeoutExemptButton);
+        timeoutExemptButton.setMinHeight(dp(52));
+        timeoutExemptButton.setOnClickListener(v -> showForcePackagesDialog(true));
+        focusPanel.addView(timeoutExemptButton, matchWrap(dp(4)));
+        focusPanel.addView(text(
+                "豁免名单内的应用不受上面的时间限制，按系统自己的时长显示（与超级岛白名单相互独立）。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
         showFocusDividerSwitch = createSwitch("显示焦点分隔线（HyperOS 4）");
         focusPanel.addView(hideNotificationIconsSwitch, matchWrap(dp(4)));
@@ -451,10 +505,16 @@ public final class SettingsActivity extends Activity {
         islandCompatSwitch.setChecked(pendingIslandCompat);
         updateIslandTextModeButtons();
         hideNotificationIconsSwitch.setChecked(pendingHideNotificationIcons);
+        if (specialBannerNormalBackgroundSwitch != null) {
+            specialBannerNormalBackgroundSwitch.setChecked(pendingSpecialBannerNormalBackground);
+        }
+        if (mediaFocusSwitch != null) mediaFocusSwitch.setChecked(pendingMediaFocusEnabled);
+        if (notificationIconSelectiveSwitch != null) notificationIconSelectiveSwitch.setChecked(pendingNotificationIconHideMode == 1);
         showFocusDividerSwitch.setChecked(pendingShowFocusDivider);
         updateModeButtons();
         updateWidthControls();
         updateForcePackagesButton();
+        updateTimeoutExemptButton();
         updateExperimentalControls();
         installSettingsListeners();
     }
@@ -535,10 +595,10 @@ public final class SettingsActivity extends Activity {
             disableIslandFeatureCacheSwitch.setChecked(pendingDisableIslandFeatureCache);
         }
         updateExperimentalControls();
-        buildAboutSections(root);
         installSettingsListeners();
     }
 
+    /** The 关于 page: app information, links and licence, kept off the settings and advanced pages. */
     private void buildAboutSections(LinearLayout root) {
         root.addView(sectionHeader("关于"), matchWrap(dp(8)));
         LinearLayout aboutPanel = panel();
@@ -585,6 +645,11 @@ public final class SettingsActivity extends Activity {
         outState.putInt("m3.mode", pendingHookMode);
         outState.putBoolean("m3.manual", pendingManual);
         outState.putInt("m3.width", pendingWidthDp);
+        outState.putInt("m3.widthLandscape", pendingWidthLandscapeDp);
+        outState.putBoolean("m3.specialBackground", pendingSpecialBannerNormalBackground);
+        outState.putBoolean("m3.mediaFocus", pendingMediaFocusEnabled);
+        outState.putInt("m3.iconHideMode", pendingNotificationIconHideMode);
+        outState.putString("m3.customRules", pendingIslandCustomRules);
         outState.putInt("m3.delay", pendingDelayMs);
         outState.putBoolean("m3.retry", pendingCompatRetry);
         outState.putBoolean("m3.bounce", pendingMarqueeBounce);
@@ -604,6 +669,8 @@ public final class SettingsActivity extends Activity {
         outState.putString("m3.general", pendingGeneralSeparator);
         outState.putString("m3.side", pendingSideSeparator);
         outState.putStringArrayList("m3.packages", new ArrayList<>(pendingForcePackages));
+        outState.putStringArrayList("m3.timeoutExempt",
+                new ArrayList<>(pendingTimeoutExemptPackages));
         synchronized (saveLock) {
             outState.putBoolean("m3.savePending", saveWorkerRunning || queuedSettings != null);
         }
@@ -625,6 +692,11 @@ public final class SettingsActivity extends Activity {
         pendingHookMode = state.getInt("m3.mode", pendingHookMode);
         pendingManual = state.getBoolean("m3.manual", pendingManual);
         pendingWidthDp = state.getInt("m3.width", pendingWidthDp);
+        pendingWidthLandscapeDp = state.getInt("m3.widthLandscape", pendingWidthLandscapeDp);
+        pendingSpecialBannerNormalBackground = state.getBoolean("m3.specialBackground", pendingSpecialBannerNormalBackground);
+        pendingMediaFocusEnabled = state.getBoolean("m3.mediaFocus", pendingMediaFocusEnabled);
+        pendingNotificationIconHideMode = state.getInt("m3.iconHideMode", pendingNotificationIconHideMode);
+        pendingIslandCustomRules = state.getString("m3.customRules", pendingIslandCustomRules);
         pendingDelayMs = state.getInt("m3.delay", pendingDelayMs);
         pendingCompatRetry = state.getBoolean("m3.retry", pendingCompatRetry);
         pendingMarqueeBounce = state.getBoolean("m3.bounce", pendingMarqueeBounce);
@@ -651,6 +723,11 @@ public final class SettingsActivity extends Activity {
         if (packages != null) {
             pendingForcePackages = new HashSet<>(InputLimits.sanitizePackages(
                     new java.util.LinkedHashSet<>(packages)));
+        }
+        ArrayList<String> timeoutExempt = state.getStringArrayList("m3.timeoutExempt");
+        if (timeoutExempt != null) {
+            pendingTimeoutExemptPackages = new HashSet<>(InputLimits.sanitizePackages(
+                    new java.util.LinkedHashSet<>(timeoutExempt)));
         }
     }
 
@@ -779,7 +856,24 @@ public final class SettingsActivity extends Activity {
             });
         }
         if (hideNotificationIconsSwitch != null) hideNotificationIconsSwitch.setOnCheckedChangeListener((b, c) -> { pendingHideNotificationIcons = c; markPending(); });
-        if (showFocusDividerSwitch != null) showFocusDividerSwitch.setOnCheckedChangeListener((b, c) -> { pendingShowFocusDivider = c; markPending(); });
+        if (specialBannerNormalBackgroundSwitch != null) {
+            specialBannerNormalBackgroundSwitch.setOnCheckedChangeListener((b, c) -> {
+                pendingSpecialBannerNormalBackground = c;
+                markPending();
+            });
+        }
+        if (mediaFocusSwitch != null) mediaFocusSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingMediaFocusEnabled = c;
+            markPending();
+        });
+        if (notificationIconSelectiveSwitch != null) notificationIconSelectiveSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingNotificationIconHideMode = c ? 1 : 0;
+            markPending();
+        });
+        if (showFocusDividerSwitch != null) showFocusDividerSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingShowFocusDivider = c;
+            markPending();
+        });
     }
 
     private String forcePackagesLabel() {
@@ -796,6 +890,19 @@ public final class SettingsActivity extends Activity {
         forcePackagesButton.setText(forcePackagesLabel());
         forcePackagesButton.setTextColor(enabled ? COLOR_PRIMARY : COLOR_TEXT_SECONDARY);
         forcePackagesButton.setBackground(roundedBg(enabled ? COLOR_PRIMARY_LIGHT : COLOR_SURFACE_HIGH, 12));
+    }
+
+    private String timeoutExemptLabel() {
+        return pendingTimeoutExemptPackages.isEmpty()
+                ? "最大显示时间豁免应用（未选择）"
+                : "最大显示时间豁免应用（已选 " + pendingTimeoutExemptPackages.size() + " 个应用）";
+    }
+
+    private void updateTimeoutExemptButton() {
+        if (timeoutExemptButton == null) return;
+        timeoutExemptButton.setText(timeoutExemptLabel());
+        timeoutExemptButton.setTextColor(COLOR_TEXT_SECONDARY);
+        timeoutExemptButton.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
     }
 
     private void updateExperimentalControls() {
@@ -852,11 +959,65 @@ public final class SettingsActivity extends Activity {
         if (widthValue != null) { widthValue.setEnabled(enabled); widthValue.setAlpha(enabled ? 1f : 0.38f); }
     }
 
-    private void showForcePackagesDialog() {
-        if (!pendingIslandCompat) return;
+    private void showCustomRulesDialog() {
+        final Dialog dialog = new Dialog(this);
+        LinearLayout root = panel();
+        root.addView(text("按包名编辑字段路径", 17, COLOR_TEXT_PRIMARY), matchWrap(dp(8)));
+        EditText packageInput = input("包名，例如 com.example.app");
+        root.addView(packageInput, matchWrap(dp(8)));
+        EditText pathsInput = input("每行一个 JSON Pointer，例如 /param_v2/baseInfo/title");
+        pathsInput.setSingleLine(false);
+        pathsInput.setMinLines(5);
+        pathsInput.setGravity(Gravity.TOP | Gravity.START);
+        root.addView(pathsInput, matchWrap(dp(8)));
+        TextView hint = text("最多 8 条路径，每条最多 256 个字符；非法规则不会替换现有缓存。", 13, COLOR_TEXT_SECONDARY);
+        root.addView(hint, matchWrap(dp(8)));
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.RIGHT);
+        Button cancel = new Button(this);
+        cancel.setText("取消");
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        Button save = new Button(this);
+        save.setText("保存规则");
+        save.setOnClickListener(v -> {
+            String pkg = packageInput.getText().toString().trim();
+            String[] lines = pathsInput.getText().toString().split("\\r?\\n");
+            JSONArray paths = new JSONArray();
+            for (String line : lines) {
+                String path = line.trim();
+                if (path.length() > 0) paths.put(path);
+            }
+            try {
+                JSONObject rules = pendingIslandCustomRules.length() == 0
+                        ? new JSONObject() : new JSONObject(pendingIslandCustomRules);
+                if (pkg.length() == 0 || paths.length() == 0 || paths.length() > 8) throw new IllegalArgumentException();
+                rules.put(pkg, paths);
+                String candidate = rules.toString();
+                if (!IslandPayloadParser.validateCustomRules(candidate)) throw new IllegalArgumentException();
+                pendingIslandCustomRules = candidate;
+                markPending();
+                dialog.dismiss();
+            } catch (Throwable invalid) {
+                Toast.makeText(this, "规则无效：请检查包名和 JSON Pointer", Toast.LENGTH_SHORT).show();
+            }
+        });
+        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        actions.addView(save, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        root.addView(actions, matchWrap(0));
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setContentView(root);
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * .92f), -2);
+    }
+
+    private void showForcePackagesDialog(boolean exempt) {
+        if (!exempt && !pendingIslandCompat) return;
+        dialogEditsExempt = exempt;
         dialogAllApps = readCachedApps();
         dialogVisibleApps.clear();
-        dialogSelectedPackages = new HashSet<>(pendingForcePackages);
+        dialogSelectedPackages = new HashSet<>(exempt
+                ? pendingTimeoutExemptPackages : pendingForcePackages);
         dialogAppsLoaded = !dialogAllApps.isEmpty();
 
         final Dialog dialog = new Dialog(this);
@@ -884,7 +1045,8 @@ public final class SettingsActivity extends Activity {
         root.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
         if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
         root.setPadding(dp(16), dp(16), dp(16), dp(8));
-        TextView title = text("强制转换超级岛应用", 18, COLOR_TEXT_PRIMARY);
+        TextView title = text(dialogEditsExempt ? "最大显示时间豁免应用" : "强制转换超级岛应用",
+                18, COLOR_TEXT_PRIMARY);
         title.setTypeface(title.getTypeface(), 1);
         root.addView(title, matchWrap(dp(8)));
 
@@ -946,7 +1108,7 @@ public final class SettingsActivity extends Activity {
             if (dialogSelectedPackages.contains(app.packageName)) {
                 dialogSelectedPackages.remove(app.packageName);
             } else if (dialogSelectedPackages.size() >= InputLimits.MAX_FORCE_PACKAGES) {
-                showFeedback("白名单最多选择 " + InputLimits.MAX_FORCE_PACKAGES + " 个应用");
+                showFeedback("最多选择 " + InputLimits.MAX_FORCE_PACKAGES + " 个应用");
             } else {
                 dialogSelectedPackages.add(app.packageName);
             }
@@ -968,9 +1130,15 @@ public final class SettingsActivity extends Activity {
         buttons.addView(cancel, new LinearLayout.LayoutParams(-2, dp(40)));
         Button done = actionButton("完成", COLOR_PRIMARY, Color.WHITE);
         done.setOnClickListener(v -> {
-            pendingForcePackages = new HashSet<>(InputLimits.sanitizePackages(
+            Set<String> selected = new HashSet<>(InputLimits.sanitizePackages(
                     dialogSelectedPackages));
-            updateForcePackagesButton();
+            if (dialogEditsExempt) {
+                pendingTimeoutExemptPackages = selected;
+                updateTimeoutExemptButton();
+            } else {
+                pendingForcePackages = selected;
+                updateForcePackagesButton();
+            }
             markPending();
             dialog.dismiss();
         });
@@ -1160,6 +1328,11 @@ public final class SettingsActivity extends Activity {
         pendingHookMode = settings.hookMode;
         pendingManual = settings.limitWidth;
         pendingWidthDp = settings.widthDp;
+        pendingWidthLandscapeDp = settings.widthLandscapeDp;
+        pendingSpecialBannerNormalBackground = settings.specialBannerNormalBackground;
+        pendingMediaFocusEnabled = settings.mediaFocusEnabled;
+        pendingNotificationIconHideMode = settings.notificationIconHideMode;
+        pendingIslandCustomRules = settings.islandCustomRules;
         pendingDelayMs = settings.marqueeDelayMs;
         pendingCompatRetry = settings.compatRetry;
         pendingMarqueeBounce = settings.marqueeBounce;
@@ -1179,6 +1352,7 @@ public final class SettingsActivity extends Activity {
         pendingGeneralSeparator = settings.islandGeneralSeparator;
         pendingSideSeparator = settings.islandSideSeparator;
         pendingForcePackages = new HashSet<>(settings.islandForcePackages);
+        pendingTimeoutExemptPackages = new HashSet<>(settings.focusTimeoutExemptPackages);
     }
 
     private void captureCurrentInputs() {
@@ -1196,6 +1370,11 @@ public final class SettingsActivity extends Activity {
                 .hookMode(pendingHookMode)
                 .limitWidth(pendingManual)
                 .widthDp(pendingWidthDp)
+                .widthLandscapeDp(pendingWidthLandscapeDp)
+                .specialBannerNormalBackground(pendingSpecialBannerNormalBackground)
+                .mediaFocusEnabled(pendingMediaFocusEnabled)
+                .notificationIconHideMode(pendingNotificationIconHideMode)
+                .islandCustomRules(pendingIslandCustomRules)
                 .marqueeDelayMs(pendingDelayMs)
                 .compatRetry(pendingCompatRetry)
                 .marqueeBounce(pendingMarqueeBounce)
@@ -1214,7 +1393,8 @@ public final class SettingsActivity extends Activity {
                 .focusMaxDisplaySeconds(pendingFocusMaxDisplaySeconds)
                 .islandGeneralSeparator(pendingGeneralSeparator)
                 .islandSideSeparator(pendingSideSeparator)
-                .islandForcePackages(pendingForcePackages);
+                .islandForcePackages(pendingForcePackages)
+                .focusTimeoutExemptPackages(pendingTimeoutExemptPackages);
     }
 
     private void saveSettings() {
@@ -1222,6 +1402,8 @@ public final class SettingsActivity extends Activity {
         settings = pendingSettings().build();
         pendingForcePackages = new HashSet<>(settings.islandForcePackages);
         updateForcePackagesButton();
+        pendingTimeoutExemptPackages = new HashSet<>(settings.focusTimeoutExemptPackages);
+        updateTimeoutExemptButton();
         long generation;
         synchronized (STORE_WRITE_LOCK) {
             generation = settingsGeneration = nextSettingsGenerationLocked();
@@ -1402,21 +1584,28 @@ public final class SettingsActivity extends Activity {
         flattenButton(button);
     }
 
+    /** Icon for a navigation page; the mapping lives in one place now that there are three pages. */
+    private static int navIcon(int page, boolean active) {
+        if (page == 0) return active ? R.drawable.nav_home_on : R.drawable.nav_home_off;
+        if (page == 1) return active ? R.drawable.nav_advanced_on : R.drawable.nav_advanced_off;
+        return active ? R.drawable.nav_about_on : R.drawable.nav_about_off;
+    }
+
+    private static String navName(int page) {
+        return page == 0 ? "主页" : page == 1 ? "高级" : "关于";
+    }
+
     private void updateNavButtons(int selected) {
         if (navButtons == null) return;
         for (int i = 0; i < navButtons.length; i++) {
             ImageButton button = navButtons[i];
             boolean active = i == selected;
             button.setSelected(active);
-            int icon = i == 0
-                    ? (active ? R.drawable.nav_home_on : R.drawable.nav_home_off)
-                    : (active ? R.drawable.nav_advanced_on : R.drawable.nav_advanced_off);
             button.setBackground(roundedBg(active ? COLOR_NAV_SELECTED : Color.TRANSPARENT, 22));
-            button.setImageResource(icon);
+            button.setImageResource(navIcon(i, active));
             button.setImageTintList(ColorStateList.valueOf(
                     active ? COLOR_TEXT_PRIMARY : COLOR_TEXT_SECONDARY));
-            button.setContentDescription((i == 0 ? "主页" : "高级")
-                    + (active ? "，已选择" : "，未选择"));
+            button.setContentDescription(navName(i) + (active ? "，已选择" : "，未选择"));
             flattenButton(button);
         }
     }

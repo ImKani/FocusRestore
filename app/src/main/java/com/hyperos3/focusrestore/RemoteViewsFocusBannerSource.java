@@ -2,11 +2,17 @@ package com.hyperos3.focusrestore;
 
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Rect;
+import android.graphics.Color;
+import android.util.Log;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.LayerDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.UserHandle;
@@ -40,22 +46,13 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
     private static final String DARK = "miui.focus.rvNight";
     private static final String PLUGIN_PACKAGE = "miui.systemui.plugin";
     private static final int MAX_TEXT_ENTRIES = 4;
-    /**
-     * The resource the ROM uses as a focus banner's background. Verified in the HyperOS 4 plugin
-     * (18.2.2.2.0): {@code focus_notification_template_base} and
-     * {@code focus_notification_module_background} both set {@code android:background} to this, with
-     * {@code outlineProvider="background"} and {@code clipToOutline="true"}. The drawable itself is a
-     * rectangle whose solid colour is {@code @color/transparent} and whose corners are
-     * {@code @dimen/notification_item_bg_radius} (24dp): the ROM fills it with a blurred backdrop and
-     * uses the shape only to clip. The guesses after it are kept for older plugins.
-     */
-    private static final String[] FOCUS_BACKGROUND_NAMES = {
-        "focus_notify_bg_img_bg",
-        "miui_focus_notification_bg",
-        "miui_focus_bg",
-        "focus_notification_bg",
-    };
-    /** The ROM's own corner radius for this shape, used when the blurred fill is unavailable. */
+    /** The notification card background SystemUI draws in the shade; the banner matches it. */
+    private static final String NOTIFICATION_ITEM_BG = "notification_item_bg";
+    /** The card's own colour. Never read directly: a theme overlay replaces it at runtime, so the card is
+     * inflated from {@link #NOTIFICATION_ITEM_BG} instead of being rebuilt from this. */
+    private static final String NOTIFICATION_BG_COLOR = "notification_bg_color";
+    private static final String SYSTEMUI_PACKAGE = "com.android.systemui";
+    /** The card's corner radius, used only for the fallback surface. */
     private static final String FOCUS_RADIUS_NAME = "notification_item_bg_radius";
     private static final int FOCUS_RADIUS_FALLBACK_DP = 24;
     /**
@@ -66,6 +63,11 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
      */
     private static final String FOCUS_HEIGHT_NAME = "focus_notify_normal_height";
     private static final int FOCUS_HEIGHT_FALLBACK_DP = 75;
+    private static volatile boolean forceNormalBackground;
+
+    static void setForceNormalBackground(boolean enabled) {
+        forceNormalBackground = enabled;
+    }
 
     private final View view;
     private final Context context;
@@ -120,7 +122,7 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
         FrameLayout host = new FrameLayout(packageContext);
         host.addView(content, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        String background = applyContainerBackground(sysuiContext, host, content);
+        String background = applyContainerBackground(sysuiContext, host, content, useDark);
         // The ROM measures the application's layout inside a fixed-height box and the layout centres
         // its own rows and buttons in that box. Giving the height to the host alone left the layout at
         // its natural, shorter size pinned to the top, so everything inside drifted upwards; the same
@@ -144,47 +146,120 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
      * asks for a platform blur behind it; where no blur is available the platform colour is put behind
      * the same ROM shape, so the banner is at least a legible card rather than nothing.
      */
-    private static String applyContainerBackground(Context sysuiContext, View host, View content) {
-        if (content.getBackground() != null) return "content";
-        Drawable romShape = focusBackgroundFrom(sysuiContext, PLUGIN_PACKAGE);
-        if (romShape == null) romShape = focusBackgroundFrom(sysuiContext, "com.android.systemui");
-        if (romShape != null) {
-            // The ROM's shape is transparent by design and is filled by a blurred backdrop there.
-            // The platform's cross-window blur was tried for this window and did not take effect on
-            // the tested ROM even while isCrossWindowBlurEnabled() reported true, which left the
-            // banner invisible, so the shape is always paired with a real fill instead.
-            host.setClipToOutline(true);
-            host.setBackground(new LayerDrawable(new Drawable[]{
-                    roundedSurface(host.getContext(), focusRadiusPx(sysuiContext, host.getContext())),
-                    romShape}));
-            return "rom-shape+platform-color";
+    private static String applyContainerBackground(Context sysuiContext, View host, View content,
+                                                    boolean nightVariant) {
+        if (forceNormalBackground) {
+            int radiusPx = focusRadiusPx(sysuiContext, host.getContext());
+            Drawable normal = opaqueNotificationSurface(sysuiContext, radiusPx, nightVariant);
+            if (normal == null) normal = roundedSurface(host.getContext(), radiusPx, nightVariant);
+            if (normal != null) {
+                // Only this independently inflated copy is changed; notification actions stay intact.
+                content.setBackground(null);
+                host.setBackground(normal);
+                host.setClipToOutline(true);
+                return "forced-normal-platform-" + (nightVariant ? "night" : "day")
+                        + " radiusPx=" + radiusPx;
+            }
         }
-        Drawable platform = roundedSurface(host.getContext(),
-                focusRadiusPx(sysuiContext, host.getContext()));
+        if (content.getBackground() != null) return "content";
+        // The card is the ROM's own notification card drawable, used as-is, with only its alpha forced to
+        // fully opaque. The ROM's fill carries real transparency because inside the shade it sits on a blur
+        // layer; a standalone window has no such layer, so that transparency goes straight through to the
+        // app behind the banner. Rebuilding the shape from notification_bg_color was tried and is wrong:
+        // a theme overlay replaces that colour, so re-deriving it produced a white card in dark mode.
+        // Inflating the drawable keeps the ROM (and the theme) in charge of everything but the alpha.
+        Drawable card = notificationCardBackground(sysuiContext);
+        if (card != null) {
+            String described = cardDescription(card, sysuiContext);
+            host.setBackground(forceOpaque(card));
+            host.setClipToOutline(true);
+            return "notification-card" + described + " forced=255 hostAlpha=" + host.getAlpha();
+        }
+        int radiusPx = focusRadiusPx(sysuiContext, host.getContext());
+        Drawable platform = roundedSurface(host.getContext(), radiusPx, nightVariant);
         if (platform == null) return "none";
         host.setBackground(platform);
         host.setClipToOutline(true);
-        return "platform";
+        return "platform" + (nightVariant ? "-night" : "-day")
+                + " hostAlpha=" + host.getAlpha();
+    }
+
+    /**
+     * The ROM's own notification card drawable, resolved through SystemUI's live resources: that is the
+     * same drawable, in the same configuration, that the shade is drawing at this moment, so the banner
+     * cannot disagree with it about day/night. A forced configuration is deliberately not used here, since
+     * one was measured returning a day colour in a night session.
+     */
+    private static Drawable notificationCardBackground(Context sysuiContext) {
+        try {
+            Resources resources = sysuiContext.getResources();
+            int id = resources.getIdentifier(NOTIFICATION_ITEM_BG, "drawable", SYSTEMUI_PACKAGE);
+            if (id == 0) return null;
+            return resources.getDrawable(id, sysuiContext.getTheme());
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * The same card with its transparency removed. Both the shape's fill colour and the drawable's own
+     * alpha are forced, because which of the two is responsible depends on how the drawable was built and
+     * {@code setAlpha} alone can end up merely combined with an already-translucent fill.
+     */
+    private static Drawable forceOpaque(Drawable card) {
+        if (card instanceof GradientDrawable) {
+            GradientDrawable shape = (GradientDrawable) card;
+            try {
+                ColorStateList fill = shape.getColor();
+                if (fill != null) shape.setColor((fill.getDefaultColor() & 0x00FFFFFF) | 0xFF000000);
+            } catch (Throwable ignored) { }
+        }
+        card.setAlpha(255);
+        return card;
+    }
+
+    /**
+     * What the card really is at runtime, which the resource table cannot say: a theme overlay replaces
+     * {@code notification_bg_color}, so the fill and its alpha are only visible here. {@code fill} carries
+     * its own alpha, and is reported before the force so the log shows what the ROM asked for;
+     * {@code nightFill} is the same drawable resolved in a forced night configuration, which is how a
+     * colour lookup that ignores night mode becomes visible in the log.
+     */
+    private static String cardDescription(Drawable card, Context sysuiContext) {
+        try {
+            String name = card.getClass().getSimpleName();
+            if (card instanceof GradientDrawable) {
+                ColorStateList fill = ((GradientDrawable) card).getColor();
+                int color = fill == null ? 0 : fill.getDefaultColor();
+                return "(" + name + " fill=#" + Integer.toHexString(color)
+                        + " alpha=" + card.getAlpha()
+                        + " nightFill=" + nightCardFill(sysuiContext) + ")";
+            }
+            return "(" + name + " alpha=" + card.getAlpha() + ")";
+        } catch (Throwable ignored) {
+            return "(?)";
+        }
+    }
+
+    /** The same card's fill under a forced night configuration, for log comparison only. */
+    private static String nightCardFill(Context sysuiContext) {
+        try {
+            Context themed = nightContext(sysuiContext, true);
+            Resources resources = themed.getResources();
+            int id = resources.getIdentifier(NOTIFICATION_ITEM_BG, "drawable", SYSTEMUI_PACKAGE);
+            if (id == 0) return "?";
+            Drawable drawable = resources.getDrawable(id, themed.getTheme());
+            if (drawable instanceof GradientDrawable) {
+                ColorStateList fill = ((GradientDrawable) drawable).getColor();
+                if (fill != null) return "#" + Integer.toHexString(fill.getDefaultColor());
+            }
+            return "?";
+        } catch (Throwable ignored) {
+            return "?";
+        }
     }
 
     /** The first candidate focus-banner resource that exists in {@code packageName}'s resources. */
-    private static Drawable focusBackgroundFrom(Context sysuiContext, String packageName) {
-        Resources resources = resourcesFor(sysuiContext, packageName);
-        if (resources == null) return null;
-        for (String name : FOCUS_BACKGROUND_NAMES) {
-            for (String type : new String[]{"drawable", "color"}) {
-                try {
-                    int id = resources.getIdentifier(name, type, packageName);
-                    if (id == 0) continue;
-                    Drawable drawable = resources.getDrawable(id, sysuiContext.getTheme());
-                    if (drawable != null) return drawable;
-                } catch (Throwable ignored) {
-                    // A candidate that cannot be resolved is simply not the resource we are after.
-                }
-            }
-        }
-        return null;
-    }
 
     /** The ROM's own corner radius, so a substituted fill keeps the ROM's geometry. */
     private static int focusRadiusPx(Context sysuiContext, Context fallbackContext) {
@@ -228,14 +303,52 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
      * filled the way the ROM fills it. Deliberately not an imitation of the ROM's design: a theme
      * colour and the ROM's own corner radius.
      */
-    private static Drawable roundedSurface(Context context, int radiusPx) {
-        int color = themedColor(context, android.R.attr.colorBackgroundFloating);
-        if (!hasAlpha(color)) color = themedColor(context, android.R.attr.colorBackground);
+    private static Drawable opaqueNotificationSurface(Context sysuiContext, int radiusPx,
+                                                      boolean nightVariant) {
+        Drawable card = notificationCardBackground(sysuiContext);
+        if (card == null) return null;
+        int width = Math.max(32, Math.round(96 * sysuiContext.getResources().getDisplayMetrics().density));
+        int height = Math.max(32, Math.round(48 * sysuiContext.getResources().getDisplayMetrics().density));
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        try {
+            card.setBounds(0, 0, width, height);
+            card.draw(new Canvas(bitmap));
+            int color = bitmap.getPixel(width / 2, height / 2);
+            if (Color.alpha(color) == 0) return null;
+            GradientDrawable surface = new GradientDrawable();
+            surface.setColor(Color.rgb(Color.red(color), Color.green(color), Color.blue(color)) | 0xFF000000);
+            if (radiusPx > 0) surface.setCornerRadius(radiusPx);
+            Log.i("HyperOS3FocusRestore", "forced normal background sampled color=#"
+                    + Integer.toHexString(color) + " source=" + card.getClass().getSimpleName());
+            return surface;
+        } finally {
+            bitmap.recycle();
+        }
+    }
+
+    private static Drawable roundedSurface(Context context, int radiusPx, boolean night) {
+        // night-qualified, so the surface colour is read from a context forced to the requested night
+        // mode instead of trusting the theme it happens to carry; the colour is still the platform's.
+        Context themed = nightContext(context, night);
+        int color = themedColor(themed, android.R.attr.colorBackgroundFloating);
+        if (!hasAlpha(color)) color = themedColor(themed, android.R.attr.colorBackground);
         if (!hasAlpha(color)) return null;
         GradientDrawable surface = new GradientDrawable();
         surface.setColor(color);
         if (radiusPx > 0) surface.setCornerRadius(radiusPx);
         return surface;
+    }
+
+    /** A context forced to the requested night mode, so a theme colour matches the inflated variant. */
+    private static Context nightContext(Context context, boolean night) {
+        try {
+            Configuration configuration = new Configuration(context.getResources().getConfiguration());
+            configuration.uiMode = (configuration.uiMode & ~Configuration.UI_MODE_NIGHT_MASK)
+                    | (night ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO);
+            return context.createConfigurationContext(configuration);
+        } catch (Throwable ignored) {
+            return context;
+        }
     }
 
     private static int themedColor(Context context, int attribute) {

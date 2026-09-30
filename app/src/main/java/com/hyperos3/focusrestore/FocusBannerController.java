@@ -857,7 +857,12 @@ public final class FocusBannerController {
                     event(notificationKey, "native onLayout width=" + getWidth() + " height=" + getHeight()
                             + " screenX=" + screen[0] + " screenY=" + screen[1]
                             + " display=" + displayId + " attached=" + isAttachedToWindow()
-                            + " layoutPass=" + layoutLogCount + " " + (render == null ? "" : render.layoutSummary()));
+                            + " layoutPass=" + layoutLogCount
+                            + " alpha=" + getAlpha()
+                            + " windowAlpha=" + (windowParams == null ? -1f : windowParams.alpha)
+                            + " uiNight=" + ((getResources().getConfiguration().uiMode
+                                    & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
+                            + " " + (render == null ? "" : render.layoutSummary()));
                 }
             } catch (Throwable error) { renderingFailure("layout", error); }
         }

@@ -27,6 +27,18 @@ public class IslandPayloadParserTest {
                     + "\"smallIslandArea\":{\"picInfo\":{\"type\":1,\"pic\":\"island_pic_small\"}}}}";
 
     @Test
+    public void customRulesResolveOrderedPointersAndRejectMoreThanEight() {
+        String rules = "{\"com.example\":[\"/title\",\"/detail\"]}";
+        IslandPayloadParser.ParsedText parsed = IslandPayloadParser.parseCustom(
+                "{\"title\":\"A\",\"detail\":\"B\"}", rules, "com.example", "·");
+        assertNotNull(parsed);
+        assertEquals("A·B", parsed.text);
+        assertTrue(IslandPayloadParser.validateCustomRules(rules));
+        assertFalse(IslandPayloadParser.validateCustomRules("{\"com.example\":[\"bad\"]}"));
+    }
+
+
+    @Test
     public void compactOfTheTravelPayloadKeepsBothPillSides() {
         // The ROM's collapsed pill shows the left image-text plus the area's own label (D8396 and
         // 检票口). The payload has no imageTextInfoRight, so reading only the explicit right side

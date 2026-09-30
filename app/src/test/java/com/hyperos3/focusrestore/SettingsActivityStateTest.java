@@ -30,7 +30,7 @@ public class SettingsActivityStateTest {
             Pattern.compile("state\\.get\\w+\\(\"(m3\\.[^\"]+)\"");
     /** Only the field declaration block is scanned; local variables are not settings. */
     private static final String FIELD_BLOCK_START = "private boolean pendingManual";
-    private static final String FIELD_BLOCK_END = "private Set<String> pendingForcePackages";
+    private static final String FIELD_BLOCK_END = "private Set<String> pendingTimeoutExemptPackages";
 
     @Test
     public void everyPendingSettingIsLoadedSavedAndRestored() throws Exception {

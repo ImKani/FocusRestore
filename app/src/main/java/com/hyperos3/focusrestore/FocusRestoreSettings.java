@@ -13,6 +13,11 @@ public final class FocusRestoreSettings {
 
     public static final String KEY_LIMIT_WIDTH = "limit_text_width";
     public static final String KEY_WIDTH_DP = "text_width_dp";
+    public static final String KEY_WIDTH_LANDSCAPE_DP = "text_width_landscape_dp";
+    public static final String KEY_SPECIAL_BANNER_NORMAL_BACKGROUND = "special_banner_normal_background";
+    public static final String KEY_NOTIFICATION_ICON_HIDE_MODE = "notification_icon_hide_mode";
+    public static final String KEY_ISLAND_CUSTOM_RULES = "island_custom_rules";
+    public static final String KEY_MEDIA_FOCUS_ENABLED = "media_focus_enabled";
     public static final String KEY_MARQUEE_DELAY_MS = "marquee_delay_ms";
     public static final String KEY_COMPAT_RETRY = "compat_retry";
     public static final String KEY_MARQUEE_BOUNCE = "marquee_bounce";
@@ -22,6 +27,8 @@ public final class FocusRestoreSettings {
     public static final String KEY_ISLAND_GENERAL_SEPARATOR = "island_general_separator";
     public static final String KEY_ISLAND_SIDE_SEPARATOR = "island_side_separator";
     public static final String KEY_ISLAND_FORCE_PACKAGES = "island_force_packages";
+    /** Apps that keep the system's own focus duration instead of the configured display limit. */
+    public static final String KEY_FOCUS_TIMEOUT_EXEMPT_PACKAGES = "focus_timeout_exempt_packages";
     public static final String KEY_ISLAND_APP_CACHE = "island_app_cache";
     public static final String KEY_DISABLE_ISLAND_PROPERTY = "disable_island_property";
     public static final String KEY_DISABLE_ISLAND_FEATURE_CACHE = "disable_island_feature_cache";
@@ -48,6 +55,10 @@ public final class FocusRestoreSettings {
     public static final int DEFAULT_WIDTH_DP = 160;
     public static final int MIN_WIDTH_DP = 80;
     public static final int MAX_WIDTH_DP = 400;
+    public static final int DEFAULT_WIDTH_LANDSCAPE_DP = DEFAULT_WIDTH_DP;
+    public static final int DEFAULT_NOTIFICATION_ICON_HIDE_MODE = 0;
+    public static final boolean DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND = false;
+    public static final boolean DEFAULT_MEDIA_FOCUS_ENABLED = false;
     public static final int DEFAULT_MARQUEE_DELAY_MS = 200;
     public static final boolean DEFAULT_COMPAT_RETRY = false;
     public static final boolean DEFAULT_MARQUEE_BOUNCE = true;
@@ -75,6 +86,11 @@ public final class FocusRestoreSettings {
     public final boolean limitWidth;
     public final int widthDp;
     public final int marqueeDelayMs;
+    public final int widthLandscapeDp;
+    public final boolean specialBannerNormalBackground;
+    public final int notificationIconHideMode;
+    public final String islandCustomRules;
+    public final boolean mediaFocusEnabled;
     public final boolean compatRetry;
     public final boolean marqueeBounce;
     public final boolean islandCompat;
@@ -93,12 +109,18 @@ public final class FocusRestoreSettings {
     public final String islandGeneralSeparator;
     public final String islandSideSeparator;
     public final Set<String> islandForcePackages;
+    public final Set<String> focusTimeoutExemptPackages;
 
     private FocusRestoreSettings(Editor editor) {
         this.hookMode = normalizeHookMode(editor.hookMode);
         this.limitWidth = editor.limitWidth;
         this.widthDp = clamp(editor.widthDp, MIN_WIDTH_DP, MAX_WIDTH_DP);
         this.marqueeDelayMs = clamp(editor.marqueeDelayMs, 0, 5000);
+        this.widthLandscapeDp = clamp(editor.widthLandscapeDp, MIN_WIDTH_DP, MAX_WIDTH_DP);
+        this.specialBannerNormalBackground = editor.specialBannerNormalBackground;
+        this.notificationIconHideMode = Math.max(0, Math.min(1, editor.notificationIconHideMode));
+        this.islandCustomRules = editor.islandCustomRules == null ? "" : editor.islandCustomRules.trim();
+        this.mediaFocusEnabled = editor.mediaFocusEnabled;
         this.compatRetry = editor.compatRetry;
         this.marqueeBounce = editor.marqueeBounce;
         this.islandCompat = editor.islandCompat;
@@ -117,6 +139,7 @@ public final class FocusRestoreSettings {
         this.islandGeneralSeparator = valueOrDefault(editor.islandGeneralSeparator);
         this.islandSideSeparator = valueOrDefault(editor.islandSideSeparator);
         this.islandForcePackages = immutablePackages(editor.islandForcePackages);
+        this.focusTimeoutExemptPackages = immutablePackages(editor.focusTimeoutExemptPackages);
     }
 
     /**
@@ -130,6 +153,11 @@ public final class FocusRestoreSettings {
         private int hookMode = DEFAULT_HOOK_MODE;
         private boolean limitWidth = DEFAULT_LIMIT_WIDTH;
         private int widthDp = DEFAULT_WIDTH_DP;
+        private int widthLandscapeDp = DEFAULT_WIDTH_LANDSCAPE_DP;
+        private boolean specialBannerNormalBackground = DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND;
+        private int notificationIconHideMode = DEFAULT_NOTIFICATION_ICON_HIDE_MODE;
+        private String islandCustomRules = "";
+        private boolean mediaFocusEnabled = DEFAULT_MEDIA_FOCUS_ENABLED;
         private int marqueeDelayMs = DEFAULT_MARQUEE_DELAY_MS;
         private boolean compatRetry = DEFAULT_COMPAT_RETRY;
         private boolean marqueeBounce = DEFAULT_MARQUEE_BOUNCE;
@@ -149,6 +177,7 @@ public final class FocusRestoreSettings {
         private String islandGeneralSeparator = DEFAULT_ISLAND_SEPARATOR;
         private String islandSideSeparator = DEFAULT_ISLAND_SEPARATOR;
         private Set<String> islandForcePackages = Collections.emptySet();
+        private Set<String> focusTimeoutExemptPackages = Collections.emptySet();
 
         private Editor() {
         }
@@ -157,6 +186,11 @@ public final class FocusRestoreSettings {
             this.hookMode = source.hookMode;
             this.limitWidth = source.limitWidth;
             this.widthDp = source.widthDp;
+            this.widthLandscapeDp = source.widthLandscapeDp;
+            this.specialBannerNormalBackground = source.specialBannerNormalBackground;
+            this.notificationIconHideMode = source.notificationIconHideMode;
+            this.islandCustomRules = source.islandCustomRules;
+            this.mediaFocusEnabled = source.mediaFocusEnabled;
             this.marqueeDelayMs = source.marqueeDelayMs;
             this.compatRetry = source.compatRetry;
             this.marqueeBounce = source.marqueeBounce;
@@ -176,12 +210,18 @@ public final class FocusRestoreSettings {
             this.islandGeneralSeparator = source.islandGeneralSeparator;
             this.islandSideSeparator = source.islandSideSeparator;
             this.islandForcePackages = source.islandForcePackages;
+            this.focusTimeoutExemptPackages = source.focusTimeoutExemptPackages;
         }
 
         public Editor hookMode(int value) { this.hookMode = value; return this; }
         public Editor limitWidth(boolean value) { this.limitWidth = value; return this; }
         public Editor widthDp(int value) { this.widthDp = value; return this; }
         public Editor marqueeDelayMs(int value) { this.marqueeDelayMs = value; return this; }
+        public Editor widthLandscapeDp(int value) { this.widthLandscapeDp = value; return this; }
+        public Editor specialBannerNormalBackground(boolean value) { this.specialBannerNormalBackground = value; return this; }
+        public Editor notificationIconHideMode(int value) { this.notificationIconHideMode = value; return this; }
+        public Editor islandCustomRules(String value) { this.islandCustomRules = value; return this; }
+        public Editor mediaFocusEnabled(boolean value) { this.mediaFocusEnabled = value; return this; }
         public Editor compatRetry(boolean value) { this.compatRetry = value; return this; }
         public Editor marqueeBounce(boolean value) { this.marqueeBounce = value; return this; }
         public Editor islandCompat(boolean value) { this.islandCompat = value; return this; }
@@ -219,6 +259,9 @@ public final class FocusRestoreSettings {
         }
         public Editor islandForcePackages(Set<String> value) {
             this.islandForcePackages = value; return this;
+        }
+        public Editor focusTimeoutExemptPackages(Set<String> value) {
+            this.focusTimeoutExemptPackages = value; return this;
         }
 
         public FocusRestoreSettings build() {
@@ -259,6 +302,15 @@ public final class FocusRestoreSettings {
                 .hookMode(preferences.getInt(KEY_HOOK_MODE, DEFAULT_HOOK_MODE))
                 .limitWidth(preferences.getBoolean(KEY_LIMIT_WIDTH, DEFAULT_LIMIT_WIDTH))
                 .widthDp(preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_DP))
+                .widthLandscapeDp(preferences.getInt(KEY_WIDTH_LANDSCAPE_DP,
+                        preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_DP)))
+                .specialBannerNormalBackground(preferences.getBoolean(KEY_SPECIAL_BANNER_NORMAL_BACKGROUND,
+                        DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND))
+                .notificationIconHideMode(preferences.getInt(KEY_NOTIFICATION_ICON_HIDE_MODE,
+                        DEFAULT_NOTIFICATION_ICON_HIDE_MODE))
+                .islandCustomRules(preferences.getString(KEY_ISLAND_CUSTOM_RULES, ""))
+                .mediaFocusEnabled(preferences.getBoolean(KEY_MEDIA_FOCUS_ENABLED,
+                        DEFAULT_MEDIA_FOCUS_ENABLED))
                 .marqueeDelayMs(preferences.getInt(KEY_MARQUEE_DELAY_MS, DEFAULT_MARQUEE_DELAY_MS))
                 .compatRetry(preferences.getBoolean(KEY_COMPAT_RETRY, DEFAULT_COMPAT_RETRY))
                 .marqueeBounce(preferences.getBoolean(KEY_MARQUEE_BOUNCE, DEFAULT_MARQUEE_BOUNCE))
@@ -290,11 +342,17 @@ public final class FocusRestoreSettings {
                 .islandSideSeparator(preferences.getString(KEY_ISLAND_SIDE_SEPARATOR, legacy))
                 .islandForcePackages(preferences.getStringSet(KEY_ISLAND_FORCE_PACKAGES,
                         Collections.<String>emptySet()))
+                .focusTimeoutExemptPackages(preferences.getStringSet(
+                        KEY_FOCUS_TIMEOUT_EXEMPT_PACKAGES, Collections.<String>emptySet()))
                 .build();
     }
 
     String describe() {
         return "hookMode=OS" + hookMode + " limit=" + limitWidth + " widthDp=" + widthDp
+                + " widthLandscapeDp=" + widthLandscapeDp
+                + " specialBannerNormalBackground=" + specialBannerNormalBackground
+                + " notificationIconHideMode=" + notificationIconHideMode
+                + " islandCustomRules=" + (islandCustomRules.length() > 0 ? "configured" : "empty")
                 + " delayMs=" + marqueeDelayMs + " compatRetry=" + compatRetry
                 + " marqueeBounce=" + marqueeBounce + " islandCompat=" + islandCompat
                 + " disableIslandProperty=" + disableIslandProperty
@@ -311,6 +369,7 @@ public final class FocusRestoreSettings {
                 + " islandTextMode=" + islandTextMode
                 + " focusMaxDisplaySeconds=" + focusMaxDisplaySeconds
                 + " forcePackages=" + islandForcePackages
+                + " timeoutExemptPackages=" + focusTimeoutExemptPackages
                 + " islandSeparator=" + displaySeparator(islandGeneralSeparator)
                 + " islandSideSeparator=" + displaySeparator(islandSideSeparator);
     }
@@ -324,6 +383,11 @@ public final class FocusRestoreSettings {
                 .putInt(KEY_HOOK_MODE, hookMode)
                 .putBoolean(KEY_LIMIT_WIDTH, limitWidth)
                 .putInt(KEY_WIDTH_DP, widthDp)
+                .putInt(KEY_WIDTH_LANDSCAPE_DP, widthLandscapeDp)
+                .putBoolean(KEY_SPECIAL_BANNER_NORMAL_BACKGROUND, specialBannerNormalBackground)
+                .putInt(KEY_NOTIFICATION_ICON_HIDE_MODE, notificationIconHideMode)
+                .putString(KEY_ISLAND_CUSTOM_RULES, islandCustomRules)
+                .putBoolean(KEY_MEDIA_FOCUS_ENABLED, mediaFocusEnabled)
                 .putInt(KEY_MARQUEE_DELAY_MS, marqueeDelayMs)
                 .putBoolean(KEY_COMPAT_RETRY, compatRetry)
                 .putBoolean(KEY_MARQUEE_BOUNCE, marqueeBounce)
@@ -345,6 +409,7 @@ public final class FocusRestoreSettings {
                 .putString(KEY_ISLAND_SIDE_SEPARATOR, islandSideSeparator)
                 .putString(KEY_ISLAND_SEPARATOR, islandGeneralSeparator)
                 .putStringSet(KEY_ISLAND_FORCE_PACKAGES, islandForcePackages)
+                .putStringSet(KEY_FOCUS_TIMEOUT_EXEMPT_PACKAGES, focusTimeoutExemptPackages)
                 .putLong(KEY_SETTINGS_GENERATION, Math.max(0L, generation))
                 .putBoolean(KEY_HOOK_SETTINGS_READY, true)
                 .commit();

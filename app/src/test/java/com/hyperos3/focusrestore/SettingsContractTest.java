@@ -16,7 +16,9 @@ public class SettingsContractTest {
                 "hook_mode", "hide_notification_icons", "show_focus_divider",
                 "show_island_icon", "tint_island_icon", "expand_island_on_click",
                 "use_small_icon_fallback", "notification_row_click_fallback", "independent_focus_banner",
-                 "island_text_mode", "focus_max_display_seconds"
+                 "island_text_mode", "focus_max_display_seconds", "focus_timeout_exempt_packages",
+                 "width_landscape_dp", "special_banner_normal_background", "notification_icon_hide_mode",
+                 "island_custom_rules", "media_focus_enabled"
          }, SettingsContract.COLUMNS);
         assertEquals(13, SettingsContract.HOOK_MODE);
         assertEquals(14, SettingsContract.HIDE_NOTIFICATION_ICONS);
@@ -27,5 +29,13 @@ public class SettingsContractTest {
         assertEquals(19, SettingsContract.USE_SMALL_ICON_FALLBACK);
         assertEquals(20, SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK);
         assertEquals(21, SettingsContract.INDEPENDENT_FOCUS_BANNER);
+        assertEquals(22, SettingsContract.ISLAND_TEXT_MODE);
+        assertEquals(23, SettingsContract.FOCUS_MAX_DISPLAY_SECONDS);
+        assertEquals(24, SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES);
+        assertEquals(25, SettingsContract.WIDTH_LANDSCAPE_DP);
+        assertEquals(26, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND);
+        assertEquals(27, SettingsContract.NOTIFICATION_ICON_HIDE_MODE);
+        assertEquals(28, SettingsContract.ISLAND_CUSTOM_RULES);
+        assertEquals(29, SettingsContract.MEDIA_FOCUS_ENABLED);
     }
 }

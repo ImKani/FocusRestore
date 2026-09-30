@@ -12,6 +12,11 @@ final class HookSettings {
     final boolean limitWidth;
     final int widthDp;
     final int marqueeDelayMs;
+    final int widthLandscapeDp;
+    final boolean specialBannerNormalBackground;
+    final int notificationIconHideMode;
+    final String islandCustomRules;
+    final boolean mediaFocusEnabled;
     final boolean compatRetry;
     final boolean marqueeBounce;
     final boolean islandCompat;
@@ -30,8 +35,11 @@ final class HookSettings {
     final String generalSeparator;
     final String sideSeparator;
     final Set<String> islandForcePackages;
+    final Set<String> focusTimeoutExemptPackages;
 
-    private HookSettings(int hookMode, boolean limitWidth, int widthDp, int marqueeDelayMs,
+    private HookSettings(int hookMode, boolean limitWidth, int widthDp, int widthLandscapeDp,
+                          boolean specialBannerNormalBackground, int notificationIconHideMode,
+                          String islandCustomRules, boolean mediaFocusEnabled, int marqueeDelayMs,
                          boolean compatRetry, boolean marqueeBounce, boolean islandCompat,
                          boolean disableIslandProperty, boolean disableIslandFeatureCache,
                          boolean allowFocusClick, boolean hideNotificationIcons,
@@ -40,11 +48,18 @@ final class HookSettings {
                          boolean notificationRowClickFallback, boolean independentFocusBanner,
                          int islandTextMode, float focusMaxDisplaySeconds,
                          String generalSeparator,
-                         String sideSeparator, Set<String> forcePackages) {
+                         String sideSeparator, Set<String> forcePackages,
+                         Set<String> timeoutExemptPackages) {
         this.hookMode = FocusRestoreSettings.normalizeHookMode(hookMode);
         this.limitWidth = limitWidth;
         this.widthDp = clamp(widthDp, FocusRestoreSettings.MIN_WIDTH_DP,
                 FocusRestoreSettings.MAX_WIDTH_DP);
+        this.widthLandscapeDp = clamp(widthLandscapeDp, FocusRestoreSettings.MIN_WIDTH_DP,
+                FocusRestoreSettings.MAX_WIDTH_DP);
+        this.specialBannerNormalBackground = specialBannerNormalBackground;
+        this.notificationIconHideMode = Math.max(0, Math.min(1, notificationIconHideMode));
+        this.islandCustomRules = islandCustomRules == null ? "" : islandCustomRules;
+        this.mediaFocusEnabled = mediaFocusEnabled;
         this.marqueeDelayMs = clamp(marqueeDelayMs, 0, 5000);
         this.compatRetry = compatRetry;
         this.marqueeBounce = marqueeBounce;
@@ -67,6 +82,7 @@ final class HookSettings {
         this.sideSeparator = InputLimits.limitSeparator(sideSeparator == null
                 ? FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR : sideSeparator);
         this.islandForcePackages = immutablePackages(forcePackages);
+        this.focusTimeoutExemptPackages = immutablePackages(timeoutExemptPackages);
     }
 
     static HookSettings defaults() {
@@ -79,7 +95,9 @@ final class HookSettings {
      */
     static HookSettings fromSettings(FocusRestoreSettings source) {
         return new HookSettings(source.hookMode, source.limitWidth, source.widthDp,
-                source.marqueeDelayMs, source.compatRetry, source.marqueeBounce,
+                source.widthLandscapeDp, source.specialBannerNormalBackground,
+                source.notificationIconHideMode, source.islandCustomRules,
+                source.mediaFocusEnabled, source.marqueeDelayMs, source.compatRetry, source.marqueeBounce,
                 source.islandCompat, source.disableIslandProperty,
                 source.disableIslandFeatureCache, source.allowFocusClick,
                 source.hideNotificationIcons, source.showFocusDivider, source.showIslandIcon,
@@ -87,7 +105,7 @@ final class HookSettings {
                 source.notificationRowClickFallback, source.independentFocusBanner,
                 source.islandTextMode, source.focusMaxDisplaySeconds,
                 source.islandGeneralSeparator, source.islandSideSeparator,
-                source.islandForcePackages);
+                source.islandForcePackages, source.focusTimeoutExemptPackages);
     }
 
     static HookSettings fromCursor(Cursor cursor) {
@@ -136,6 +154,10 @@ final class HookSettings {
                 SettingsContract.ISLAND_FORCE_PACKAGES)
                 ? splitPackages(cursor.getString(SettingsContract.ISLAND_FORCE_PACKAGES))
                 : Collections.<String>emptySet();
+        Set<String> timeoutExemptPackages = hasValue(cursor, columnCount,
+                SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES)
+                ? splitPackages(cursor.getString(SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES))
+                : Collections.<String>emptySet();
 
         int islandTextMode = hasValue(cursor, columnCount, SettingsContract.ISLAND_TEXT_MODE)
                 ? cursor.getInt(SettingsContract.ISLAND_TEXT_MODE)
@@ -144,8 +166,19 @@ final class HookSettings {
                 SettingsContract.FOCUS_MAX_DISPLAY_SECONDS)
                 ? maxDisplaySeconds(cursor, SettingsContract.FOCUS_MAX_DISPLAY_SECONDS)
                 : FocusRestoreSettings.DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
-        int hookMode = hasValue(cursor, columnCount, SettingsContract.HOOK_MODE)
-                ? cursor.getInt(SettingsContract.HOOK_MODE) : FocusRestoreSettings.DEFAULT_HOOK_MODE;
+        int widthLandscapeDp = hasValue(cursor, columnCount, SettingsContract.WIDTH_LANDSCAPE_DP)
+                ? cursor.getInt(SettingsContract.WIDTH_LANDSCAPE_DP) : widthDp;
+        boolean specialBannerNormalBackground = hasValue(cursor, columnCount,
+                SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND)
+                && cursor.getInt(SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND) != 0;
+        int notificationIconHideMode = hasValue(cursor, columnCount,
+                SettingsContract.NOTIFICATION_ICON_HIDE_MODE)
+                ? cursor.getInt(SettingsContract.NOTIFICATION_ICON_HIDE_MODE)
+                : FocusRestoreSettings.DEFAULT_NOTIFICATION_ICON_HIDE_MODE;
+        String islandCustomRules = hasValue(cursor, columnCount, SettingsContract.ISLAND_CUSTOM_RULES)
+                ? cursor.getString(SettingsContract.ISLAND_CUSTOM_RULES) : "";
+        boolean mediaFocusEnabled = hasValue(cursor, columnCount, SettingsContract.MEDIA_FOCUS_ENABLED)
+                && cursor.getInt(SettingsContract.MEDIA_FOCUS_ENABLED) != 0;
         boolean hideNotificationIcons = hasValue(cursor, columnCount,
                 SettingsContract.HIDE_NOTIFICATION_ICONS)
                 ? cursor.getInt(SettingsContract.HIDE_NOTIFICATION_ICONS) != 0
@@ -175,14 +208,17 @@ final class HookSettings {
                 ? cursor.getInt(SettingsContract.INDEPENDENT_FOCUS_BANNER) != 0
                 : FocusRestoreSettings.DEFAULT_INDEPENDENT_FOCUS_BANNER;
 
-        return new HookSettings(hookMode, limitWidth, widthDp, marqueeDelayMs,
-                compatRetry, marqueeBounce,
+        int hookMode = hasValue(cursor, columnCount, SettingsContract.HOOK_MODE)
+                ? cursor.getInt(SettingsContract.HOOK_MODE) : FocusRestoreSettings.DEFAULT_HOOK_MODE;
+        return new HookSettings(hookMode, limitWidth, widthDp, widthLandscapeDp,
+                specialBannerNormalBackground, notificationIconHideMode, islandCustomRules,
+                mediaFocusEnabled, marqueeDelayMs, compatRetry, marqueeBounce,
                 islandCompat, disableIslandProperty, disableIslandFeatureCache,
                 allowFocusClick, hideNotificationIcons, showFocusDivider,
                 showIslandIcon, tintIslandIcon, useSmallIconFallback,
                 notificationRowClickFallback, independentFocusBanner,
                 islandTextMode, focusMaxDisplaySeconds,
-                generalSeparator, sideSeparator, forcePackages);
+                generalSeparator, sideSeparator, forcePackages, timeoutExemptPackages);
     }
 
     String describe() {
@@ -204,6 +240,7 @@ final class HookSettings {
                 + " islandTextMode=" + islandTextMode
                 + " focusMaxDisplaySeconds=" + focusMaxDisplaySeconds
                 + " forcePackages=" + islandForcePackages
+                + " timeoutExemptPackages=" + focusTimeoutExemptPackages
                 + " islandSeparator=" + displaySeparator(generalSeparator)
                 + " islandSideSeparator=" + displaySeparator(sideSeparator);
     }

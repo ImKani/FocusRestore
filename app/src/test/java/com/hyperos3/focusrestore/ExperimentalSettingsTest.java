@@ -265,6 +265,7 @@ public class ExperimentalSettingsTest {
                 .islandGeneralSeparator("general")
                 .islandSideSeparator("side")
                 .islandForcePackages(Collections.singleton("com.example.focus"))
+                .focusTimeoutExemptPackages(Collections.singleton("com.example.travel"))
                 .build();
 
         assertEquals(FocusRestoreSettings.HOOK_MODE_OS4, all.hookMode);
@@ -289,6 +290,7 @@ public class ExperimentalSettingsTest {
         assertEquals("general", all.islandGeneralSeparator);
         assertEquals("side", all.islandSideSeparator);
         assertEquals(Collections.singleton("com.example.focus"), all.islandForcePackages);
+        assertEquals(Collections.singleton("com.example.travel"), all.focusTimeoutExemptPackages);
 
         // SystemUI must see the very same values, including the fields added in 0.13.48.
         HookSettings hook = HookSettings.fromCursor(positionedCursor(
@@ -298,6 +300,10 @@ public class ExperimentalSettingsTest {
         assertEquals(12.5f, hook.focusMaxDisplaySeconds, 0.0001f);
         assertEquals(FocusRestoreSettings.HOOK_MODE_OS4, hook.hookMode);
         assertEquals("side", hook.sideSeparator);
+        // The timeout exemption list has to survive the wire format as its own column, independent of
+        // the focus whitelist.
+        assertEquals(Collections.singleton("com.example.travel"), hook.focusTimeoutExemptPackages);
+        assertEquals(Collections.singleton("com.example.focus"), hook.islandForcePackages);
 
         // defaults() and HookSettings.defaults() must not drift apart either.
         HookSettings hookDefaults = HookSettings.defaults();
@@ -307,6 +313,7 @@ public class ExperimentalSettingsTest {
         assertEquals(defaults.focusMaxDisplaySeconds, hookDefaults.focusMaxDisplaySeconds, 0.0001f);
         assertEquals(defaults.showIslandIcon, hookDefaults.showIslandIcon);
         assertEquals(defaults.tintIslandIcon, hookDefaults.tintIslandIcon);
+        assertEquals(defaults.focusTimeoutExemptPackages, hookDefaults.focusTimeoutExemptPackages);
     }
 
     /** Fixed pre-banner wire fixture, independent of current schema constants. */

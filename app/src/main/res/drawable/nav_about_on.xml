@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Selected "关于" tab: a solid disc whose "i" is cut out (evenOdd), so the mark stays visible as an
+  inverted shape even after the navigation code tints the drawable — a tint cannot reach a hole.
+
+  The disc radius is 9.6, not the 8.6 of an unstroked path, because the unselected tab draws its
+  circle as a stroke: a 2-unit stroke is centred on the path, so that ring's visible outer edge sits
+  1 unit further out. Both states now share the same outer size (2.4 .. 21.6); without this the solid
+  disc looked visibly smaller than the outline when switching tabs.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path android:fillColor="#42474B" android:fillType="evenOdd" android:pathData="M12,2.4 C17.3021,2.4 21.6,6.6979 21.6,12 C21.6,17.3021 17.3021,21.6 12,21.6 C6.6979,21.6 2.4,17.3021 2.4,12 C2.4,6.6979 6.6979,2.4 12,2.4 Z M12,7 C11.3925,7 10.9,7.4925 10.9,8.1 C10.9,8.7075 11.3925,9.2 12,9.2 C12.6075,9.2 13.1,8.7075 13.1,8.1 C13.1,7.4925 12.6075,7 12,7 Z M12,10.6 C11.4477,10.6 11,11.0477 11,11.6 L11,16.4 C11,16.9523 11.4477,17.4 12,17.4 C12.5523,17.4 13,16.9523 13,16.4 L13,11.6 C13,11.0477 12.5523,10.6 12,10.6 Z" />
+</vector>

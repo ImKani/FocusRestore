@@ -71,6 +71,76 @@ final class IslandPayloadParser {
         }
     }
 
+    static ParsedText parseCustom(String payload, String rulesJson, String packageName,
+                                  String generalSeparator) {
+        if (!validateCustomRules(rulesJson) || !InputLimits.isPayloadAllowed(payload)
+                || packageName == null || packageName.length() == 0) return null;
+        try {
+            JSONObject rules = new JSONObject(rulesJson);
+            JSONArray paths = rules.optJSONArray(packageName);
+            if (paths == null || paths.length() == 0 || paths.length() > 8) return null;
+            Object root = new JSONObject(payload);
+            String result = null;
+            String sep = separator(generalSeparator);
+            for (int i = 0; i < paths.length(); i++) {
+                String path = paths.optString(i, "");
+                if (path.length() == 0 || path.length() > 256) continue;
+                Object value = resolvePointer(root, path);
+                if (value == null || value == JSONObject.NULL || value instanceof JSONObject
+                        || value instanceof JSONArray) continue;
+                String text = clean(String.valueOf(value));
+                if (!empty(text)) result = appendDistinctText(result, text, sep);
+            }
+            return empty(result) ? null : new ParsedText(result, "custom:" + packageName);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    static boolean validateCustomRules(String rulesJson) {
+        if (rulesJson == null || rulesJson.trim().length() == 0 || rulesJson.length() > 16384) return false;
+        try {
+            JSONObject rules = new JSONObject(rulesJson);
+            java.util.Iterator<String> keys = rules.keys();
+            while (keys.hasNext()) {
+                String packageName = keys.next();
+                if (packageName == null || packageName.length() == 0 || packageName.length() > 256) return false;
+                JSONArray paths = rules.optJSONArray(packageName);
+                if (paths == null || paths.length() == 0 || paths.length() > 8) return false;
+                for (int i = 0; i < paths.length(); i++) {
+                    String path = paths.optString(i, "");
+                    if (path.length() == 0 || path.length() > 256 || (!path.equals("") && !path.startsWith("/"))) return false;
+                    if (path.indexOf('~') >= 0) {
+                        for (int j = 0; j < path.length(); j++) {
+                            if (path.charAt(j) == '~' && (j + 1 >= path.length()
+                                    || (path.charAt(j + 1) != '0' && path.charAt(j + 1) != '1'))) return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static Object resolvePointer(Object root, String pointer) {
+        if ("".equals(pointer)) return root;
+        if (!pointer.startsWith("/")) return null;
+        Object current = root;
+        String[] parts = pointer.substring(1).split("/", -1);
+        if (parts.length > 32) return null;
+        for (String raw : parts) {
+            String key = raw.replace("~1", "/").replace("~0", "~");
+            if (current instanceof JSONObject) current = ((JSONObject) current).opt(key);
+            else if (current instanceof JSONArray) {
+                try { current = ((JSONArray) current).opt(Integer.parseInt(key)); }
+                catch (Throwable invalidIndex) { return null; }
+            } else return null;
+        }
+        return current;
+    }
+
     static ParsedText parse(String payload, String generalSeparator, String sideSeparator) {
         if (!InputLimits.isPayloadAllowed(payload) || payload.trim().length() == 0) return null;
         String general = separator(generalSeparator);
