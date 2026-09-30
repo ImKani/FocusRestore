@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
 package com.hyperos3.focusrestore;
 
 import android.database.Cursor;
@@ -14,8 +15,6 @@ final class HookSettings {
     final int marqueeDelayMs;
     final int widthLandscapeDp;
     final boolean specialBannerNormalBackground;
-    final int notificationIconHideMode;
-    final String islandCustomRules;
     final boolean mediaFocusEnabled;
     final boolean compatRetry;
     final boolean marqueeBounce;
@@ -38,8 +37,8 @@ final class HookSettings {
     final Set<String> focusTimeoutExemptPackages;
 
     private HookSettings(int hookMode, boolean limitWidth, int widthDp, int widthLandscapeDp,
-                          boolean specialBannerNormalBackground, int notificationIconHideMode,
-                          String islandCustomRules, boolean mediaFocusEnabled, int marqueeDelayMs,
+                          boolean specialBannerNormalBackground,
+                          boolean mediaFocusEnabled, int marqueeDelayMs,
                          boolean compatRetry, boolean marqueeBounce, boolean islandCompat,
                          boolean disableIslandProperty, boolean disableIslandFeatureCache,
                          boolean allowFocusClick, boolean hideNotificationIcons,
@@ -55,10 +54,8 @@ final class HookSettings {
         this.widthDp = clamp(widthDp, FocusRestoreSettings.MIN_WIDTH_DP,
                 FocusRestoreSettings.MAX_WIDTH_DP);
         this.widthLandscapeDp = clamp(widthLandscapeDp, FocusRestoreSettings.MIN_WIDTH_DP,
-                FocusRestoreSettings.MAX_WIDTH_DP);
+                FocusRestoreSettings.MAX_LANDSCAPE_WIDTH_DP);
         this.specialBannerNormalBackground = specialBannerNormalBackground;
-        this.notificationIconHideMode = Math.max(0, Math.min(1, notificationIconHideMode));
-        this.islandCustomRules = islandCustomRules == null ? "" : islandCustomRules;
         this.mediaFocusEnabled = mediaFocusEnabled;
         this.marqueeDelayMs = clamp(marqueeDelayMs, 0, 5000);
         this.compatRetry = compatRetry;
@@ -96,7 +93,6 @@ final class HookSettings {
     static HookSettings fromSettings(FocusRestoreSettings source) {
         return new HookSettings(source.hookMode, source.limitWidth, source.widthDp,
                 source.widthLandscapeDp, source.specialBannerNormalBackground,
-                source.notificationIconHideMode, source.islandCustomRules,
                 source.mediaFocusEnabled, source.marqueeDelayMs, source.compatRetry, source.marqueeBounce,
                 source.islandCompat, source.disableIslandProperty,
                 source.disableIslandFeatureCache, source.allowFocusClick,
@@ -171,12 +167,6 @@ final class HookSettings {
         boolean specialBannerNormalBackground = hasValue(cursor, columnCount,
                 SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND)
                 && cursor.getInt(SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND) != 0;
-        int notificationIconHideMode = hasValue(cursor, columnCount,
-                SettingsContract.NOTIFICATION_ICON_HIDE_MODE)
-                ? cursor.getInt(SettingsContract.NOTIFICATION_ICON_HIDE_MODE)
-                : FocusRestoreSettings.DEFAULT_NOTIFICATION_ICON_HIDE_MODE;
-        String islandCustomRules = hasValue(cursor, columnCount, SettingsContract.ISLAND_CUSTOM_RULES)
-                ? cursor.getString(SettingsContract.ISLAND_CUSTOM_RULES) : "";
         boolean mediaFocusEnabled = hasValue(cursor, columnCount, SettingsContract.MEDIA_FOCUS_ENABLED)
                 && cursor.getInt(SettingsContract.MEDIA_FOCUS_ENABLED) != 0;
         boolean hideNotificationIcons = hasValue(cursor, columnCount,
@@ -211,7 +201,7 @@ final class HookSettings {
         int hookMode = hasValue(cursor, columnCount, SettingsContract.HOOK_MODE)
                 ? cursor.getInt(SettingsContract.HOOK_MODE) : FocusRestoreSettings.DEFAULT_HOOK_MODE;
         return new HookSettings(hookMode, limitWidth, widthDp, widthLandscapeDp,
-                specialBannerNormalBackground, notificationIconHideMode, islandCustomRules,
+                specialBannerNormalBackground,
                 mediaFocusEnabled, marqueeDelayMs, compatRetry, marqueeBounce,
                 islandCompat, disableIslandProperty, disableIslandFeatureCache,
                 allowFocusClick, hideNotificationIcons, showFocusDivider,

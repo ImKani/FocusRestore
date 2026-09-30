@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
 package com.hyperos3.focusrestore;
 
 import android.app.Activity;
@@ -37,8 +38,6 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -70,6 +69,7 @@ public final class SettingsActivity extends Activity {
     static final int DEFAULT_WIDTH_DP = FocusRestoreSettings.DEFAULT_WIDTH_DP;
     static final int MIN_WIDTH_DP = FocusRestoreSettings.MIN_WIDTH_DP;
     static final int MAX_WIDTH_DP = FocusRestoreSettings.MAX_WIDTH_DP;
+    static final int MAX_LANDSCAPE_WIDTH_DP = FocusRestoreSettings.MAX_LANDSCAPE_WIDTH_DP;
     static final int DEFAULT_MARQUEE_DELAY_MS = FocusRestoreSettings.DEFAULT_MARQUEE_DELAY_MS;
 
     private static final Object STORE_WRITE_LOCK = new Object();
@@ -136,17 +136,14 @@ public final class SettingsActivity extends Activity {
     private Switch useSmallIconFallbackSwitch;
     private Switch notificationRowClickFallbackSwitch;
     private Switch independentFocusBannerSwitch;
-    private EditText islandCustomRulesInput;
     private EditText generalSeparatorInput;
     private EditText sideSeparatorInput;
     private Switch mediaFocusSwitch;
     private Switch specialBannerNormalBackgroundSwitch;
-    private Switch notificationIconSelectiveSwitch;
+    private Switch ordinaryBannerBackgroundSwitch;
     private int pendingWidthLandscapeDp;
     private boolean pendingSpecialBannerNormalBackground;
     private boolean pendingMediaFocusEnabled;
-    private int pendingNotificationIconHideMode;
-    private String pendingIslandCustomRules = "";
     private boolean pendingManual, pendingCompatRetry, pendingMarqueeBounce, pendingIslandCompat,
             pendingDisableIslandProperty, pendingDisableIslandFeatureCache, pendingAllowFocusClick,
             pendingHideNotificationIcons, pendingShowFocusDivider, pendingShowIslandIcon,
@@ -159,7 +156,6 @@ public final class SettingsActivity extends Activity {
     private Set<String> pendingForcePackages = new HashSet<>();
     private Set<String> pendingTimeoutExemptPackages = new HashSet<>();
     private Button forcePackagesButton;
-    private Button customRulesButton;
     private Button timeoutExemptButton;
     /** Which list the shared app picker is editing. */
     private boolean dialogEditsExempt;
@@ -431,11 +427,6 @@ public final class SettingsActivity extends Activity {
         forcePackagesButton.setMinHeight(dp(52));
         forcePackagesButton.setOnClickListener(v -> showForcePackagesDialog(false));
         islandPanel.addView(forcePackagesButton, matchWrap(0));
-        customRulesButton = new Button(this);
-        customRulesButton.setText("按应用编辑超级岛字段规则");
-        customRulesButton.setAllCaps(false);
-        customRulesButton.setOnClickListener(v -> showCustomRulesDialog());
-        islandPanel.addView(customRulesButton, matchWrap(0));
         root.addView(islandPanel, matchWrap(dp(12)));
 
         root.addView(sectionHeader("焦点显示"), matchWrap(dp(8)));
@@ -454,7 +445,7 @@ public final class SettingsActivity extends Activity {
         focusPanel.addView(landscapeWidthRow, matchWrap(dp(2)));
         SeekBar landscapeWidthSeekBar = new SeekBar(this);
         styleSeekBar(landscapeWidthSeekBar);
-        landscapeWidthSeekBar.setMax(MAX_WIDTH_DP - MIN_WIDTH_DP);
+        landscapeWidthSeekBar.setMax(MAX_LANDSCAPE_WIDTH_DP - MIN_WIDTH_DP);
         landscapeWidthSeekBar.setProgress(pendingWidthLandscapeDp - MIN_WIDTH_DP);
         landscapeWidthSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
@@ -466,14 +457,14 @@ public final class SettingsActivity extends Activity {
             public void onStopTrackingTouch(SeekBar bar) { }
         });
         focusPanel.addView(landscapeWidthSeekBar, matchWrap(dp(2)));
-        specialBannerNormalBackgroundSwitch = createSwitch("特殊横幅使用普通通知背景");
+        specialBannerNormalBackgroundSwitch = createSwitch("统一使用纯色背景");
         focusPanel.addView(specialBannerNormalBackgroundSwitch, matchWrap(dp(4)));
-        mediaFocusSwitch = createSwitch("启用媒体焦点通知");
+        ordinaryBannerBackgroundSwitch = createSwitch("使用普通通知背景");
+        focusPanel.addView(ordinaryBannerBackgroundSwitch, matchWrap(dp(4)));
+        mediaFocusSwitch = createSwitch("启用媒体焦点通知（实验性）");
         focusPanel.addView(mediaFocusSwitch, matchWrap(dp(4)));
         hideNotificationIconsSwitch = createSwitch("隐藏其他通知图标（HyperOS 4）");
-        notificationIconSelectiveSwitch = createSwitch("仅隐藏系统图标（保留容器）");
-        focusPanel.addView(notificationIconSelectiveSwitch, matchWrap(dp(4)));
-        focusPanel.addView(text("最大显示时间（秒）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+                focusPanel.addView(text("最大显示时间（秒）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
         focusMaxDisplayInput = input("0 = 不限制，2 - 3600 秒");
         focusMaxDisplayInput.setInputType(InputType.TYPE_CLASS_NUMBER
                 | InputType.TYPE_NUMBER_FLAG_DECIMAL);
@@ -496,7 +487,7 @@ public final class SettingsActivity extends Activity {
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
         showFocusDividerSwitch = createSwitch("显示焦点分隔线（HyperOS 4）");
         focusPanel.addView(hideNotificationIconsSwitch, matchWrap(dp(4)));
-        focusPanel.addView(showFocusDividerSwitch, matchWrap(0));
+                        focusPanel.addView(showFocusDividerSwitch, matchWrap(0));
         root.addView(focusPanel, matchWrap(dp(12)));
 
         manualWidthSwitch.setChecked(pendingManual);
@@ -507,9 +498,9 @@ public final class SettingsActivity extends Activity {
         hideNotificationIconsSwitch.setChecked(pendingHideNotificationIcons);
         if (specialBannerNormalBackgroundSwitch != null) {
             specialBannerNormalBackgroundSwitch.setChecked(pendingSpecialBannerNormalBackground);
+            ordinaryBannerBackgroundSwitch.setChecked(!pendingSpecialBannerNormalBackground);
         }
         if (mediaFocusSwitch != null) mediaFocusSwitch.setChecked(pendingMediaFocusEnabled);
-        if (notificationIconSelectiveSwitch != null) notificationIconSelectiveSwitch.setChecked(pendingNotificationIconHideMode == 1);
         showFocusDividerSwitch.setChecked(pendingShowFocusDivider);
         updateModeButtons();
         updateWidthControls();
@@ -648,8 +639,7 @@ public final class SettingsActivity extends Activity {
         outState.putInt("m3.widthLandscape", pendingWidthLandscapeDp);
         outState.putBoolean("m3.specialBackground", pendingSpecialBannerNormalBackground);
         outState.putBoolean("m3.mediaFocus", pendingMediaFocusEnabled);
-        outState.putInt("m3.iconHideMode", pendingNotificationIconHideMode);
-        outState.putString("m3.customRules", pendingIslandCustomRules);
+        
         outState.putInt("m3.delay", pendingDelayMs);
         outState.putBoolean("m3.retry", pendingCompatRetry);
         outState.putBoolean("m3.bounce", pendingMarqueeBounce);
@@ -695,8 +685,7 @@ public final class SettingsActivity extends Activity {
         pendingWidthLandscapeDp = state.getInt("m3.widthLandscape", pendingWidthLandscapeDp);
         pendingSpecialBannerNormalBackground = state.getBoolean("m3.specialBackground", pendingSpecialBannerNormalBackground);
         pendingMediaFocusEnabled = state.getBoolean("m3.mediaFocus", pendingMediaFocusEnabled);
-        pendingNotificationIconHideMode = state.getInt("m3.iconHideMode", pendingNotificationIconHideMode);
-        pendingIslandCustomRules = state.getString("m3.customRules", pendingIslandCustomRules);
+        
         pendingDelayMs = state.getInt("m3.delay", pendingDelayMs);
         pendingCompatRetry = state.getBoolean("m3.retry", pendingCompatRetry);
         pendingMarqueeBounce = state.getBoolean("m3.bounce", pendingMarqueeBounce);
@@ -855,19 +844,30 @@ public final class SettingsActivity extends Activity {
                 markPending();
             });
         }
-        if (hideNotificationIconsSwitch != null) hideNotificationIconsSwitch.setOnCheckedChangeListener((b, c) -> { pendingHideNotificationIcons = c; markPending(); });
+        if (hideNotificationIconsSwitch != null) hideNotificationIconsSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingHideNotificationIcons = c;
+            updateModeSpecificControls();
+            markPending();
+        });
         if (specialBannerNormalBackgroundSwitch != null) {
             specialBannerNormalBackgroundSwitch.setOnCheckedChangeListener((b, c) -> {
+                if (pendingSpecialBannerNormalBackground == c) return;
                 pendingSpecialBannerNormalBackground = c;
+                // 两个开关共享一种模式，互斥同步时不重复提交保存。
+                ordinaryBannerBackgroundSwitch.setChecked(!c);
+                markPending();
+            });
+        }
+        if (ordinaryBannerBackgroundSwitch != null) {
+            ordinaryBannerBackgroundSwitch.setOnCheckedChangeListener((b, c) -> {
+                if (pendingSpecialBannerNormalBackground == !c) return;
+                pendingSpecialBannerNormalBackground = !c;
+                specialBannerNormalBackgroundSwitch.setChecked(!c);
                 markPending();
             });
         }
         if (mediaFocusSwitch != null) mediaFocusSwitch.setOnCheckedChangeListener((b, c) -> {
             pendingMediaFocusEnabled = c;
-            markPending();
-        });
-        if (notificationIconSelectiveSwitch != null) notificationIconSelectiveSwitch.setOnCheckedChangeListener((b, c) -> {
-            pendingNotificationIconHideMode = c ? 1 : 0;
             markPending();
         });
         if (showFocusDividerSwitch != null) showFocusDividerSwitch.setOnCheckedChangeListener((b, c) -> {
@@ -957,58 +957,6 @@ public final class SettingsActivity extends Activity {
         if (widthValueRow != null) { widthValueRow.setEnabled(enabled); widthValueRow.setAlpha(enabled ? 1f : 0.38f); }
         if (widthRangeRow != null) { widthRangeRow.setEnabled(enabled); widthRangeRow.setAlpha(enabled ? 1f : 0.38f); }
         if (widthValue != null) { widthValue.setEnabled(enabled); widthValue.setAlpha(enabled ? 1f : 0.38f); }
-    }
-
-    private void showCustomRulesDialog() {
-        final Dialog dialog = new Dialog(this);
-        LinearLayout root = panel();
-        root.addView(text("按包名编辑字段路径", 17, COLOR_TEXT_PRIMARY), matchWrap(dp(8)));
-        EditText packageInput = input("包名，例如 com.example.app");
-        root.addView(packageInput, matchWrap(dp(8)));
-        EditText pathsInput = input("每行一个 JSON Pointer，例如 /param_v2/baseInfo/title");
-        pathsInput.setSingleLine(false);
-        pathsInput.setMinLines(5);
-        pathsInput.setGravity(Gravity.TOP | Gravity.START);
-        root.addView(pathsInput, matchWrap(dp(8)));
-        TextView hint = text("最多 8 条路径，每条最多 256 个字符；非法规则不会替换现有缓存。", 13, COLOR_TEXT_SECONDARY);
-        root.addView(hint, matchWrap(dp(8)));
-        LinearLayout actions = new LinearLayout(this);
-        actions.setGravity(Gravity.RIGHT);
-        Button cancel = new Button(this);
-        cancel.setText("取消");
-        cancel.setOnClickListener(v -> dialog.dismiss());
-        Button save = new Button(this);
-        save.setText("保存规则");
-        save.setOnClickListener(v -> {
-            String pkg = packageInput.getText().toString().trim();
-            String[] lines = pathsInput.getText().toString().split("\\r?\\n");
-            JSONArray paths = new JSONArray();
-            for (String line : lines) {
-                String path = line.trim();
-                if (path.length() > 0) paths.put(path);
-            }
-            try {
-                JSONObject rules = pendingIslandCustomRules.length() == 0
-                        ? new JSONObject() : new JSONObject(pendingIslandCustomRules);
-                if (pkg.length() == 0 || paths.length() == 0 || paths.length() > 8) throw new IllegalArgumentException();
-                rules.put(pkg, paths);
-                String candidate = rules.toString();
-                if (!IslandPayloadParser.validateCustomRules(candidate)) throw new IllegalArgumentException();
-                pendingIslandCustomRules = candidate;
-                markPending();
-                dialog.dismiss();
-            } catch (Throwable invalid) {
-                Toast.makeText(this, "规则无效：请检查包名和 JSON Pointer", Toast.LENGTH_SHORT).show();
-            }
-        });
-        actions.addView(cancel, new LinearLayout.LayoutParams(0, dp(48), 1f));
-        actions.addView(save, new LinearLayout.LayoutParams(0, dp(48), 1f));
-        root.addView(actions, matchWrap(0));
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setContentView(root);
-        dialog.show();
-        Window window = dialog.getWindow();
-        if (window != null) window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * .92f), -2);
     }
 
     private void showForcePackagesDialog(boolean exempt) {
@@ -1331,8 +1279,6 @@ public final class SettingsActivity extends Activity {
         pendingWidthLandscapeDp = settings.widthLandscapeDp;
         pendingSpecialBannerNormalBackground = settings.specialBannerNormalBackground;
         pendingMediaFocusEnabled = settings.mediaFocusEnabled;
-        pendingNotificationIconHideMode = settings.notificationIconHideMode;
-        pendingIslandCustomRules = settings.islandCustomRules;
         pendingDelayMs = settings.marqueeDelayMs;
         pendingCompatRetry = settings.compatRetry;
         pendingMarqueeBounce = settings.marqueeBounce;
@@ -1373,8 +1319,6 @@ public final class SettingsActivity extends Activity {
                 .widthLandscapeDp(pendingWidthLandscapeDp)
                 .specialBannerNormalBackground(pendingSpecialBannerNormalBackground)
                 .mediaFocusEnabled(pendingMediaFocusEnabled)
-                .notificationIconHideMode(pendingNotificationIconHideMode)
-                .islandCustomRules(pendingIslandCustomRules)
                 .marqueeDelayMs(pendingDelayMs)
                 .compatRetry(pendingCompatRetry)
                 .marqueeBounce(pendingMarqueeBounce)
@@ -1566,6 +1510,7 @@ public final class SettingsActivity extends Activity {
         boolean os4 = pendingHookMode == FocusRestoreSettings.HOOK_MODE_OS4;
         setModeSpecificSwitchEnabled(hideNotificationIconsSwitch, os4);
         setModeSpecificSwitchEnabled(showFocusDividerSwitch, os4);
+        // 保留容器只对 OS4 的左侧图标容器有意义，并且必须依附于总隐藏开关。
         updateExperimentalControls();
     }
 

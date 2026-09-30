@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
 package com.hyperos3.focusrestore;
 
 import org.junit.Test;
@@ -25,18 +26,6 @@ public class IslandPayloadParserTest {
                     + "\"textInfo\":{\"title\":\"D8396\",\"showHighlightColor\":true}},"
                     + "\"textInfo\":{\"title\":\"检票口\",\"showHighlightColor\":true}},"
                     + "\"smallIslandArea\":{\"picInfo\":{\"type\":1,\"pic\":\"island_pic_small\"}}}}";
-
-    @Test
-    public void customRulesResolveOrderedPointersAndRejectMoreThanEight() {
-        String rules = "{\"com.example\":[\"/title\",\"/detail\"]}";
-        IslandPayloadParser.ParsedText parsed = IslandPayloadParser.parseCustom(
-                "{\"title\":\"A\",\"detail\":\"B\"}", rules, "com.example", "·");
-        assertNotNull(parsed);
-        assertEquals("A·B", parsed.text);
-        assertTrue(IslandPayloadParser.validateCustomRules(rules));
-        assertFalse(IslandPayloadParser.validateCustomRules("{\"com.example\":[\"bad\"]}"));
-    }
-
 
     @Test
     public void compactOfTheTravelPayloadKeepsBothPillSides() {

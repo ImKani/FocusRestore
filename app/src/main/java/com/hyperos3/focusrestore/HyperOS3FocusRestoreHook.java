@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
 package com.hyperos3.focusrestore;
 
 import android.animation.ValueAnimator;
@@ -38,6 +39,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
@@ -115,13 +117,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private volatile FocusBannerController bannerController;
     private NativeFocusTemplateRenderer nativeBannerRenderer;
     private final Set<View> os3PromptViews = Collections.newSetFromMap(new WeakHashMap<>());
-    private final NotificationIconHider os3NotificationIconHider = new NotificationIconHider(
-            new NotificationIconHider.Logger() {
-                @Override public void log(String message) { HyperOS3FocusRestoreHook.this.log("OS3 " + message); }
-                @Override public void error(String stage, Throwable throwable) {
-                    HyperOS3FocusRestoreHook.this.error("OS3 " + stage, throwable);
-                }
-            });
     private Handler mainHandler;
     private TextView pendingMarqueeText;
     private Runnable pendingMarqueeRunnable;
@@ -152,6 +147,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Collections.synchronizedMap(new WeakHashMap<>());
     private final LinkedHashMap<String, Long> convertedNotificationKeys =
             new LinkedHashMap<>(16, 0.75f, true);
+    /** Keys observed as media notifications; bean callbacks can temporarily lose the media token. */
+    private final Set<String> mediaNotificationKeys = Collections.synchronizedSet(new HashSet<>());
     private final Map<String, WeakReference<Object>> notificationEntries =
             Collections.synchronizedMap(new LinkedHashMap<>());
     /** key -> {displayStartElapsedRealtime, notificationPostTime} for the display limit. */
@@ -300,11 +297,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     private void installOS3Hooks() {
+        hookFocusCoordinatorMediaPromotion();
+        hookMediaFocusedBeanRemoval();
         hookOS3NotificationRemoval();
         hookShowOnStatusBar();
-        os3NotificationIconHider.install();
         hookFocusedParentParams();
         hookFocusedTextMarquee();
+        hookPromptViewSetData();
         hookPromptShouldShow();
         hookDisableConvertedFocusClick();
         hookRemoteViewsErrors();
@@ -481,6 +480,77 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    private void hookMediaFocusedBeanRemoval() {
+        try {
+            Class<?> controller = FocusReflection.findClass(
+                    "com.android.systemui.statusbar.phone.FocusedNotifPromptController",
+                    classLoader);
+            XposedBridge.hookAllMethods(controller,
+                    "-$$Nest$mremoveFocusedNotifBean", new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!currentSettings.mediaFocusEnabled || param.args == null
+                                    || param.args.length < 2) return;
+                            Object entry = param.args[1];
+                            String key = notificationEntryKey(entry);
+                            if (!TextUtils.isEmpty(key) && mediaNotificationKeys.contains(key)) {
+                                param.setResult(null);
+                                log("blocked media removeFocusedNotifBean key=" + key);
+                            }
+                        }
+                    });
+            log("OS3 media FocusedNotifBean removal hook installed");
+        } catch (Throwable throwable) {
+            error("hookMediaFocusedBeanRemoval", throwable);
+        }
+    }
+
+    private void hookFocusCoordinatorMediaPromotion() {
+        try {
+            Class<?> listener = FocusReflection.findClass(
+                    "com.android.systemui.statusbar.notification.focus.FocusCoordinator$3",
+                    classLoader);
+            XposedBridge.hookAllMethods(listener, "onEntryAdded", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    promoteMediaEntry(param.args == null || param.args.length == 0
+                            ? null : param.args[0], "onEntryAdded");
+                }
+            });
+            XposedBridge.hookAllMethods(listener, "onEntryUpdated", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    promoteMediaEntry(param.args == null || param.args.length == 0
+                            ? null : param.args[0], "onEntryUpdated");
+                }
+            });
+            log("OS3 media FocusCoordinator promotion hooks installed");
+        } catch (Throwable throwable) {
+            error("hookFocusCoordinatorMediaPromotion", throwable);
+        }
+    }
+
+    private void promoteMediaEntry(Object entry, String stage) {
+        if (!currentSettings.mediaFocusEnabled || entry == null) return;
+        try {
+            Object expanded = notificationEntrySbn(entry);
+            FocusData data = inspectExpanded(expanded);
+            if (data == null || TextUtils.isEmpty(data.key)) return;
+
+            if (data == null || data.mediaContent == null || TextUtils.isEmpty(data.key)) return;
+            mediaNotificationKeys.add(data.key);
+            boolean originalFocus = getBooleanField(expanded, "mIsFocusNotification", false);
+            if (originalFocus) return;
+            preMarkedOriginalFocus.put(expanded, false);
+            preMarkedIslands.add(expanded);
+            XposedHelpers.setBooleanField(expanded, "mIsFocusNotification", true);
+            log(stage + " promoted media to Focus key=" + data.key
+                    + " package=" + data.packageName);
+        } catch (Throwable throwable) {
+            error(stage + " promoteMediaEntry", throwable);
+        }
+    }
+
     private void hookOS3NotificationRemoval() {
         try {
             Class<?> eventClass = FocusReflection.findClass(classLoader,
@@ -506,6 +576,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private void removeBannerNotification(String key) {
         if (TextUtils.isEmpty(key)) return;
         notificationEntries.remove(key);
+        mediaNotificationKeys.remove(key);
         FocusBannerController controller = bannerController;
         if (controller != null) controller.onNotificationRemoved(key);
         if (nativeBannerRenderer != null) nativeBannerRenderer.onNotificationRemoved(key);
@@ -558,8 +629,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     }
                 }, nativeBannerRenderer, this::openBannerNotification);
             }
+            // 设置项表达“统一纯色背景”；关闭时才退回旧版电话横幅使用的普通通知卡片。
             RemoteViewsFocusBannerSource.setForceNormalBackground(
-                    currentSettings.specialBannerNormalBackground);
+                    !currentSettings.specialBannerNormalBackground);
             Notification bannerNotification = sbn.getNotification();
             Bundle bannerExtras = bannerNotification == null ? null : bannerNotification.extras;
             FocusParamKeys.ValueSource bannerValues =
@@ -703,8 +775,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 return;
                             }
                             if (data != null && currentSettings.mediaFocusEnabled
-                                    && !data.isOriginalFocus && !data.hasIslandParam
-                                    && data.mediaContent != null) {
+                                    
+                                    && (data.mediaContent != null
+                                     || mediaNotificationKeys.contains(data.key))
+) {
                                 try {
                                     boolean originalFocus = getBooleanField(param.args[0],
                                             "mIsFocusNotification", false);
@@ -748,7 +822,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
                             boolean original = Boolean.TRUE.equals(param.getResult());
                             if (data != null && currentSettings.mediaFocusEnabled
-                                    && data.mediaContent != null && !data.hasIslandParam) {
+                                    && (data.mediaContent != null
+                                     || mediaNotificationKeys.contains(data.key))
+) {
                                 try {
                                     XposedHelpers.setBooleanField(param.args[0],
                                             "mIsFocusNotification", true);
@@ -758,7 +834,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 param.setResult(true);
                                 markFocusDisplayed(data);
                                 log("media converted to focus key=" + data.key
-                                        + " playing=" + data.mediaContent.playing);
+                                        + " playing=" + (data.mediaContent == null ? "unknown"
+                                        : data.mediaContent.playing));
                                 return;
                             }
                             IslandText islandText = (!data.isOriginalFocus && currentSettings.islandCompat)
@@ -839,9 +916,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             // to this view and only touches the view tree when that text changes.
                             preferConvertedIslandText(param.thisObject, data);
                             preferMediaText(param.thisObject, data);
-                             os3NotificationIconHider.applyForVisiblePrompt((View) param.thisObject,
-                                     currentSettings.hideNotificationIcons,
-                                     currentSettings.notificationIconHideMode);
                             scheduleNativeMarquee(param.thisObject);
                         }
                     });
@@ -1396,11 +1470,21 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             // "nothing shows up" report. The prompt is therefore forced visible once
                             // per key. Scoped to the whitelist because that is the user's explicit
                             // statement that this package's island content should appear as focus.
+                            // 媒体通知已在前一阶段写入 Focus 标记，但 ROM 的默认判断仍只认原生
+                            // focus RemoteViews；这里必须单独放行，否则刚转换就会被 shouldShow 清掉。
+                            boolean mediaCandidate = currentSettings.mediaFocusEnabled
+                                    && (data.mediaContent != null
+                                    || mediaNotificationKeys.contains(data.key));
                             boolean whitelisted = currentSettings.islandCompat
                                     && currentSettings.islandForcePackages.contains(data.packageName);
                             // Bound to the notification generation, not just the key: re-posting the
                             // same id keeps the key but is a new post time, and that must be shown
                             // again instead of being suppressed by the earlier override.
+                            if (mediaCandidate && !isFocusDisplayExpired(data)) {
+                                // 媒体会重复刷新同一代通知，不能套用白名单的一次性放行规则。
+                                param.setResult(true);
+                                return;
+                            }
                             if (whitelisted && hasConvertibleIslandContent(data)
                                     && markForcedShouldShow(data.key, data.sbn)) {
                                 param.setResult(true);
@@ -1597,7 +1681,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      */
     private boolean preferMediaText(Object promptObject, FocusData data) {
         if (!(promptObject instanceof View) || data == null || data.mediaContent == null
-                || !currentSettings.mediaFocusEnabled || data.hasIslandParam) return false;
+                || !currentSettings.mediaFocusEnabled) return false;
         Object content = getField(promptObject, "mContentText");
         if (!(content instanceof TextView)) return false;
         TextView text = (TextView) content;
@@ -1834,7 +1918,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             data.isFocus = true;
             preMarkedIslands.remove(state.expanded);
             log(stage + " applied media content key=" + data.key
-                    + " playing=" + data.mediaContent.playing);
+                    + " playing=" + (data.mediaContent == null ? "unknown"
+                                        : data.mediaContent.playing));
         } catch (Throwable t) {
             error(stage + " applyMediaContent", t);
         }
@@ -1855,8 +1940,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             data.isFocus = savedState.originalFocus || data.hasExplicitFocusData;
             data.isOriginalFocus = savedState.originalFocus || data.hasExplicitFocusData;
         }
-        if (data.mediaContent != null && currentSettings.mediaFocusEnabled
-                && !data.hasIslandParam) {
+        if (data.mediaContent != null && currentSettings.mediaFocusEnabled) {
             patchMediaBean(bean, data, stage);
         } else {
             boolean convert = shouldConvert(data);
@@ -2109,14 +2193,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private IslandText extractIslandContent(FocusData data) {
         if (data == null || TextUtils.isEmpty(data.islandParam)) return null;
-        IslandPayloadParser.ParsedText parsed = IslandPayloadParser.parseCustom(
-                data.islandParam, currentSettings.islandCustomRules, data.packageName,
-                currentSettings.generalSeparator);
-        if (parsed != null) {
-            debug("island custom rule hit package=" + data.packageName + " source=" + parsed.source
-                    + " text=" + preview(parsed.text));
-        }
-        if (parsed == null) parsed = currentSettings.islandTextMode
+        IslandPayloadParser.ParsedText parsed = currentSettings.islandTextMode
                 == FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT
                 ? IslandPayloadParser.parseCompact(data.islandParam, currentSettings.sideSeparator)
                 : null;
@@ -2621,8 +2698,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 + " islandParam=" + data.islandParam
                 + " nativeStatusBarContent=" + hasNativeStatusBarContent
                 + " forcePackage=" + currentSettings.islandForcePackages.contains(data.packageName));
-        if (currentSettings.mediaFocusEnabled && !data.isOriginalFocus
-                && !data.hasIslandParam && data.mediaContent != null) {
+        if (currentSettings.mediaFocusEnabled && (data.mediaContent != null
+                                     || mediaNotificationKeys.contains(data.key))
+) {
             MediaFocusContent media = data.mediaContent;
             SelectedFocusIcon light = selectFocusIcon(notification, null, data.packageName, false, true);
             SelectedFocusIcon dark = selectFocusIcon(notification, null, data.packageName, true, true);
@@ -2774,6 +2852,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
             data.notification = notification;
             data.mediaContent = MediaFocusContent.from(notification);
+            if (data.mediaContent != null && !TextUtils.isEmpty(data.key)) {
+                mediaNotificationKeys.add(data.key);
+            }
             if (data.mediaContent != null && data.mediaContent.token != null) {
                 MediaController controller = MediaFocusContent.controller(systemUiContext,
                         data.mediaContent.token);

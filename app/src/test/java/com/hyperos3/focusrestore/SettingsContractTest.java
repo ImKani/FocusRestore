@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
 package com.hyperos3.focusrestore;
 
 import static org.junit.Assert.assertArrayEquals;
@@ -6,6 +7,20 @@ import static org.junit.Assert.assertEquals;
 import org.junit.Test;
 
 public class SettingsContractTest {
+    @Test
+    public void retiredIconModeDoesNotChangeLegacyHideSwitch() {
+        // 废弃模式只保留列位，旧隐藏开关必须仍能独立开启和关闭。
+        for (boolean hidden : new boolean[]{false, true}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit()
+                    .hideNotificationIcons(hidden).build();
+            Object[] row = SettingsContract.toRow(settings, "");
+            assertEquals(SettingsContract.COLUMNS.length, row.length);
+            assertEquals(hidden ? 1 : 0, row[SettingsContract.HIDE_NOTIFICATION_ICONS]);
+            assertEquals(0, row[SettingsContract.NOTIFICATION_ICON_HIDE_MODE]);
+            assertEquals(hidden, HookSettings.fromSettings(settings).hideNotificationIcons);
+        }
+    }
+
     @Test
     public void providerColumnsRemainAppendOnlyAndIndexStable() {
         assertArrayEquals(new String[]{

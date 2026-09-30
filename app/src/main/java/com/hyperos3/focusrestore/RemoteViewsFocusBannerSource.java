@@ -1,3 +1,10 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani. 由 FocusRestore 项目维护。
+ * 原始项目：https://github.com/ImKani/FocusRestore
+ * 外部事实来源：HyperOS/SystemUI 的 notification_item_bg 与 miui.focus.rv 资源/协议；具体版本和分析记录见 Notes。
+ * 说明：本文件为 FocusRestore 独立实现，不复制或重新授权 SystemUI 代码。
+ */
 package com.hyperos3.focusrestore;
 
 import android.content.Context;
@@ -65,8 +72,13 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
     private static final int FOCUS_HEIGHT_FALLBACK_DP = 75;
     private static volatile boolean forceNormalBackground;
 
+    /**
+     * 参数语义是“使用普通通知卡片背景”，而不是“强制纯色”。主 Hook 传入 !specialSetting，
+     * 因此默认的统一纯色设置会传 false；普通背景开关开启时传 true。
+     */
     static void setForceNormalBackground(boolean enabled) {
         forceNormalBackground = enabled;
+        NativeFocusAppearance.setUseNormalNotificationBackground(enabled);
     }
 
     private final View view;
@@ -150,18 +162,29 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
                                                     boolean nightVariant) {
         if (forceNormalBackground) {
             int radiusPx = focusRadiusPx(sysuiContext, host.getContext());
-            Drawable normal = opaqueNotificationSurface(sysuiContext, radiusPx, nightVariant);
+            // 普通背景保留电话/通知栏旧卡片的主题和透明度，不强制改成纯色。
+            Drawable normal = notificationCardBackground(sysuiContext);
             if (normal == null) normal = roundedSurface(host.getContext(), radiusPx, nightVariant);
             if (normal != null) {
-                // Only this independently inflated copy is changed; notification actions stay intact.
                 content.setBackground(null);
                 host.setBackground(normal);
                 host.setClipToOutline(true);
-                return "forced-normal-platform-" + (nightVariant ? "night" : "day")
-                        + " radiusPx=" + radiusPx;
+                return "notification-card-normal-themed radiusPx=" + radiusPx
+                        + " alpha=" + normal.getAlpha();
             }
         }
-        if (content.getBackground() != null) return "content";
+        if (!forceNormalBackground) {
+            int radiusPx = focusRadiusPx(sysuiContext, host.getContext());
+            // 默认统一纯色，独立窗口没有通知栏模糊层，必须去除透明透底。
+            Drawable solid = opaqueNotificationSurface(sysuiContext, radiusPx, nightVariant);
+            if (solid == null) solid = roundedSurface(host.getContext(), radiusPx, nightVariant);
+            if (solid != null) {
+                content.setBackground(null);
+                host.setBackground(solid);
+                host.setClipToOutline(true);
+                return "solid-background radiusPx=" + radiusPx + " alpha=" + solid.getAlpha();
+            }
+        }
         // The card is the ROM's own notification card drawable, used as-is, with only its alpha forced to
         // fully opaque. The ROM's fill carries real transparency because inside the shade it sits on a blur
         // layer; a standalone window has no such layer, so that transparency goes straight through to the

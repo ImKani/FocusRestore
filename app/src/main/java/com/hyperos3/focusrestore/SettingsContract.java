@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
 package com.hyperos3.focusrestore;
 
 /** Append-only Provider schema shared by producer, consumer and tests. */
@@ -30,6 +31,7 @@ final class SettingsContract {
     static final int WIDTH_LANDSCAPE_DP = 25;
     static final int SPECIAL_BANNER_NORMAL_BACKGROUND = 26;
     static final int NOTIFICATION_ICON_HIDE_MODE = 27;
+    /** Historical slot retained; it is no longer read or written by current code. */
     static final int ISLAND_CUSTOM_RULES = 28;
     static final int MEDIA_FOCUS_ENABLED = 29;
 
@@ -67,7 +69,8 @@ final class SettingsContract {
                 settings.islandTextMode, settings.focusMaxDisplaySeconds,
                 joinPackages(settings.focusTimeoutExemptPackages), settings.widthLandscapeDp,
                  settings.specialBannerNormalBackground ? 1 : 0,
-                 settings.notificationIconHideMode, settings.islandCustomRules,
+                 0, // Retired selective icon-hide mode column remains for wire compatibility.
+                 "",
                  settings.mediaFocusEnabled ? 1 : 0};
     }
 

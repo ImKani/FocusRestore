@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
 package com.hyperos3.focusrestore;
 
 import android.content.Context;
@@ -16,7 +17,6 @@ public final class FocusRestoreSettings {
     public static final String KEY_WIDTH_LANDSCAPE_DP = "text_width_landscape_dp";
     public static final String KEY_SPECIAL_BANNER_NORMAL_BACKGROUND = "special_banner_normal_background";
     public static final String KEY_NOTIFICATION_ICON_HIDE_MODE = "notification_icon_hide_mode";
-    public static final String KEY_ISLAND_CUSTOM_RULES = "island_custom_rules";
     public static final String KEY_MEDIA_FOCUS_ENABLED = "media_focus_enabled";
     public static final String KEY_MARQUEE_DELAY_MS = "marquee_delay_ms";
     public static final String KEY_COMPAT_RETRY = "compat_retry";
@@ -55,9 +55,9 @@ public final class FocusRestoreSettings {
     public static final int DEFAULT_WIDTH_DP = 160;
     public static final int MIN_WIDTH_DP = 80;
     public static final int MAX_WIDTH_DP = 400;
+    public static final int MAX_LANDSCAPE_WIDTH_DP = 1600;
     public static final int DEFAULT_WIDTH_LANDSCAPE_DP = DEFAULT_WIDTH_DP;
-    public static final int DEFAULT_NOTIFICATION_ICON_HIDE_MODE = 0;
-    public static final boolean DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND = false;
+    public static final boolean DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND = true;
     public static final boolean DEFAULT_MEDIA_FOCUS_ENABLED = false;
     public static final int DEFAULT_MARQUEE_DELAY_MS = 200;
     public static final boolean DEFAULT_COMPAT_RETRY = false;
@@ -88,8 +88,6 @@ public final class FocusRestoreSettings {
     public final int marqueeDelayMs;
     public final int widthLandscapeDp;
     public final boolean specialBannerNormalBackground;
-    public final int notificationIconHideMode;
-    public final String islandCustomRules;
     public final boolean mediaFocusEnabled;
     public final boolean compatRetry;
     public final boolean marqueeBounce;
@@ -116,10 +114,9 @@ public final class FocusRestoreSettings {
         this.limitWidth = editor.limitWidth;
         this.widthDp = clamp(editor.widthDp, MIN_WIDTH_DP, MAX_WIDTH_DP);
         this.marqueeDelayMs = clamp(editor.marqueeDelayMs, 0, 5000);
-        this.widthLandscapeDp = clamp(editor.widthLandscapeDp, MIN_WIDTH_DP, MAX_WIDTH_DP);
+        this.widthLandscapeDp = clamp(editor.widthLandscapeDp, MIN_WIDTH_DP,
+                MAX_LANDSCAPE_WIDTH_DP);
         this.specialBannerNormalBackground = editor.specialBannerNormalBackground;
-        this.notificationIconHideMode = Math.max(0, Math.min(1, editor.notificationIconHideMode));
-        this.islandCustomRules = editor.islandCustomRules == null ? "" : editor.islandCustomRules.trim();
         this.mediaFocusEnabled = editor.mediaFocusEnabled;
         this.compatRetry = editor.compatRetry;
         this.marqueeBounce = editor.marqueeBounce;
@@ -155,8 +152,6 @@ public final class FocusRestoreSettings {
         private int widthDp = DEFAULT_WIDTH_DP;
         private int widthLandscapeDp = DEFAULT_WIDTH_LANDSCAPE_DP;
         private boolean specialBannerNormalBackground = DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND;
-        private int notificationIconHideMode = DEFAULT_NOTIFICATION_ICON_HIDE_MODE;
-        private String islandCustomRules = "";
         private boolean mediaFocusEnabled = DEFAULT_MEDIA_FOCUS_ENABLED;
         private int marqueeDelayMs = DEFAULT_MARQUEE_DELAY_MS;
         private boolean compatRetry = DEFAULT_COMPAT_RETRY;
@@ -188,8 +183,6 @@ public final class FocusRestoreSettings {
             this.widthDp = source.widthDp;
             this.widthLandscapeDp = source.widthLandscapeDp;
             this.specialBannerNormalBackground = source.specialBannerNormalBackground;
-            this.notificationIconHideMode = source.notificationIconHideMode;
-            this.islandCustomRules = source.islandCustomRules;
             this.mediaFocusEnabled = source.mediaFocusEnabled;
             this.marqueeDelayMs = source.marqueeDelayMs;
             this.compatRetry = source.compatRetry;
@@ -219,8 +212,6 @@ public final class FocusRestoreSettings {
         public Editor marqueeDelayMs(int value) { this.marqueeDelayMs = value; return this; }
         public Editor widthLandscapeDp(int value) { this.widthLandscapeDp = value; return this; }
         public Editor specialBannerNormalBackground(boolean value) { this.specialBannerNormalBackground = value; return this; }
-        public Editor notificationIconHideMode(int value) { this.notificationIconHideMode = value; return this; }
-        public Editor islandCustomRules(String value) { this.islandCustomRules = value; return this; }
         public Editor mediaFocusEnabled(boolean value) { this.mediaFocusEnabled = value; return this; }
         public Editor compatRetry(boolean value) { this.compatRetry = value; return this; }
         public Editor marqueeBounce(boolean value) { this.marqueeBounce = value; return this; }
@@ -306,9 +297,6 @@ public final class FocusRestoreSettings {
                         preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_DP)))
                 .specialBannerNormalBackground(preferences.getBoolean(KEY_SPECIAL_BANNER_NORMAL_BACKGROUND,
                         DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND))
-                .notificationIconHideMode(preferences.getInt(KEY_NOTIFICATION_ICON_HIDE_MODE,
-                        DEFAULT_NOTIFICATION_ICON_HIDE_MODE))
-                .islandCustomRules(preferences.getString(KEY_ISLAND_CUSTOM_RULES, ""))
                 .mediaFocusEnabled(preferences.getBoolean(KEY_MEDIA_FOCUS_ENABLED,
                         DEFAULT_MEDIA_FOCUS_ENABLED))
                 .marqueeDelayMs(preferences.getInt(KEY_MARQUEE_DELAY_MS, DEFAULT_MARQUEE_DELAY_MS))
@@ -351,8 +339,6 @@ public final class FocusRestoreSettings {
         return "hookMode=OS" + hookMode + " limit=" + limitWidth + " widthDp=" + widthDp
                 + " widthLandscapeDp=" + widthLandscapeDp
                 + " specialBannerNormalBackground=" + specialBannerNormalBackground
-                + " notificationIconHideMode=" + notificationIconHideMode
-                + " islandCustomRules=" + (islandCustomRules.length() > 0 ? "configured" : "empty")
                 + " delayMs=" + marqueeDelayMs + " compatRetry=" + compatRetry
                 + " marqueeBounce=" + marqueeBounce + " islandCompat=" + islandCompat
                 + " disableIslandProperty=" + disableIslandProperty
@@ -385,8 +371,6 @@ public final class FocusRestoreSettings {
                 .putInt(KEY_WIDTH_DP, widthDp)
                 .putInt(KEY_WIDTH_LANDSCAPE_DP, widthLandscapeDp)
                 .putBoolean(KEY_SPECIAL_BANNER_NORMAL_BACKGROUND, specialBannerNormalBackground)
-                .putInt(KEY_NOTIFICATION_ICON_HIDE_MODE, notificationIconHideMode)
-                .putString(KEY_ISLAND_CUSTOM_RULES, islandCustomRules)
                 .putBoolean(KEY_MEDIA_FOCUS_ENABLED, mediaFocusEnabled)
                 .putInt(KEY_MARQUEE_DELAY_MS, marqueeDelayMs)
                 .putBoolean(KEY_COMPAT_RETRY, compatRetry)

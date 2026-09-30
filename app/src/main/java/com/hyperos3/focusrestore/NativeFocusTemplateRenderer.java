@@ -1,3 +1,10 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani. 由 FocusRestore 项目维护。
+ * 原始项目：https://github.com/ImKani/FocusRestore
+ * 外部事实来源：miui.systemui.plugin TemplateFactoryV3/TemplateBuilderV3 私有接口；分析版本和证据见 Notes/analysis。
+ * 说明：本文件为 FocusRestore 独立实现，不复制或重新授权 SystemUI/plugin 代码。
+ */
 package com.hyperos3.focusrestore;
 
 import android.app.Notification;
@@ -302,6 +309,7 @@ final class NativeFocusTemplateRenderer {
             stage = "select notification expanded content";
             Context sysuiContext = (Context) get(adapters.get(0), "sysuiContext");
             View row = rowProvider == null ? null : rowProvider.findRow(key);
+            // 背景由统一外观读取器选择：默认纯色，普通背景开关开启时沿用 ROM 通知卡片主题。
             NativeFocusAppearance appearance = NativeFocusAppearance.read(row, sysuiContext);
             String getter = appearance.dark ? "getFocusNotificationDarkModal" : "getFocusNotificationModal";
             Object result = call(content, getter);

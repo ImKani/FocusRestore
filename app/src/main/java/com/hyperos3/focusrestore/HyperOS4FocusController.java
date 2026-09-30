@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
 package com.hyperos3.focusrestore;
 
 import android.animation.ValueAnimator;
@@ -35,7 +36,15 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
-/** HyperOS 4 notification state and status-bar rendering bridge. */
+/**
+ * HyperOS 4 notification state and status-bar rendering bridge.
+ *
+ * Private API facts are based on the observed HyperOS/SystemUI interfaces
+ * NotifPipeline, NotifCollectionListener, MiuiPhoneStatusBarView and the
+ * notificationIcons resource. Exact ROM/plugin version, owner license and
+ * undocumented method contracts are unconfirmed. This project writes independent
+ * hooks against those observed contracts and does not copy SystemUI implementation.
+ */
 final class HyperOS4FocusController {
     interface ItemFactory {
         DisplayItem create(Object notificationEntry);
@@ -123,13 +132,6 @@ final class HyperOS4FocusController {
     private final Runnable expiryCheck = this::runExpiryCheck;
     private String displayedKey;
     private final NotificationIconHider notificationIconHider;
-    private final NotificationIconsVisibilityState notificationIconsVisibility =
-            new NotificationIconsVisibilityState(View.GONE);
-    private View notificationIcons;
-    private int notificationIconsId;
-    private boolean notificationIconsHideRequested;
-    private boolean notificationIconsInternalWrite;
-    private boolean notificationIconsMissingLogged;
     private Object darkDispatcher;
     private Object darkReceiver;
     private Class<?> darkDispatcherClass;
@@ -306,79 +308,6 @@ final class HyperOS4FocusController {
         }
     }
 
-    private void hookNotificationIconsVisibility() {
-        try {
-            XposedHelpers.findAndHookMethod(View.class, "setVisibility", int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            if (notificationIconsInternalWrite || !notificationIconsHideRequested
-                                    || !(param.thisObject instanceof View)
-                                    || param.args == null || param.args.length == 0
-                                    || !(param.args[0] instanceof Integer)) {
-                                return;
-                            }
-                            View view = (View) param.thisObject;
-                            int requestedVisibility = (Integer) param.args[0];
-                            if (view != notificationIcons) {
-                                if (notificationIconsId == 0 || view.getId() != notificationIconsId
-                                        || !isDescendantOf(view, statusBarRoot)) {
-                                    return;
-                                }
-                                replaceTrackedNotificationIcons(view, requestedVisibility);
-                            }
-                            int previousDesired = notificationIconsVisibility.desiredVisibility();
-                            int appliedVisibility = notificationIconsVisibility.onVisibilityRequested(
-                                    requestedVisibility);
-                            if (appliedVisibility != requestedVisibility) {
-                                param.args[0] = appliedVisibility;
-                                if (previousDesired != requestedVisibility) {
-                                    logger.log("OS4 notificationIcons visibility intercepted requested="
-                                            + requestedVisibility + " applied=" + appliedVisibility
-                                            + " desired="
-                                            + notificationIconsVisibility.desiredVisibility());
-                                }
-                            }
-                        }
-                    });
-            logger.log("OS4 notificationIconsVisibilityHook=hooked");
-        } catch (Throwable throwable) {
-            logger.error("OS4 hookNotificationIconsVisibility", throwable);
-        }
-    }
-
-    private void hookNotificationIconsAttachment() {
-        try {
-            XposedHelpers.findAndHookMethod(View.class, "onAttachedToWindow",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (notificationIconsInternalWrite || !notificationIconsHideRequested
-                                    || !(param.thisObject instanceof View)) {
-                                return;
-                            }
-                            View view = (View) param.thisObject;
-                            if (notificationIconsId == 0 || view.getId() != notificationIconsId
-                                    || !isDescendantOf(view, statusBarRoot)) {
-                                return;
-                            }
-                            if (view != notificationIcons) {
-                                replaceTrackedNotificationIcons(view, view.getVisibility());
-                            } else if (!notificationIconsVisibility.isHiding()) {
-                                notificationIconsVisibility.beginHiding(view.getVisibility());
-                            }
-                            setNotificationIconsVisibilityInternal(view, View.GONE);
-                            logger.log("OS4 notificationIcons=GONE id=" + view.getId()
-                                    + " source=attached desired="
-                                    + notificationIconsVisibility.desiredVisibility());
-                        }
-                    });
-            logger.log("OS4 notificationIconsAttachmentHook=hooked");
-        } catch (Throwable throwable) {
-            logger.error("OS4 hookNotificationIconsAttachment", throwable);
-        }
-    }
-
     private void hookClockTint() {
         try {
             Class<?> clockClass = FocusReflection.findClass(classLoader,
@@ -440,7 +369,7 @@ final class HyperOS4FocusController {
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
             primarySlot = slot;
             focusHost = host;
-            notificationIconsId = statusBarView.getResources().getIdentifier(
+            int notificationIconsId = statusBarView.getResources().getIdentifier(
                     "notificationIcons", "id", context.getPackageName());
             View resolvedNotificationIcons = notificationIconsId == 0
                     ? null : statusBarView.findViewById(notificationIconsId);
@@ -467,14 +396,12 @@ final class HyperOS4FocusController {
         renderPosted = false;
         renderPostHost = null;
         mainHandler.removeCallbacks(expiryCheck);
-        restoreNotificationIcons();
         notificationIconHider.clear();
         unregisterDarkReceiver();
         FocusHostView host = focusHost;
         focusHost = null;
         primarySlot = null;
         statusBarClock = null;
-        notificationIconsId = 0;
         if (host != null) {
             host.clearContent();
             if (host.getParent() instanceof ViewGroup) {
@@ -569,7 +496,7 @@ final class HyperOS4FocusController {
                 host.setVisibility(View.GONE);
                 ViewGroup slot = primarySlot;
                 if (slot != null) slot.setVisibility(View.GONE);
-                restoreNotificationIcons();
+                notificationIconHider.request(false);
                 logger.log("OS4 focus hidden; no eligible notification legacySlot=GONE"
                         + " notificationIconsRestored=true");
             }
@@ -752,86 +679,7 @@ final class HyperOS4FocusController {
     }
 
     private void setNotificationIconsHidden(boolean hidden) {
-        notificationIconsHideRequested = hidden;
-        HookSettings settings = itemFactory.settings();
-        int hideMode = settings == null ? NotificationIconHider.MODE_CONTAINER
-                : settings.notificationIconHideMode;
-        notificationIconHider.request(hidden, hideMode);
-        if (hidden && hideMode == NotificationIconHider.MODE_SYSTEM_ONLY) {
-            logger.log("OS4 notificationIcons selective request applied; container preserved");
-            return;
-        }
-        if (!hidden) {
-            restoreTrackedNotificationIcons();
-            return;
-        }
-        View icons = resolveNotificationIcons();
-        if (icons == null) {
-            if (!notificationIconsMissingLogged) {
-                notificationIconsMissingLogged = true;
-                logger.log("OS4 notificationIcons=missing requestedHidden=true source=render");
-            }
-            return;
-        }
-        notificationIconsMissingLogged = false;
-        if (notificationIcons != icons) {
-            replaceTrackedNotificationIcons(icons, icons.getVisibility());
-        } else if (!notificationIconsVisibility.isHiding()) {
-            notificationIconsVisibility.beginHiding(icons.getVisibility());
-        }
-        setNotificationIconsVisibilityInternal(icons, View.GONE);
-        logger.log("OS4 notificationIcons=GONE id=" + icons.getId()
-                + " source=render desired="
-                + notificationIconsVisibility.desiredVisibility());
-    }
-
-    private View resolveNotificationIcons() {
-        ViewGroup root = statusBarRoot;
-        if (root == null || notificationIconsId == 0) return null;
-        View icons = notificationIcons;
-        if (icons != null && icons.getId() == notificationIconsId
-                && isDescendantOf(icons, root)) {
-            return icons;
-        }
-        View resolved = root.findViewById(notificationIconsId);
-        return resolved == root ? null : resolved;
-    }
-
-    private void replaceTrackedNotificationIcons(View replacement, int desiredVisibility) {
-        restoreTrackedNotificationIcons();
-        notificationIcons = replacement;
-        notificationIconsVisibility.beginHiding(desiredVisibility);
-        logger.log("OS4 notificationIcons=tracked id=" + replacement.getId()
-                + " desired=" + desiredVisibility);
-    }
-
-    private void restoreNotificationIcons() {
-        notificationIconsHideRequested = false;
-        notificationIconsMissingLogged = false;
-        restoreTrackedNotificationIcons();
-    }
-
-    private void restoreTrackedNotificationIcons() {
-        View icons = notificationIcons;
-        if (icons == null || !notificationIconsVisibility.isHiding()) {
-            notificationIcons = null;
-            notificationIconsVisibility.reset();
-            return;
-        }
-        int restoreVisibility = notificationIconsVisibility.finishHiding();
-        setNotificationIconsVisibilityInternal(icons, restoreVisibility);
-        logger.log("OS4 notificationIcons=restored id=" + icons.getId()
-                + " visibility=" + restoreVisibility);
-        notificationIcons = null;
-    }
-
-    private void setNotificationIconsVisibilityInternal(View view, int visibility) {
-        notificationIconsInternalWrite = true;
-        try {
-            view.setVisibility(visibility);
-        } finally {
-            notificationIconsInternalWrite = false;
-        }
+        notificationIconHider.request(hidden);
     }
 
     private static boolean isDescendantOf(View view, ViewGroup ancestor) {

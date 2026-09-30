@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani.
+ * Project: FocusRestore
+ * Source: https://github.com/ImKani/FocusRestore
+ */
 package com.hyperos3.focusrestore;
 
 import org.junit.Test;
@@ -51,6 +57,28 @@ public class NotificationIconsVisibilityStateTest {
         state.onVisibilityRequested(GONE);
 
         assertEquals(GONE, state.finishHiding());
+    }
+
+    @Test
+    public void repeatedBeginDoesNotReplaceLatestSystemUiRequest() {
+        NotificationIconsVisibilityState state = new NotificationIconsVisibilityState(GONE);
+        state.beginHiding(VISIBLE);
+        state.onVisibilityRequested(INVISIBLE);
+
+        assertEquals(GONE, state.beginHiding(VISIBLE));
+        assertEquals(INVISIBLE, state.finishHiding());
+    }
+
+    @Test
+    public void latestVisibilitySurvivesHideEndAfterMultipleTransitions() {
+        NotificationIconsVisibilityState state = new NotificationIconsVisibilityState(GONE);
+        state.beginHiding(INVISIBLE);
+        state.onVisibilityRequested(VISIBLE);
+        state.onVisibilityRequested(GONE);
+        state.onVisibilityRequested(INVISIBLE);
+
+        assertEquals(INVISIBLE, state.finishHiding());
+        assertFalse(state.isHiding());
     }
 
     @Test

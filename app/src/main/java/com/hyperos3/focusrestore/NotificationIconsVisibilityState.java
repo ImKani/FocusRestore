@@ -1,3 +1,9 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani.
+ * Project: FocusRestore
+ * Source: https://github.com/ImKani/FocusRestore
+ */
 package com.hyperos3.focusrestore;
 
 /** Tracks the latest SystemUI-requested visibility while module hiding is active. */
@@ -12,6 +18,7 @@ final class NotificationIconsVisibilityState {
     }
 
     int beginHiding(int currentVisibility) {
+        if (hiding) return hiddenVisibility;
         desiredVisibility = currentVisibility;
         hiding = true;
         return hiddenVisibility;

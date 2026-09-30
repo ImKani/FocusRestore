@@ -1,3 +1,10 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani. 由 FocusRestore 项目维护。
+ * 原始项目：https://github.com/ImKani/FocusRestore
+ * 外部事实来源：HyperOS/SystemUI 的 notification_item_bg 与 notification_focus_item_bg 资源；具体版本和分析记录见 Notes。
+ * 说明：本文件为 FocusRestore 独立实现，不复制或重新授权 SystemUI 代码。
+ */
 package com.hyperos3.focusrestore;
 
 import android.content.Context;
@@ -7,6 +14,11 @@ import android.view.View;
 
 /** Reads native notification geometry and themed resources without retaining or moving row Views. */
 final class NativeFocusAppearance {
+    private static volatile boolean useNormalNotificationBackground;
+
+    static void setUseNormalNotificationBackground(boolean enabled) {
+        useNormalNotificationBackground = enabled;
+    }
     final boolean dark;
     final int width;
     final float radius;
@@ -45,17 +57,17 @@ final class NativeFocusAppearance {
         if (width <= 0 || radius <= 0) {
             throw new IllegalStateException("native notification geometry resources unavailable");
         }
-        // Verified native shape references notification_focus_bg_color with default AND -night
-        // variants, and notification_item_bg_radius. A fresh resource drawable does not inherit
-        // the live row's glass tint or visibility, which can force a dark presentation in light mode.
-        int id = identifier(context, "drawable", "notification_focus_item_bg");
-        if (id == 0) throw new IllegalStateException("native themed notification background unavailable");
+        // 普通背景模式必须使用通知栏旧卡片 drawable；关闭时沿用原生 Focus 纯色背景，避免改变默认外观。
+        String backgroundName = useNormalNotificationBackground
+                ? "notification_item_bg" : "notification_focus_item_bg";
+        int id = identifier(context, "drawable", backgroundName);
+        if (id == 0) throw new IllegalStateException("native themed notification background unavailable: " + backgroundName);
         Drawable background = context.getDrawable(id);
-        if (background == null) throw new IllegalStateException("native notification background is null");
+        if (background == null) throw new IllegalStateException("native notification background is null: " + backgroundName);
         background = background.mutate();
         return new NativeFocusAppearance(dark, width, radius, background,
                 (dark ? "system-dark" : "system-light") + "/" + geometrySource
-                        + "/notification_focus_item_bg; blur-and-modal-animation-not-copied");
+                        + "/" + backgroundName + "; blur-and-modal-animation-not-copied");
     }
 
     private static int dimension(Context context, String name) {
