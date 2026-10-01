@@ -132,6 +132,8 @@ final class HyperOS4FocusController {
     private final Runnable expiryCheck = this::runExpiryCheck;
     private String displayedKey;
     private final NotificationIconHider notificationIconHider;
+    /** notificationIcons 资源 id；渲染时用它重新解析容器，避免只依赖 onFinishInflate 时的一次性绑定。 */
+    private int notificationIconsId;
     private Object darkDispatcher;
     private Object darkReceiver;
     private Class<?> darkDispatcherClass;
@@ -369,7 +371,7 @@ final class HyperOS4FocusController {
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
             primarySlot = slot;
             focusHost = host;
-            int notificationIconsId = statusBarView.getResources().getIdentifier(
+            notificationIconsId = statusBarView.getResources().getIdentifier(
                     "notificationIcons", "id", context.getPackageName());
             View resolvedNotificationIcons = notificationIconsId == 0
                     ? null : statusBarView.findViewById(notificationIconsId);
@@ -402,6 +404,7 @@ final class HyperOS4FocusController {
         focusHost = null;
         primarySlot = null;
         statusBarClock = null;
+        notificationIconsId = 0;
         if (host != null) {
             host.clearContent();
             if (host.getParent() instanceof ViewGroup) {
@@ -679,7 +682,23 @@ final class HyperOS4FocusController {
     }
 
     private void setNotificationIconsHidden(boolean hidden) {
+        if (hidden) {
+            // OS4 状态栏通知区可能在 onFinishInflate 之后被重建或替换，因此每次渲染都重新
+            // 解析当前容器并交给唯一 owner，避免只依赖一次性 bindRoot 导致隐藏失效。
+            ViewGroup icons = resolveNotificationIcons();
+            if (icons != null) {
+                notificationIconHider.bindRoot(icons, notificationIconsId);
+            }
+        }
         notificationIconHider.request(hidden);
+    }
+
+    private ViewGroup resolveNotificationIcons() {
+        ViewGroup root = statusBarRoot;
+        if (root == null || notificationIconsId == 0) return null;
+        View resolved = root.findViewById(notificationIconsId);
+        if (!(resolved instanceof ViewGroup) || resolved == root) return null;
+        return (ViewGroup) resolved;
     }
 
     private static boolean isDescendantOf(View view, ViewGroup ancestor) {
