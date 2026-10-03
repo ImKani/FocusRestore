@@ -24,9 +24,26 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-版本：`0.13.47`（versionCode 102，Debug 测试版）
+版本：`0.24.2`（versionCode 221，Debug 测试版）
 
-根据 0.13.46 真机日志，本版移除独立横幅宿主的统一最小高度，让短模板随原生内容收缩，保留原生边距与正常日历布局；正文／非操作控件区域轻点接入系统原通知点击，原生按钮优先处理。焦点显示期间，只有起点命中可见焦点区域的状态栏单击／双击不再触发浏览内容回顶，其他位置仍沿用系统行为。新增有限次数的高度变化和点击派发日志，用于真机复核。
+- 设备通知横幅横向改为紧跟状态栏时间右侧显示（0.24.1 为屏幕居中，会压在状态栏中间）。
+- 设备通知横幅回到状态栏那一行显示，不再落到状态栏下方的横幅区。
+- 静音 / 勿扰等系统没有下发停留时长的事件改回 5 秒自动收起（0.24.0 为 10 秒）。
+
+以下为历史版本说明（0.24.0 及更早）。
+
+0.24.1：
+
+- 设备通知横幅回到状态栏那一行显示，不再落到状态栏下方的横幅区。
+- 静音 / 勿扰等系统没有下发停留时长的事件改回 5 秒自动收起（0.24.0 为 10 秒）。
+
+0.24.0：
+
+- 设备通知（充电 / 静音 / 勿扰）改由独立的透明焦点横幅呈现，状态栏不再出现横跨顶部的黑色遮罩。
+- 横幅内容与系统强提示同源，使用系统下发的文案、文字颜色与图标；点击横幅执行系统下发的点击动作。
+- 设备通知横幅与焦点横幅共用同一套显示宿主：锁屏、旋转、点击外侧和到时收起的表现一致。
+
+0.13.47：根据 0.13.46 真机日志，本版移除独立横幅宿主的统一最小高度，让短模板随原生内容收缩，保留原生边距与正常日历布局；正文／非操作控件区域轻点接入系统原通知点击，原生按钮优先处理。焦点显示期间，只有起点命中可见焦点区域的状态栏单击／双击不再触发浏览内容回顶，其他位置仍沿用系统行为。新增有限次数的高度变化和点击派发日志，用于真机复核。
 
 “点击焦点展开原生横幅（实验性）”改为独立创建系统插件中用于通知栏展开的 V3 原生模板 View。浅色模式选择浅色内容，深色模式选择深色内容；底色和圆角使用带深浅色配置的系统焦点通知资源。保留默认关闭及已有开关值。横幅不再添加模块自绘标题栏和关闭按钮；点击外侧、原生收起广播或超时关闭。模板或插件依赖不可用时记录具体原因，不回退到 0.13.45 自绘界面。真实设备上的排版、主题与按钮兼容性仍需测试。
 
@@ -91,7 +108,7 @@ Hook 入口：com.hyperos3.focusrestore.HyperOS3FocusRestoreHook
 - 默认关闭焦点通知点击。高级页可独立开启“点击焦点通知展开横幅（实验性）”，优先显示模块横幅（普通通知用“通知横幅”，媒体焦点用“媒体横幅”）；不需要开启“旧版打开通知内容”。关闭横幅时，原有“旧版打开通知内容”和通知 Row 点击兜底继续保持原行为。三种点击路径互斥，开启横幅会关闭两个旧版直接打开选项。
 - 媒体 Focus 以 SystemUI 通知栏媒体 Entry 的新增、更新和移除时机为准：媒体通知真正进入通知栏集合后才成为候选，暂停但仍留在通知栏时不会提前隐藏；媒体通知被从通知栏划掉时，媒体 Focus 跟随系统媒体头部移除状态一并隐藏，恢复播放后重新显示。点击媒体焦点时始终有响应——默认展开媒体横幅，优先复用原媒体通知的系统控件，通知未携带 RemoteViews（例如小米音乐）时改由系统媒体会话 MediaData 构建横幅，并按通知栏媒体通知布局展示封面、歌曲、歌手与播放控制，控件运行系统自身的媒体操作；不会移除、重排或改写原媒体通知。媒体 Focus 优先级低于其他 Focus 通知，普通 Focus 显示期间媒体 Focus 自动让位。
 - 模块始终尝试关闭 HyperOS 超级岛显示路径，避免其占用状态栏区域。
-- 本模块不适配或隐藏 MIUIStrongToast（灵动舞台），需要隐藏请使用其他专用工具。
+- 模块按掉设备通知的系统强提示窗口（灵动舞台）本身，并将其状态栏文案与图标改由透明横幅呈现，避免顶部的黑色遮罩。
 - 模块仅作用于 `com.android.systemui`，不要求 KernelSU 模块。
 
 ## 设置项说明
@@ -116,7 +133,9 @@ Hook 入口：com.hyperos3.focusrestore.HyperOS3FocusRestoreHook
 
 ## 系统灵动舞台
 
-本模块不适配或隐藏 MIUIStrongToast（灵动舞台）。需要隐藏时，可选择其他专用工具；设置页也会显示这一提示。超级岛屏蔽与灵动舞台隐藏属于不同的系统路径。
+设备通知（充电 / 静音 / 勿扰）在 HyperOS 3 上由系统的强提示窗口（灵动舞台，`MIUIStrongToast`）呈现，窗口内有一块横跨状态栏的黑色遮罩。模块直接按掉该窗口的显示，并把同一次事件下发的状态栏文案、文字颜色与图标改由透明的设备通知横幅呈现，因此状态栏不会再有黑色遮罩，图标与文字仍然可见。横幅与状态栏同一行显示，横向紧跟在状态栏时间右侧（和 ROM 原来的位置一致），点击横幅执行系统下发的点击动作。
+
+强提示的拦截与超级岛屏蔽属于两条不同的系统路径：前者只作用于 `MIUIStrongToast`，后者始终保留 `feature.island.debug=false` 与 `DynamicFeatureConfig.FEATURE_DYNAMIC_ISLAND=false`。设备通知横幅与焦点横幅共用同一个显示宿主，锁屏、旋转、点击外侧和到时收起的行为一致。
 
 ## 测试工具
 
@@ -132,7 +151,7 @@ Hook 入口：com.hyperos3.focusrestore.HyperOS3FocusRestoreHook
 - 开启调试点击后，HyperOS 4 优先使用原生 RemoteViews 点击事件，转换文本使用通知 `contentIntent`；这些事件可能无效，并可能导致焦点通知消失、不可见、误触发或系统处理异常。
 - 点击后的系统通知逻辑可能无法正常处理。
 - 模块通过 LSPosed Hook 介入 SystemUI，存在 ROM 版本差异、系统崩溃、显示异常、功能失效和数据丢失风险。
-- 超级岛转换只处理通知实际提供的协议内容，不负责隐藏系统灵动舞台；需要隐藏时应使用其他工具。
+- 超级岛转换只处理通知实际提供的协议内容；灵动舞台由模块按掉窗口后改用透明设备通知横幅呈现，不是通过超级岛通路隐藏。
 - 修改设置后会立即保存；收到 Toast 提示后，重启 SystemUI 或设备才能完整生效。
 
 ## 日志判读
@@ -160,15 +179,15 @@ Android Gradle Plugin 8.7.3
 构建 debug 或 release 变体，APK 输出路径：
 
 ```text
-app/build/outputs/apk/debug/FocusRestore-0.21.1-debug.apk
-app/build/outputs/apk/release/FocusRestore-0.20.0-release.apk
+app/build/outputs/apk/debug/FocusRestore-0.24.2-debug.apk
+app/build/outputs/apk/release/FocusRestore-0.24.2-release.apk
 ```
 
 模块不声明网络、存储或后台服务权限。为显示白名单应用列表，Manifest 声明包可见性相关的 `QUERY_ALL_PACKAGES` 和小米系统权限 `com.android.permission.GET_INSTALLED_APPS`；关于项目按钮通过系统浏览器打开外部链接，网络访问由浏览器处理。配置 XML 保持私有，但导出的只读 Provider 必须允许不同签名的 SystemUI 查询，因此其他应用也可能读取模式、白名单等配置；Provider 不提供写接口。
 
 ## 安装和作用域
 
-1. 安装 `FocusRestore-0.20.0-release.apk` 或 `FocusRestore-0.20.0-debug.apk`。
+1. 安装 `FocusRestore-0.24.2-release.apk` 或 `FocusRestore-0.24.2-debug.apk`。
 2. 在 LSPosed 中启用本模块。
 3. 作用域应只有：
 
@@ -250,6 +269,11 @@ HyperOS3FocusRestore: capabilities configuredMode=OS4 installedMode=OS4 ...
 HyperOS3FocusRestore: OS4 notifPipelineListener=registered
 HyperOS3FocusRestore: OS4 statusBarPrimarySlot=attached ...
 HyperOS3FocusRestore: OS4 focus shown ...
+HyperOS3FocusRestore: status bar anchor captured: ...
+HyperOS3FocusRestore: strong toast suppressed: showCustomStrongToast category=... duration=...
+HyperOS3FocusRestore: device banner request text=... color=... icon=... duration=... target=...
 ```
+
+设备通知横幅另有宿主的通用日志：`show accepted: ... source=device-notification ...` 表示窗口已装好，`show rejected: ...` / `dismiss reason=...` 会给出被拒绝或收起的原因；`device banner skipped: ...` 表示本次没有横幅（缺少锚点、上下文未就绪或模型没有文案）。
 
 如果只有 `showOnStatusBar` 而没有 `setData`，说明判断已放行但通知没有进入焦点通知 View。如果只有 `DynamicIslandService`，说明它只进入了动态岛路径。若 `updateRemoteViews` 报错，说明 RemoteViews 与当前 SystemUI 的布局、资源或类不兼容。

@@ -109,8 +109,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private ClassLoader classLoader;
     /** Island view blocking is installed per plugin loader and re-armed when the plugin unloads. */
     private volatile boolean islandViewsBlocked;
-    /** 设备通知转焦点通知的自绘横幅窗口，按事件复用。 */
-    private DeviceNotificationBanner deviceNotificationBanner;
+    /** 设备通知横幅的键：设备通知没有通知 key，同一时刻只保留一条横幅。 */
+    private static final String DEVICE_NOTIFICATION_BANNER_KEY = "focusrestore.device-notification";
+    /** 设备通知横幅与状态栏时间之间的间距 dp；横幅还有自身内边距，视觉间距略大于该值。 */
+    private static final int DEVICE_BANNER_CLOCK_GAP_DP = 8;
+    /**
+     * 设备通知横幅的窗口锚点。焦点横幅用通知行当锚点，设备通知只有
+     * {@code StrongToastModel}、没有通知条目，因此改用状态栏自身的视图。
+     */
+    private WeakReference<View> statusBarAnchor;
     private volatile Context systemUiContext;
     // FocusedTextView.startMarqueeLocal() copies this value into TextView.
     // -1 keeps long lyrics moving instead of stopping after one pass.
@@ -204,6 +211,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             hideDisplayCutoutPainting();
             hideStrongToastMask();
             hookDeviceNotificationConversion();
+            hookStatusBarAnchor();
             hookStatusBarTreeDump();
         }
         log("loading in " + lpparam.packageName + "/" + lpparam.processName
@@ -1307,37 +1315,17 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 log(mode + " native banner rejected key=" + key + " reason=real-sbn-missing-or-stale");
                 return false;
             }
-            if (bannerController == null) {
-                bannerController = new FocusBannerController(new FocusBannerController.Logger() {
-                    @Override public void log(String message) {
-                        HyperOS3FocusRestoreHook.this.log(message);
-                    }
-                    @Override public void error(String stage, Throwable throwable) {
-                        HyperOS3FocusRestoreHook.this.error(stage, throwable);
-                    }
-                }, nativeBannerRenderer, this::openBannerNotification);
-            }
             if (mediaBanner) {
                 if (!MediaNotificationBannerSource.isAvailable(sbn)) {
                     log(mode + " media banner rejected key=" + key + " reason=no-remote-views");
                     return false;
                 }
                 log(mode + " media banner click key=" + key + " source=notification-remote-views");
-                return bannerController.show(anchor, key, sbn, true);
+                return sharedBannerController().show(anchor, key, sbn, true);
             }
             if (nativeBannerRenderer == null) {
                 log(mode + " native banner rejected key=" + key + " reason=real-sbn-or-renderer-missing");
                 return false;
-            }
-            if (bannerController == null) {
-                bannerController = new FocusBannerController(new FocusBannerController.Logger() {
-                    @Override public void log(String message) {
-                        HyperOS3FocusRestoreHook.this.log(message);
-                    }
-                    @Override public void error(String stage, Throwable throwable) {
-                        HyperOS3FocusRestoreHook.this.error(stage, throwable);
-                    }
-                }, nativeBannerRenderer, this::openBannerNotification);
             }
             // 设置项表达“统一纯色背景”；关闭时才退回旧版电话横幅使用的普通通知卡片。
             RemoteViewsFocusBannerSource.setForceNormalBackground(
@@ -1351,11 +1339,32 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     + " " + focusExtrasInventory(bannerExtras));
             log(mode + " native banner click key=" + key + " version="
                     + BuildConfig.VERSION_NAME);
-            return bannerController.show(anchor, key, sbn);
+            return sharedBannerController().show(anchor, key, sbn);
         } catch (Throwable throwable) {
             error(mode + " independent banner key=" + key, throwable);
             return false;
         }
+    }
+
+    /**
+     * 焦点横幅与设备通知横幅共用的窗口宿主，首次使用时创建。
+     *
+     * <p>设备通知走 {@code showSource} 通路，只有内容源不同；共用同一个宿主才能复用几何、测量、
+     * 装窗、收起、锁屏/旋转/外侧点击处理。渲染器可能为空（插件未就绪），此时焦点横幅各自的分支
+     * 会在调用前退出，而内容源通路不使用渲染器。调用方都在主线程。
+     */
+    private FocusBannerController sharedBannerController() {
+        if (bannerController == null) {
+            bannerController = new FocusBannerController(new FocusBannerController.Logger() {
+                @Override public void log(String message) {
+                    HyperOS3FocusRestoreHook.this.log(message);
+                }
+                @Override public void error(String stage, Throwable throwable) {
+                    HyperOS3FocusRestoreHook.this.error(stage, throwable);
+                }
+            }, nativeBannerRenderer, this::openBannerNotification);
+        }
+        return bannerController;
     }
 
     private boolean openBannerNotification(String key, StatusBarNotification expected) {
@@ -1551,6 +1560,43 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         });
     }
 
+    /**
+     * 记录状态栏视图，作为设备通知横幅的窗口锚点。
+     *
+     * <p>设备通知只有 {@code StrongToastModel}、没有通知条目，焦点横幅那条"用通知行当锚点"的
+     * 通路用不上；状态栏视图随状态栏常驻，宿主对锚点的检查（{@code isAttachedToWindow} /
+     * {@code isShown} / 所在 Display 与旋转）都能直接复用，横幅几何也保持同一套算法。
+     *
+     * <p>只记视图本身：{@code onFinishInflate} 在父级 {@code addView} 之前回调，此时还取不到
+     * 窗口根视图；状态栏被重建时按最新一次回调覆盖，避免锚点停留在已销毁的旧视图上。
+     */
+    private void hookStatusBarAnchor() {
+        for (String className : new String[]{
+                "com.android.systemui.statusbar.phone.MiuiPhoneStatusBarView",
+                "com.android.systemui.statusbar.phone.PhoneStatusBarView"}) {
+            Class<?> owner = FocusReflection.findClass(classLoader, className);
+            if (owner == null) {
+                log("status bar anchor skipped: " + className + " missing");
+                continue;
+            }
+            int hooked = XposedBridge.hookAllMethods(owner, "onFinishInflate",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!(param.thisObject instanceof View)) return;
+                            View captured = (View) param.thisObject;
+                            // MiuiPhoneStatusBarView 覆写了 onFinishInflate 并回调 super，
+                            // 两个 Hook 会命中同一个实例；同一个锚点只记录一次。
+                            WeakReference<View> previous = statusBarAnchor;
+                            if (previous != null && previous.get() == captured) return;
+                            statusBarAnchor = new WeakReference<>(captured);
+                            log("status bar anchor captured: " + captured.getClass().getName());
+                        }
+                    }).size();
+            log("status bar anchor hooks " + className + "=" + hooked);
+        }
+    }
+
     private void dumpViewTree(View view, int depth, StringBuilder indent) {
         if (view == null || depth > 6) return;
         log(indent + view.getClass().getSimpleName()
@@ -1726,9 +1772,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             int hooked = XposedBridge.hookAllMethods(owner, name, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
-                    log("strong toast suppressed: " + name + " " + describeStrongToast(param.args));
-                    showDeviceNotificationBanner(param.args);
+                    // 先按掉窗口：横幅只是替代呈现，它自己失败不能把强提示放回屏幕。
                     param.setResult(null);
+                    log("strong toast suppressed: " + name + " " + describeStrongToast(param.args));
+                    try {
+                        showDeviceNotificationBanner(param.args);
+                    } catch (Throwable t) {
+                        error("device notification banner", t);
+                    }
                 }
             }).size();
             log("strong toast suppression " + name + " hooks=" + hooked);
@@ -1755,19 +1806,38 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         Object guide = readField(model, "statusBarGuideModel");
         if (guide == null) return text.append(" guide=null").toString();
         for (String side : new String[]{"getLeft", "getCenter", "getRight"}) {
-            Object part = callGetter(guide, side);
+            GuidePart part = readGuidePart(guide, side);
             if (part == null) continue;
-            Object textParams = callGetter(part, "getTextParams");
-            Object iconParams = callGetter(part, "getIconParams");
-            text.append(' ').append(side).append("[text=")
-                    .append(textParams == null ? null : callGetter(textParams, "getText"))
-                    .append(" color=")
-                    .append(textParams == null ? null : callGetter(textParams, "getTextColor"))
-                    .append(" icon=")
-                    .append(iconParams == null ? null : callGetter(iconParams, "getIconResName"))
+            text.append(' ').append(side).append("[text=").append(part.text)
+                    .append(" color=").append(part.textColor)
+                    .append(" icon=").append(part.iconResName)
                     .append(']');
         }
         return text.toString();
+    }
+
+    /** 一条 guide 侧栏（left/center/right）里的文本、颜色与图标名；该侧栏缺失时为 null。 */
+    private GuidePart readGuidePart(Object guide, String getter) {
+        Object side = callGetter(guide, getter);
+        if (side == null) return null;
+        String text = null;
+        Integer textColor = null;
+        String iconResName = null;
+        Object textParams = callGetter(side, "getTextParams");
+        if (textParams != null) {
+            Object value = callGetter(textParams, "getText");
+            if (value instanceof String && !((String) value).isEmpty()) text = (String) value;
+            Object color = callGetter(textParams, "getTextColor");
+            if (color instanceof Integer) textColor = (Integer) color;
+        }
+        Object iconParams = callGetter(side, "getIconParams");
+        if (iconParams != null) {
+            Object value = callGetter(iconParams, "getIconResName");
+            if (value instanceof String && !((String) value).isEmpty()) {
+                iconResName = (String) value;
+            }
+        }
+        return new GuidePart(text, textColor, iconResName);
     }
 
     private Object readField(Object target, String name) {
@@ -1780,57 +1850,115 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 把强提示携带的状态栏内容改由模块横幅呈现：勿扰/静音取 guide 的文本、颜色与图标，
-     * 充电没有 guide，取 {@code charge} 文案，时长取模型里的 {@code duration}。
+     * 把强提示携带的状态栏内容改由模块横幅呈现。
+     *
+     * <p>勿扰/静音取 guide 的文本、颜色与图标（左右两侧分工：文本与颜色在 left，图标在 right），
+     * 充电没有 guide，取 {@code charge} 文案；停留时长取模型的 {@code duration}，点击动作取
+     * {@code target}。内容装进 {@link DeviceNotificationFocusSource} 后交给
+     * {@link FocusBannerController} 统一装窗，几何、收起、锁屏、旋转和外侧点击复用同一套逻辑。
      */
     private void showDeviceNotificationBanner(Object[] args) {
         Object model = args.length == 0 ? null : args[0];
-        if (model == null || systemUiContext == null) return;
+        if (model == null) return;
+        Context context = systemUiContext;
+        if (context == null) {
+            log("device banner skipped: system ui context not ready");
+            return;
+        }
+        View anchor = statusBarAnchor == null ? null : statusBarAnchor.get();
+        if (anchor == null || !anchor.isAttachedToWindow()) {
+            log("device banner skipped: status bar anchor unavailable");
+            return;
+        }
         String text = null;
         Integer textColor = null;
         String iconName = null;
         Object guide = readField(model, "statusBarGuideModel");
         if (guide != null) {
             for (String side : new String[]{"getLeft", "getRight"}) {
-                Object part = callGetter(guide, side);
+                GuidePart part = readGuidePart(guide, side);
                 if (part == null) continue;
-                Object textParams = callGetter(part, "getTextParams");
-                Object iconParams = callGetter(part, "getIconParams");
-                if (text == null && textParams != null) {
-                    Object value = callGetter(textParams, "getText");
-                    if (value instanceof String && !((String) value).isEmpty()) text = (String) value;
-                }
-                if (textColor == null && textParams != null) {
-                    Object value = callGetter(textParams, "getTextColor");
-                    if (value instanceof Integer) textColor = (Integer) value;
-                }
-                if (iconName == null && iconParams != null) {
-                    Object value = callGetter(iconParams, "getIconResName");
-                    if (value instanceof String && !((String) value).isEmpty()) {
-                        iconName = (String) value;
-                    }
-                }
+                if (text == null) text = part.text;
+                if (textColor == null) textColor = part.textColor;
+                if (iconName == null) iconName = part.iconResName;
             }
         }
         if (text == null) {
             Object charge = readField(model, "charge");
             if (charge instanceof String && !((String) charge).isEmpty()) text = (String) charge;
         }
-        if (text == null) return;
-        Object duration = readField(model, "duration");
-        long visibleMs = duration instanceof Long ? (Long) duration : 0L;
-        if (deviceNotificationBanner == null) {
-            deviceNotificationBanner = new DeviceNotificationBanner(systemUiContext,
-                    new DeviceNotificationBanner.Logger() {
-                        @Override public void log(String message) {
-                            HyperOS3FocusRestoreHook.this.log(message);
-                        }
-                        @Override public void error(String stage, Throwable error) {
-                            HyperOS3FocusRestoreHook.this.error(stage, error);
-                        }
-                    });
+        if (text == null) {
+            log("device banner skipped: model carries no text");
+            return;
         }
-        deviceNotificationBanner.show(text, textColor, iconName, visibleMs);
+        Object duration = readField(model, "duration");
+        // 模型只给充电事件下发时长；为 0 时沿用默认值，避免横幅停留时间随宿主默认值漂移。
+        long visibleMs = DeviceNotificationFocusSource.visibleMsFrom(
+                duration instanceof Long ? (Long) duration : null);
+        Object target = readField(model, "target");
+        // 位置跟着状态栏时间：{@code statusBarGuideModel} 在 ROM 里就是状态栏那一行的引导内容；
+        // 居中会落到挖孔与焦点区，与用户期望不符。取不到时间视图时给 -1，由宿主居中。
+        int clockRight = statusBarClockRight(anchor);
+        int leftPx = clockRight < 0 ? -1 : clockRight + dp(DEVICE_BANNER_CLOCK_GAP_DP);
+        log("device banner request text=" + text + " color=" + textColor + " icon=" + iconName
+                + " duration=" + visibleMs + " target=" + (target instanceof PendingIntent)
+                + " clockRight=" + clockRight + " left=" + leftPx);
+        FocusBannerSource source;
+        try {
+            source = DeviceNotificationFocusSource.create(context, text, textColor, iconName,
+                    visibleMs, target instanceof PendingIntent ? (PendingIntent) target : null,
+                    stringValue(readField(model, "strongToastCategory")), leftPx);
+        } catch (Throwable t) {
+            // 内容建不出来就只记录：强提示窗口已经按掉，这里失败不应该影响其余 Hook。
+            error("device banner source", t);
+            return;
+        }
+        sharedBannerController().showSource(anchor, DEVICE_NOTIFICATION_BANNER_KEY, source, visibleMs);
+    }
+
+    /**
+     * 状态栏时间的右边缘（屏幕坐标 px），取不到时返回 -1。
+     *
+     * <p>本 ROM 的时间节点是 {@code MiuiClock id=clock}（92x88，位于左侧容器内、通知图标区之前），
+     * 按资源条目名查找，找不到时不做位置假设。
+     */
+    private int statusBarClockRight(View statusBar) {
+        View clock = findByResourceEntryName(statusBar, "clock");
+        if (clock == null || clock.getWidth() <= 0 || !clock.isAttachedToWindow()) return -1;
+        int[] location = new int[2];
+        try {
+            clock.getLocationOnScreen(location);
+        } catch (Throwable t) {
+            error("device banner clock location", t);
+            return -1;
+        }
+        return location[0] + clock.getWidth();
+    }
+
+    /** 按资源条目名在视图树里查找节点；同名的第一个节点优先。 */
+    private View findByResourceEntryName(View node, String name) {
+        if (node == null || TextUtils.isEmpty(name)) return null;
+        if (name.equals(viewId(node))) return node;
+        if (!(node instanceof ViewGroup)) return null;
+        ViewGroup group = (ViewGroup) node;
+        for (int index = 0; index < group.getChildCount(); index++) {
+            View found = findByResourceEntryName(group.getChildAt(index), name);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    /** guide 侧栏的文本／颜色／图标；{@code StatusBarGuideModel$TextParams} 与 {@code $IconParams} 的可读字段。 */
+    private static final class GuidePart {
+        final String text;
+        final Integer textColor;
+        final String iconResName;
+
+        GuidePart(String text, Integer textColor, String iconResName) {
+            this.text = text;
+            this.textColor = textColor;
+            this.iconResName = iconResName;
+        }
     }
 
     /** 诊断：强提示实际走了哪些方法，每个方法名只记一次。 */

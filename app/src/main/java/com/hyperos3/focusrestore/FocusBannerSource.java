@@ -52,4 +52,27 @@ interface FocusBannerSource {
 
     /** Releases everything this source owns. Must be safe to call more than once. */
     void close();
+
+    /**
+     * 正文点击动作，供没有通知条目的内容源实现。
+     *
+     * <p>焦点横幅的正文点击走通知点击通路（打开通知条目）。设备通知没有条目，改为由内容源自己
+     * 执行动作：ROM 的强提示点击也是发送模型里的 {@code PendingIntent}。
+     */
+    interface BodyAction {
+        /** 返回 true 表示点击已处理，宿主随后关闭横幅。 */
+        boolean onBodyTap();
+    }
+
+    /**
+     * 要求贴状态栏行摆放的内容源。
+     *
+     * <p>默认摆放让开状态栏高度、落在状态栏下方的横幅位，并在安全区内居中；设备通知的内容原本
+     * 就是 ROM 状态栏引导内容（{@code StrongToastModel.statusBarGuideModel}），要和状态栏同一行、
+     * 并紧跟在状态栏时间右侧显示，因此实现本接口，由宿主改纵向起点与横向起点。
+     */
+    interface StatusBarRow {
+        /** 横幅左边缘的屏幕坐标 px；返回负数表示由宿主在安全区内居中。 */
+        int preferredLeftPx();
+    }
 }
