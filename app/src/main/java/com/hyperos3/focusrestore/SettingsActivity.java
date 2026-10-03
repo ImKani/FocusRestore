@@ -18,8 +18,11 @@ import android.os.Build;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -30,6 +33,7 @@ import android.widget.ListView;
 import android.widget.BaseAdapter;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
+import android.widget.Spinner;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -37,6 +41,8 @@ import android.widget.Toast;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
+
+import java.util.function.IntConsumer;
 
 
 import java.util.ArrayList;
@@ -101,7 +107,6 @@ public final class SettingsActivity extends Activity {
     private int COLOR_TEXT_PRIMARY = 0xFF191C1E;
     private int COLOR_TEXT_SECONDARY = 0xFF42474B;
     private int COLOR_DIVIDER = 0xFFC2C7CB;
-    private int COLOR_INPUT_BACKGROUND = 0xFFE2E8ED;
     private int COLOR_SURFACE = 0xFFF7FAFC;
     private int COLOR_SURFACE_HIGH = 0xFFE9EEF2;
     private int COLOR_NAV_SELECTED = 0xFFD6E4EE;
@@ -123,8 +128,7 @@ public final class SettingsActivity extends Activity {
     private Switch compatRetrySwitch;
     private Switch marqueeBounceSwitch;
     private Switch islandCompatSwitch;
-    private Button islandTextModeFullButton;
-    private Button islandTextModeCompactButton;
+    private SpinnerField islandTextModeField;
     private EditText focusMaxDisplayInput;
     private Switch disableIslandPropertySwitch;
     private Switch disableIslandFeatureCacheSwitch;
@@ -140,12 +144,12 @@ public final class SettingsActivity extends Activity {
     private EditText generalSeparatorInput;
     private EditText sideSeparatorInput;
     private Switch mediaFocusSwitch;
-    private Button mediaFocusBannerClickButton;
-    private Button mediaFocusCastClickButton;
-    private Button mediaFocusCastNativeButton;
-    private Button mediaFocusCastMiPlayButton;
-    private Switch specialBannerNormalBackgroundSwitch;
-    private Switch ordinaryBannerBackgroundSwitch;
+    private SpinnerField mediaFocusClickField;
+    private SpinnerField mediaFocusCastPickerField;
+    private SpinnerField bannerBackgroundField;
+    private TextView bannerBackgroundLabel;
+    private TextView mediaFocusClickLabel;
+    private TextView mediaFocusCastPickerLabel;
     private int pendingWidthLandscapeDp;
     private boolean pendingSpecialBannerNormalBackground;
     private boolean pendingMediaFocusEnabled;
@@ -266,6 +270,12 @@ public final class SettingsActivity extends Activity {
         return lastAllocatedGeneration;
     }
 
+    /**
+     * 浅色使用字段默认值，深色覆盖为静态暗色配色。
+     * 曾尝试用 Android 12 的框架色调板（{@code android.R.color.system_accent1_*}）让强调色跟随壁纸，
+     * 但本机 ROM 未注入 Material You 调色板覆盖层，取回的是基线纯黑（{@code #FF000000}）导致强调色变黑，
+     * 且平台色调板只有 13 档、无法表达面板层级，故不采用。
+     */
     private void applySystemPalette() {
         nightMode = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
                 == Configuration.UI_MODE_NIGHT_YES;
@@ -276,7 +286,6 @@ public final class SettingsActivity extends Activity {
         COLOR_TEXT_PRIMARY = 0xFFE5E9EC;
         COLOR_TEXT_SECONDARY = 0xFFB8C1C7;
         COLOR_DIVIDER = 0xFF495057;
-        COLOR_INPUT_BACKGROUND = 0xFF242B30;
         COLOR_SURFACE = 0xFF181D21;
         COLOR_SURFACE_HIGH = 0xFF20272C;
         COLOR_NAV_SELECTED = 0xFF304B5D;
@@ -417,12 +426,9 @@ public final class SettingsActivity extends Activity {
         islandCompatSwitch = createSwitch("转换超级岛内容为焦点通知");
         islandPanel.addView(islandCompatSwitch, matchWrap(dp(4)));
         islandPanel.addView(text("焦点内容模式", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
-        islandTextModeFullButton = createChoiceButton("展开全文本解析",
-                () -> selectIslandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_FULL));
-        islandTextModeCompactButton = createChoiceButton("药丸左右拼接",
-                () -> selectIslandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT));
-        islandPanel.addView(twoChoiceSelector(islandTextModeFullButton, islandTextModeCompactButton),
-                matchWrap(dp(4)));
+        islandTextModeField = choiceSpinner(new String[]{"展开全文本解析", "药丸左右拼接"},
+                pendingIslandTextMode, this::selectIslandTextMode);
+        islandPanel.addView(islandTextModeField.spinner, matchWrap(dp(4)));
         islandPanel.addView(text(
                 "全文本解析：汇总岛内所有可读文字。药丸左右拼接：只取药丸左右两侧文字并去重。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(4)));
@@ -502,7 +508,7 @@ public final class SettingsActivity extends Activity {
         widthSeekBar.setProgress(pendingWidthDp - MIN_WIDTH_DP);
         widthValue.setText(pendingWidthDp + " dp");
         islandCompatSwitch.setChecked(pendingIslandCompat);
-        updateIslandTextModeButtons();
+        syncIslandTextModeField();
         hideNotificationIconsSwitch.setChecked(pendingHideNotificationIcons);
         // 通知横幅背景开关在“点击行为”页创建，勾选状态在那里同步（此处它们尚未创建）。
         if (mediaFocusSwitch != null) mediaFocusSwitch.setChecked(pendingMediaFocusEnabled);
@@ -539,32 +545,36 @@ public final class SettingsActivity extends Activity {
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         nativeBannerOptionsPanel = new LinearLayout(this);
         nativeBannerOptionsPanel.setOrientation(LinearLayout.VERTICAL);
-        nativeBannerOptionsPanel.setPadding(dp(20), 0, 0, 0);
-        nativeBannerOptionsPanel.addView(text("通知横幅背景", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
-        specialBannerNormalBackgroundSwitch = createSwitch("通知横幅：统一使用纯色背景");
-        ordinaryBannerBackgroundSwitch = createSwitch("通知横幅：使用普通通知背景");
-        nativeBannerOptionsPanel.addView(specialBannerNormalBackgroundSwitch, matchWrap(dp(2)));
-        nativeBannerOptionsPanel.addView(ordinaryBannerBackgroundSwitch, matchWrap(dp(2)));
-        nativeBannerOptionsPanel.addView(text("点击媒体焦点通知", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(6)));
-        mediaFocusBannerClickButton = createChoiceButton("展开媒体横幅",
-                () -> selectMediaFocusClick(false));
-        mediaFocusCastClickButton = createChoiceButton("直接展开流转界面",
-                () -> selectMediaFocusClick(true));
-        nativeBannerOptionsPanel.addView(twoChoiceSelector(mediaFocusBannerClickButton,
-                mediaFocusCastClickButton), matchWrap(dp(4)));
-        nativeBannerOptionsPanel.addView(text("无缝流转入口", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(6)));
-        mediaFocusCastNativeButton = createChoiceButton("安卓原生",
-                () -> selectMediaFocusCastPicker(FocusRestoreSettings.CAST_PICKER_NATIVE));
-        mediaFocusCastMiPlayButton = createChoiceButton("小米妙播",
-                () -> selectMediaFocusCastPicker(FocusRestoreSettings.CAST_PICKER_MIPLAY));
-        nativeBannerOptionsPanel.addView(twoChoiceSelector(mediaFocusCastNativeButton,
-                mediaFocusCastMiPlayButton), matchWrap(dp(4)));
+        bannerBackgroundLabel = text("通知横幅背景", 15, COLOR_TEXT_PRIMARY);
+        nativeBannerOptionsPanel.addView(bannerBackgroundLabel, matchWrap(dp(4)));
+        bannerBackgroundField = choiceSpinner(
+                new String[]{"统一使用纯色背景", "使用普通通知背景"},
+                pendingSpecialBannerNormalBackground ? 0 : 1,
+                position -> selectBannerBackground(position == 0));
+        nativeBannerOptionsPanel.addView(bannerBackgroundField.spinner, matchWrap(dp(4)));
+        mediaFocusClickLabel = text("点击媒体焦点通知", 15, COLOR_TEXT_PRIMARY);
+        nativeBannerOptionsPanel.addView(mediaFocusClickLabel, matchWrap(dp(6)));
+        mediaFocusClickField = choiceSpinner(
+                new String[]{"展开媒体横幅", "直接展开流转界面"},
+                pendingMediaFocusCastDirect ? 1 : 0,
+                position -> selectMediaFocusClick(position == 1));
+        nativeBannerOptionsPanel.addView(mediaFocusClickField.spinner, matchWrap(dp(4)));
+        mediaFocusCastPickerLabel = text("无缝流转入口", 15, COLOR_TEXT_PRIMARY);
+        nativeBannerOptionsPanel.addView(mediaFocusCastPickerLabel, matchWrap(dp(6)));
+        mediaFocusCastPickerField = choiceSpinner(
+                new String[]{"小米妙播", "安卓原生"},
+                pendingMediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_MIPLAY ? 0 : 1,
+                position -> selectMediaFocusCastPicker(position == 0
+                        ? FocusRestoreSettings.CAST_PICKER_MIPLAY
+                        : FocusRestoreSettings.CAST_PICKER_NATIVE));
+        nativeBannerOptionsPanel.addView(mediaFocusCastPickerField.spinner, matchWrap(dp(4)));
         nativeBannerOptionsPanel.addView(text(
                 "安卓原生：系统媒体输出选择器。小米妙播：系统插件妙播设备面板（不可用时自动回退安卓原生）。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(2)));
         interactionPanel.addView(nativeBannerOptionsPanel, matchWrap(dp(2)));
         interactionPanel.addView(text(
-                "以上子项仅在“点击焦点通知展开横幅”启用时生效；实验性功能可能因 ROM 版本不兼容，不建议日常启用。",
+                "以上子项仅在“点击焦点通知展开横幅”启用时生效；“点击媒体焦点通知”与“无缝流转入口”"
+                        + "还需同时开启“启用媒体焦点通知”。实验性功能可能因 ROM 版本不兼容，不建议日常启用。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         allowFocusClickSwitch = createSwitch("旧版：打开通知内容（实验性）");
         notificationRowClickFallbackSwitch = createSwitch(
@@ -607,10 +617,9 @@ public final class SettingsActivity extends Activity {
         allowFocusClickSwitch.setChecked(pendingAllowFocusClick);
         notificationRowClickFallbackSwitch.setChecked(pendingNotificationRowClickFallback);
         independentFocusBannerSwitch.setChecked(pendingIndependentFocusBanner);
-        specialBannerNormalBackgroundSwitch.setChecked(pendingSpecialBannerNormalBackground);
-        ordinaryBannerBackgroundSwitch.setChecked(!pendingSpecialBannerNormalBackground);
-        updateMediaFocusClickButtons();
-        updateMediaFocusCastPickerButtons();
+        syncBannerBackgroundField();
+        syncMediaFocusClickField();
+        syncMediaFocusCastPickerField();
         marqueeBounceSwitch.setChecked(pendingMarqueeBounce);
         compatRetrySwitch.setChecked(pendingCompatRetry);
         delaySeekBar.setProgress(pendingDelayMs / 100);
@@ -833,10 +842,6 @@ public final class SettingsActivity extends Activity {
             updateExperimentalControls();
             markPending();
         });
-        if (islandTextModeFullButton != null) islandTextModeFullButton.setOnClickListener(v ->
-                selectIslandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_FULL));
-        if (islandTextModeCompactButton != null) islandTextModeCompactButton.setOnClickListener(v ->
-                selectIslandTextMode(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT));
         if (generalSeparatorInput != null) {
             generalSeparatorInput.addTextChangedListener(
                     separatorWatcher(generalSeparatorInput, true));
@@ -919,25 +924,10 @@ public final class SettingsActivity extends Activity {
             updateModeSpecificControls();
             markPending();
         });
-        if (specialBannerNormalBackgroundSwitch != null) {
-            specialBannerNormalBackgroundSwitch.setOnCheckedChangeListener((b, c) -> {
-                if (pendingSpecialBannerNormalBackground == c) return;
-                pendingSpecialBannerNormalBackground = c;
-                // 两个开关共享一种模式，互斥同步时不重复提交保存。
-                ordinaryBannerBackgroundSwitch.setChecked(!c);
-                markPending();
-            });
-        }
-        if (ordinaryBannerBackgroundSwitch != null) {
-            ordinaryBannerBackgroundSwitch.setOnCheckedChangeListener((b, c) -> {
-                if (pendingSpecialBannerNormalBackground == !c) return;
-                pendingSpecialBannerNormalBackground = !c;
-                specialBannerNormalBackgroundSwitch.setChecked(!c);
-                markPending();
-            });
-        }
         if (mediaFocusSwitch != null) mediaFocusSwitch.setOnCheckedChangeListener((b, c) -> {
             pendingMediaFocusEnabled = c;
+            // 两个媒体子项额外依赖本开关，立即重算可用状态。
+            updateExperimentalControls();
             markPending();
         });
         if (showFocusDividerSwitch != null) showFocusDividerSwitch.setOnCheckedChangeListener((b, c) -> {
@@ -979,11 +969,8 @@ public final class SettingsActivity extends Activity {
         boolean islandIconEnabled = pendingIslandCompat;
         setModeSpecificSwitchEnabled(showIslandIconSwitch, islandIconEnabled);
         boolean modeEnabled = pendingIslandCompat;
-        for (Button button : new Button[]{islandTextModeFullButton, islandTextModeCompactButton}) {
-            if (button == null) continue;
-            button.setEnabled(modeEnabled);
-            button.setAlpha(modeEnabled ? 1f : 0.38f);
-        }
+        setControlEnabled(islandTextModeField == null ? null : islandTextModeField.spinner,
+                modeEnabled);
         setModeSpecificSwitchEnabled(tintIslandIconSwitch,
                 pendingIslandCompat && (pendingShowIslandIcon || pendingUseSmallIconFallback));
         setModeSpecificSwitchEnabled(useSmallIconFallbackSwitch, pendingIslandCompat);
@@ -999,13 +986,19 @@ public final class SettingsActivity extends Activity {
                 notificationRowClickFallbackSwitch.setChecked(false);
             }
         }
-        // 通知横幅背景默认纯色；即使横幅开关未启用也保持可选，避免用户看不到默认项。
-        setModeSpecificSwitchEnabled(specialBannerNormalBackgroundSwitch, true);
-        setModeSpecificSwitchEnabled(ordinaryBannerBackgroundSwitch, true);
-        setChoiceButtonEnabled(mediaFocusBannerClickButton, nativeBannerEnabled);
-        setChoiceButtonEnabled(mediaFocusCastClickButton, nativeBannerEnabled);
-        setChoiceButtonEnabled(mediaFocusCastNativeButton, nativeBannerEnabled);
-        setChoiceButtonEnabled(mediaFocusCastMiPlayButton, nativeBannerEnabled);
+        // 子项都归属“点击焦点通知展开横幅”；两个媒体子项还要求“启用媒体焦点通知”同时开启。
+        // 标题文字与控件一起压色，和“旧版：打开通知内容”的置灰表现一致。
+        boolean bannerSubEnabled = nativeBannerEnabled;
+        boolean mediaSubEnabled = nativeBannerEnabled && pendingMediaFocusEnabled;
+        setControlEnabled(bannerBackgroundLabel, bannerSubEnabled);
+        setControlEnabled(bannerBackgroundField == null ? null : bannerBackgroundField.spinner,
+                bannerSubEnabled);
+        setControlEnabled(mediaFocusClickLabel, mediaSubEnabled);
+        setControlEnabled(mediaFocusClickField == null ? null : mediaFocusClickField.spinner,
+                mediaSubEnabled);
+        setControlEnabled(mediaFocusCastPickerLabel, mediaSubEnabled);
+        setControlEnabled(mediaFocusCastPickerField == null ? null
+                : mediaFocusCastPickerField.spinner, mediaSubEnabled);
         setModeSpecificSwitchEnabled(independentFocusBannerSwitch, true);
         setModeSpecificSwitchEnabled(allowFocusClickSwitch, !nativeBannerEnabled);
         setModeSpecificSwitchEnabled(notificationRowClickFallbackSwitch, !nativeBannerEnabled);
@@ -1014,7 +1007,7 @@ public final class SettingsActivity extends Activity {
     private void selectIslandTextMode(int mode) {
         if (pendingIslandTextMode == mode) return;
         pendingIslandTextMode = mode;
-        updateIslandTextModeButtons();
+        syncIslandTextModeField();
         markPending();
     }
 
@@ -1034,11 +1027,10 @@ public final class SettingsActivity extends Activity {
         }
     }
 
-    private void updateIslandTextModeButtons() {
-        styleModeButton(islandTextModeFullButton,
-                pendingIslandTextMode == FocusRestoreSettings.ISLAND_TEXT_MODE_FULL);
-        styleModeButton(islandTextModeCompactButton,
-                pendingIslandTextMode == FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT);
+    private void syncIslandTextModeField() {
+        if (islandTextModeField == null) return;
+        islandTextModeField.setIndex(
+                pendingIslandTextMode == FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT ? 1 : 0);
     }
 
     private void updateWidthControls() {
@@ -1090,6 +1082,8 @@ public final class SettingsActivity extends Activity {
 
         FrameLayout searchBox = new FrameLayout(this);
         dialogSearchInput = input("搜索应用名称或包名");
+        // 弹窗底色是 COLOR_SURFACE_HIGH，列表行是 COLOR_SURFACE，搜索框跟列表行取同一色才不会糊在一起。
+        dialogSearchInput.setBackground(roundedBg(COLOR_SURFACE, 12));
         dialogSearchInput.setTextSize(16);
         dialogSearchInput.setContentDescription("搜索应用名称或包名");
         searchBox.addView(dialogSearchInput, new FrameLayout.LayoutParams(-1, dp(48)));
@@ -1337,13 +1331,12 @@ public final class SettingsActivity extends Activity {
     private EditText input(String hint) {
         EditText e = new EditText(this);
         e.setSingleLine(true);
-        e.setMinHeight(dp(48));
-        e.setTextSize(16);
+        e.setTextSize(14);
         e.setHint(hint);
         e.setTextColor(COLOR_TEXT_PRIMARY);
         e.setHintTextColor(COLOR_TEXT_SECONDARY);
-        e.setPadding(dp(16), 0, dp(16), 0);
-        e.setBackground(inputBackground());
+        e.setPadding(dp(12), 0, dp(12), 0);
+        styleControlSurface(e);
         return e;
     }
 
@@ -1549,14 +1542,6 @@ public final class SettingsActivity extends Activity {
         return drawable;
     }
 
-    private Drawable inputBackground() {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setColor(COLOR_INPUT_BACKGROUND);
-        drawable.setCornerRadius(dp(12));
-        drawable.setStroke(dp(1), COLOR_DIVIDER);
-        return drawable;
-    }
-
     private void flattenButton(View button) {
         if (button == null) return;
         button.setElevation(0);
@@ -1576,42 +1561,147 @@ public final class SettingsActivity extends Activity {
         return button;
     }
 
-    /** Two mutually exclusive options side by side, matching the system version selector. */
-    private LinearLayout twoChoiceSelector(Button left, Button right) {
-        LinearLayout selector = new LinearLayout(this);
-        selector.setOrientation(LinearLayout.HORIZONTAL);
-        selector.addView(left, new LinearLayout.LayoutParams(0, dp(40), 1f));
-        LinearLayout.LayoutParams rightParams = new LinearLayout.LayoutParams(0, dp(40), 1f);
-        rightParams.leftMargin = dp(8);
-        selector.addView(right, rightParams);
-        return selector;
+    /**
+     * Spinner 包装：追踪当前选中 index，代码同步时不触发 onSelect。
+     * 视觉完全由 {@link #choiceSpinnerItem} 决定，不依赖系统主题。
+     */
+    private final class SpinnerField {
+        final Spinner spinner;
+        final String[] labels;
+        final IntConsumer onSelect;
+        final ArrayAdapter<String> adapter;
+        int index;
+
+        SpinnerField(Spinner spinner, String[] labels, int initialIndex, IntConsumer onSelect) {
+            this.spinner = spinner;
+            this.labels = labels;
+            this.index = initialIndex >= 0 && initialIndex < labels.length ? initialIndex : 0;
+            this.onSelect = onSelect;
+            this.adapter = new ArrayAdapter<String>(SettingsActivity.this, 0, labels) {
+                @Override public View getView(int position, View convertView, ViewGroup parent) {
+                    return choiceSpinnerItem(getItem(position), convertView, false, false);
+                }
+                @Override public View getDropDownView(int position, View convertView,
+                                                      ViewGroup parent) {
+                    return choiceSpinnerItem(getItem(position), convertView, true,
+                            position == SpinnerField.this.index);
+                }
+            };
+            spinner.setAdapter(adapter);
+            spinner.setSelection(this.index);
+            spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override public void onItemSelected(AdapterView<?> parent, View view,
+                                                     int position, long id) {
+                    if (position == SpinnerField.this.index) return;
+                    SpinnerField.this.index = position;
+                    adapter.notifyDataSetChanged();
+                    SpinnerField.this.onSelect.accept(position);
+                }
+                @Override public void onNothingSelected(AdapterView<?> parent) { }
+            });
+        }
+
+        /** 外部状态同步入口：先改 index 再 setSelection，回调据此直接返回，不会误触发保存。 */
+        void setIndex(int newIndex) {
+            if (newIndex < 0 || newIndex >= labels.length || newIndex == index) return;
+            index = newIndex;
+            if (spinner.getSelectedItemPosition() != newIndex) spinner.setSelection(newIndex);
+        }
+    }
+
+    /**
+     * 与版本切换按钮/输入框同源的下拉选择器：统一下拉项由模块自绘，
+     * 避免 Material 主题的下划线、弹窗白底与分割线在深色模式下与整体冲突。
+     */
+    private SpinnerField choiceSpinner(String[] labels, int selected, IntConsumer onSelect) {
+        Spinner spinner = new Spinner(this);
+        styleControlSurface(spinner);
+        spinner.setPadding(0, 0, 0, 0);
+        spinner.setPopupBackgroundDrawable(roundedBg(COLOR_SURFACE_HIGH, 12));
+        final SpinnerField field = new SpinnerField(spinner, labels, selected, onSelect);
+        spinner.post(() -> {
+            // 视口尺寸只有布局完成后才有效：弹窗与折叠框同宽，避免长条目撑破屏幕。
+            int width = spinner.getWidth();
+            if (width > 0) spinner.setDropDownWidth(width);
+        });
+        return field;
+    }
+
+    /** 折叠态与下拉态共用的条目视图；下拉时高亮当前项，折叠态展示 ▾ 指示器。 */
+    private View choiceSpinnerItem(String label, View convertView, boolean dropdown,
+                                   boolean selected) {
+        LinearLayout row;
+        TextView labelView;
+        TextView arrowView;
+        if (convertView instanceof LinearLayout
+                && ((LinearLayout) convertView).getChildCount() == 2) {
+            row = (LinearLayout) convertView;
+            labelView = (TextView) row.getChildAt(0);
+            arrowView = (TextView) row.getChildAt(1);
+        } else {
+            row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            labelView = new TextView(this);
+            labelView.setTextSize(14);
+            labelView.setGravity(Gravity.CENTER_VERTICAL);
+            labelView.setSingleLine(true);
+            labelView.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            row.addView(labelView, new LinearLayout.LayoutParams(0, -2, 1f));
+            arrowView = new TextView(this);
+            arrowView.setTextSize(12);
+            arrowView.setGravity(Gravity.CENTER);
+            row.addView(arrowView, new LinearLayout.LayoutParams(dp(22), -2));
+        }
+        labelView.setText(label);
+        labelView.setTextColor(COLOR_TEXT_SECONDARY);
+        row.setMinimumHeight(dp(40));
+        row.setPadding(dp(12), 0, dp(10), 0);
+        if (dropdown) {
+            // 下拉项与版本切换按钮一致：只换底色表示当前项。
+            row.setBackground(roundedBg(selected ? COLOR_PRIMARY_LIGHT : COLOR_SURFACE_HIGH, 12));
+            arrowView.setText("");
+        } else {
+            row.setBackgroundColor(Color.TRANSPARENT);
+            arrowView.setText("▾");
+            arrowView.setTextColor(COLOR_TEXT_SECONDARY);
+        }
+        return row;
+    }
+
+    private void selectBannerBackground(boolean solid) {
+        if (pendingSpecialBannerNormalBackground == solid) return;
+        pendingSpecialBannerNormalBackground = solid;
+        markPending();
     }
 
     private void selectMediaFocusClick(boolean castDirect) {
         if (pendingMediaFocusCastDirect == castDirect) return;
         pendingMediaFocusCastDirect = castDirect;
-        updateMediaFocusClickButtons();
         markPending();
     }
 
-    private void updateMediaFocusClickButtons() {
-        styleModeButton(mediaFocusBannerClickButton, !pendingMediaFocusCastDirect);
-        styleModeButton(mediaFocusCastClickButton, pendingMediaFocusCastDirect);
+    private void syncMediaFocusClickField() {
+        if (mediaFocusClickField == null) return;
+        mediaFocusClickField.setIndex(pendingMediaFocusCastDirect ? 1 : 0);
     }
 
     private void selectMediaFocusCastPicker(int picker) {
         int normalized = FocusRestoreSettings.normalizeCastPicker(picker);
         if (pendingMediaFocusCastPicker == normalized) return;
         pendingMediaFocusCastPicker = normalized;
-        updateMediaFocusCastPickerButtons();
         markPending();
     }
 
-    private void updateMediaFocusCastPickerButtons() {
-        styleModeButton(mediaFocusCastNativeButton,
-                pendingMediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_NATIVE);
-        styleModeButton(mediaFocusCastMiPlayButton,
-                pendingMediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_MIPLAY);
+    private void syncMediaFocusCastPickerField() {
+        if (mediaFocusCastPickerField == null) return;
+        mediaFocusCastPickerField.setIndex(
+                pendingMediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_MIPLAY ? 0 : 1);
+    }
+
+    private void syncBannerBackgroundField() {
+        if (bannerBackgroundField == null) return;
+        bannerBackgroundField.setIndex(pendingSpecialBannerNormalBackground ? 0 : 1);
     }
 
     private Button createModeButton(String label, int mode) {
@@ -1643,7 +1733,7 @@ public final class SettingsActivity extends Activity {
         control.setAlpha(enabled ? 1f : 0.42f);
     }
 
-    private void setChoiceButtonEnabled(Button control, boolean enabled) {
+    private void setControlEnabled(View control, boolean enabled) {
         if (control == null) return;
         control.setEnabled(enabled);
         control.setAlpha(enabled ? 1f : 0.42f);
@@ -1653,9 +1743,21 @@ public final class SettingsActivity extends Activity {
         if (button == null) return;
         button.setSelected(selected);
         button.setContentDescription(button.getText() + (selected ? "，已选择" : "，未选择"));
-        button.setTextColor(selected ? 0xFF041E2F : COLOR_TEXT_SECONDARY);
+        // 选中与否只用底色区分：深色模式下 COLOR_PRIMARY_LIGHT 本来就偏暗，
+        // 再换文字色会和对未选中态撞成相近亮度，反而不好认。
+        button.setTextColor(COLOR_TEXT_SECONDARY);
         button.setBackground(roundedBg(selected ? COLOR_PRIMARY_LIGHT : COLOR_SURFACE_HIGH, 12));
         flattenButton(button);
+    }
+
+    /**
+     * 统一下拉选择器与输入框的外观，与系统版本切换按钮同一套视觉：
+     * {@code COLOR_SURFACE_HIGH} 底色、12dp 圆角、40dp 高。
+     */
+    private void styleControlSurface(View control) {
+        if (control == null) return;
+        control.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
+        control.setMinimumHeight(dp(40));
     }
 
     /** Icon for a navigation page; the mapping lives in one place now that there are three pages. */
