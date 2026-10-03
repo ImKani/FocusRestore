@@ -1264,12 +1264,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private boolean showIndependentFocusBanner(View anchor, FocusData data, String key,
                                                String mode) {
-        if (currentSettings.mediaFocusCastDirect && isMediaFocus(data)) {
+        boolean mediaFocus = isMediaFocus(data);
+        if (currentSettings.mediaFocusCastDirect && mediaFocus) {
             // 点击媒体焦点直接展开流转界面，替代媒体横幅。
             return openMediaCast(data.key);
         }
-        boolean mediaBanner = currentSettings.mediaFocusNativeBanner                && data != null && data.mediaContent != null
-                && activeMediaNotificationKeys.contains(data.key);
+        // 媒体焦点始终可点击：未选“直接展开流转界面”时点击即展开媒体横幅，不再回退到
+        // 普通通知的原生模板（媒体通知没有原生 V3 焦点参数，回退必然失败、表现为无反应）。
+        boolean mediaBanner = mediaFocus;
         if (!mediaBanner && !currentSettings.independentFocusBanner) return false;
         if (mainHandler == null || Looper.myLooper() != mainHandler.getLooper()) {
             log(mode + " independent banner rejected key=" + key + " reason=thread");

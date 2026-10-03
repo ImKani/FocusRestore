@@ -68,7 +68,7 @@ public final class FocusRestoreSettings {
     /** 1 uses the Android picker; 2 uses MIUI 妙播. */
     public static final int CAST_PICKER_NATIVE = 1;
     public static final int CAST_PICKER_MIPLAY = 2;
-    public static final int DEFAULT_MEDIA_FOCUS_CAST_PICKER = CAST_PICKER_NATIVE;
+    public static final int DEFAULT_MEDIA_FOCUS_CAST_PICKER = CAST_PICKER_MIPLAY;
     public static final boolean DEFAULT_MEDIA_FOCUS_CAST_DIRECT = false;
     public static final int DEFAULT_MARQUEE_DELAY_MS = 200;
     public static final boolean DEFAULT_COMPAT_RETRY = false;

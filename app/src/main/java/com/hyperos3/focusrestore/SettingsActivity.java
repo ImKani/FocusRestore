@@ -467,25 +467,9 @@ public final class SettingsActivity extends Activity {
         focusPanel.addView(landscapeWidthSeekBar, matchWrap(dp(2)));
         mediaFocusSwitch = createSwitch("启用媒体焦点通知（实验性）");
         focusPanel.addView(mediaFocusSwitch, matchWrap(dp(4)));
-        focusPanel.addView(text("点击媒体焦点通知", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
-        mediaFocusBannerClickButton = createChoiceButton("展开媒体横幅",
-                () -> selectMediaFocusClick(false));
-        mediaFocusCastClickButton = createChoiceButton("直接展开流转界面",
-                () -> selectMediaFocusClick(true));
-        focusPanel.addView(twoChoiceSelector(mediaFocusBannerClickButton,
-                mediaFocusCastClickButton), matchWrap(dp(4)));
-        focusPanel.addView(text("二选一。直接展开流转界面时不再弹出媒体横幅。", 13, COLOR_TEXT_SECONDARY),
-                matchWrap(dp(4)));
-        focusPanel.addView(text("媒体横幅无缝流转入口", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
-        mediaFocusCastNativeButton = createChoiceButton("安卓原生",
-                () -> selectMediaFocusCastPicker(FocusRestoreSettings.CAST_PICKER_NATIVE));
-        mediaFocusCastMiPlayButton = createChoiceButton("小米妙播",
-                () -> selectMediaFocusCastPicker(FocusRestoreSettings.CAST_PICKER_MIPLAY));
-        focusPanel.addView(twoChoiceSelector(mediaFocusCastNativeButton,
-                mediaFocusCastMiPlayButton), matchWrap(dp(4)));
         focusPanel.addView(text(
-                "安卓原生：打开系统的媒体输出选择器。"
-                        + "小米妙播：打开 MIUI 妙播设备面板（实验性，面板来自系统插件；不可用时自动回退安卓原生）。",
+                "点击媒体焦点时的行为（展开媒体横幅 / 直接展开流转界面）与无缝流转入口，"
+                        + "已调整到“点击行为”页的“点击焦点通知展开横幅”开关之下。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
         hideNotificationIconsSwitch = createSwitch("隐藏其他通知图标（HyperOS 4）");
                 focusPanel.addView(text("最大显示时间（秒）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
@@ -520,15 +504,8 @@ public final class SettingsActivity extends Activity {
         islandCompatSwitch.setChecked(pendingIslandCompat);
         updateIslandTextModeButtons();
         hideNotificationIconsSwitch.setChecked(pendingHideNotificationIcons);
-        if (specialBannerNormalBackgroundSwitch != null) {
-            specialBannerNormalBackgroundSwitch.setChecked(pendingSpecialBannerNormalBackground);
-            ordinaryBannerBackgroundSwitch.setChecked(!pendingSpecialBannerNormalBackground);
-        }
+        // 通知横幅背景开关在“点击行为”页创建，勾选状态在那里同步（此处它们尚未创建）。
         if (mediaFocusSwitch != null) mediaFocusSwitch.setChecked(pendingMediaFocusEnabled);
-        if (mediaFocusCastNativeButton != null) {
-            updateMediaFocusCastPickerButtons();
-        }
-        updateMediaFocusClickButtons();
         showFocusDividerSwitch.setChecked(pendingShowFocusDivider);
         updateModeButtons();
         updateWidthControls();
@@ -554,21 +531,40 @@ public final class SettingsActivity extends Activity {
 
         root.addView(sectionHeader("点击行为"), matchWrap(dp(8)));
         LinearLayout interactionPanel = panel();
-        independentFocusBannerSwitch = createSwitch("点击焦点展开原生横幅（实验性）");
+        independentFocusBannerSwitch = createSwitch("点击焦点通知展开横幅（实验性）");
         interactionPanel.addView(independentFocusBannerSwitch, matchWrap(dp(4)));
         interactionPanel.addView(text(
-                "使用系统原生模板显示横幅。默认关闭；开启后优先展开，点击外侧收起。模板兼容性仍需测试。",
+                "点击焦点通知展开“通知横幅”：媒体焦点展开媒体横幅（封面、歌名、控制、进度），"
+                        + "普通通知展开通知横幅。默认关闭；开启后优先展开，点击外侧收起。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         nativeBannerOptionsPanel = new LinearLayout(this);
         nativeBannerOptionsPanel.setOrientation(LinearLayout.VERTICAL);
         nativeBannerOptionsPanel.setPadding(dp(20), 0, 0, 0);
-        specialBannerNormalBackgroundSwitch = createSwitch("横幅：统一使用纯色背景");
-        ordinaryBannerBackgroundSwitch = createSwitch("横幅：使用普通通知背景");
+        nativeBannerOptionsPanel.addView(text("通知横幅背景", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        specialBannerNormalBackgroundSwitch = createSwitch("通知横幅：统一使用纯色背景");
+        ordinaryBannerBackgroundSwitch = createSwitch("通知横幅：使用普通通知背景");
         nativeBannerOptionsPanel.addView(specialBannerNormalBackgroundSwitch, matchWrap(dp(2)));
         nativeBannerOptionsPanel.addView(ordinaryBannerBackgroundSwitch, matchWrap(dp(2)));
+        nativeBannerOptionsPanel.addView(text("点击媒体焦点通知", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(6)));
+        mediaFocusBannerClickButton = createChoiceButton("展开媒体横幅",
+                () -> selectMediaFocusClick(false));
+        mediaFocusCastClickButton = createChoiceButton("直接展开流转界面",
+                () -> selectMediaFocusClick(true));
+        nativeBannerOptionsPanel.addView(twoChoiceSelector(mediaFocusBannerClickButton,
+                mediaFocusCastClickButton), matchWrap(dp(4)));
+        nativeBannerOptionsPanel.addView(text("无缝流转入口", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(6)));
+        mediaFocusCastNativeButton = createChoiceButton("安卓原生",
+                () -> selectMediaFocusCastPicker(FocusRestoreSettings.CAST_PICKER_NATIVE));
+        mediaFocusCastMiPlayButton = createChoiceButton("小米妙播",
+                () -> selectMediaFocusCastPicker(FocusRestoreSettings.CAST_PICKER_MIPLAY));
+        nativeBannerOptionsPanel.addView(twoChoiceSelector(mediaFocusCastNativeButton,
+                mediaFocusCastMiPlayButton), matchWrap(dp(4)));
+        nativeBannerOptionsPanel.addView(text(
+                "安卓原生：系统媒体输出选择器。小米妙播：系统插件妙播设备面板（不可用时自动回退安卓原生）。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(2)));
         interactionPanel.addView(nativeBannerOptionsPanel, matchWrap(dp(2)));
         interactionPanel.addView(text(
-                "上面两个选项仅在原生横幅启用时生效；实验性功能可能因 ROM 版本不兼容，不建议日常启用。",
+                "以上子项仅在“点击焦点通知展开横幅”启用时生效；实验性功能可能因 ROM 版本不兼容，不建议日常启用。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         allowFocusClickSwitch = createSwitch("旧版：打开通知内容（实验性）");
         notificationRowClickFallbackSwitch = createSwitch(
@@ -611,6 +607,10 @@ public final class SettingsActivity extends Activity {
         allowFocusClickSwitch.setChecked(pendingAllowFocusClick);
         notificationRowClickFallbackSwitch.setChecked(pendingNotificationRowClickFallback);
         independentFocusBannerSwitch.setChecked(pendingIndependentFocusBanner);
+        specialBannerNormalBackgroundSwitch.setChecked(pendingSpecialBannerNormalBackground);
+        ordinaryBannerBackgroundSwitch.setChecked(!pendingSpecialBannerNormalBackground);
+        updateMediaFocusClickButtons();
+        updateMediaFocusCastPickerButtons();
         marqueeBounceSwitch.setChecked(pendingMarqueeBounce);
         compatRetrySwitch.setChecked(pendingCompatRetry);
         delaySeekBar.setProgress(pendingDelayMs / 100);
@@ -999,8 +999,13 @@ public final class SettingsActivity extends Activity {
                 notificationRowClickFallbackSwitch.setChecked(false);
             }
         }
-        setModeSpecificSwitchEnabled(specialBannerNormalBackgroundSwitch, nativeBannerEnabled);
-        setModeSpecificSwitchEnabled(ordinaryBannerBackgroundSwitch, nativeBannerEnabled);
+        // 通知横幅背景默认纯色；即使横幅开关未启用也保持可选，避免用户看不到默认项。
+        setModeSpecificSwitchEnabled(specialBannerNormalBackgroundSwitch, true);
+        setModeSpecificSwitchEnabled(ordinaryBannerBackgroundSwitch, true);
+        setChoiceButtonEnabled(mediaFocusBannerClickButton, nativeBannerEnabled);
+        setChoiceButtonEnabled(mediaFocusCastClickButton, nativeBannerEnabled);
+        setChoiceButtonEnabled(mediaFocusCastNativeButton, nativeBannerEnabled);
+        setChoiceButtonEnabled(mediaFocusCastMiPlayButton, nativeBannerEnabled);
         setModeSpecificSwitchEnabled(independentFocusBannerSwitch, true);
         setModeSpecificSwitchEnabled(allowFocusClickSwitch, !nativeBannerEnabled);
         setModeSpecificSwitchEnabled(notificationRowClickFallbackSwitch, !nativeBannerEnabled);
@@ -1585,9 +1590,6 @@ public final class SettingsActivity extends Activity {
     private void selectMediaFocusClick(boolean castDirect) {
         if (pendingMediaFocusCastDirect == castDirect) return;
         pendingMediaFocusCastDirect = castDirect;
-        // 二选一：直接展开流转界面与媒体横幅互斥。
-        pendingMediaFocusNativeBanner = !castDirect && pendingMediaFocusNativeBanner;
-        if (castDirect) pendingMediaFocusNativeBanner = false;
         updateMediaFocusClickButtons();
         markPending();
     }
@@ -1636,6 +1638,12 @@ public final class SettingsActivity extends Activity {
     }
 
     private void setModeSpecificSwitchEnabled(Switch control, boolean enabled) {
+        if (control == null) return;
+        control.setEnabled(enabled);
+        control.setAlpha(enabled ? 1f : 0.42f);
+    }
+
+    private void setChoiceButtonEnabled(Button control, boolean enabled) {
         if (control == null) return;
         control.setEnabled(enabled);
         control.setAlpha(enabled ? 1f : 0.42f);
