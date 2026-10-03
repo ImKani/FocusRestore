@@ -109,15 +109,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private ClassLoader classLoader;
     /** Island view blocking is installed per plugin loader and re-armed when the plugin unloads. */
     private volatile boolean islandViewsBlocked;
-    /** 设备通知横幅的键：设备通知没有通知 key，同一时刻只保留一条横幅。 */
-    private static final String DEVICE_NOTIFICATION_BANNER_KEY = "focusrestore.device-notification";
-    /** 设备通知横幅与状态栏时间之间的间距 dp；横幅还有自身内边距，视觉间距略大于该值。 */
-    private static final int DEVICE_BANNER_CLOCK_GAP_DP = 8;
-    /**
-     * 设备通知横幅的窗口锚点。焦点横幅用通知行当锚点，设备通知只有
-     * {@code StrongToastModel}、没有通知条目，因此改用状态栏自身的视图。
-     */
-    private WeakReference<View> statusBarAnchor;
+    /** 设备通知的构造焦点通知通路；首次使用时创建。 */
+    private DeviceNotificationFocusPoster deviceNotificationFocusPoster;
+    /** 每次设备通知请求的代次与已确认投递的代次，只用于把投递结果按次记录，不参与任何呈现决策。 */
+    private int deviceFocusPostGeneration;
+    private int deviceFocusDeliveredGeneration = -1;
     private volatile Context systemUiContext;
     // FocusedTextView.startMarqueeLocal() copies this value into TextView.
     // -1 keeps long lyrics moving instead of stopping after one pass.
@@ -211,7 +207,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             hideDisplayCutoutPainting();
             hideStrongToastMask();
             hookDeviceNotificationConversion();
-            hookStatusBarAnchor();
             hookStatusBarTreeDump();
         }
         log("loading in " + lpparam.packageName + "/" + lpparam.processName
@@ -249,6 +244,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 @Override public void onUnloaded(ClassLoader loader) {
                     FocusBannerController controller = bannerController;
                     if (controller != null) controller.dismiss("native-plugin-unloaded");
+                    // 构造的焦点通知是真实通知，插件卸载后不该继续留在通知栏。
+                    if (deviceNotificationFocusPoster != null) deviceNotificationFocusPoster.cancel();
                     nativeBannerRenderer.onPluginDisconnected(loader);
                     islandViewsBlocked = false;
                 }
@@ -512,14 +509,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     it.remove();
                 }
             }
-            FocusBannerController controller = bannerController;
-            if (controller != null) {
-                Object sbn = notificationEntrySbn(entry);
-                if (sbn instanceof android.service.notification.StatusBarNotification) {
-                    android.service.notification.StatusBarNotification notification =
-                            (android.service.notification.StatusBarNotification) sbn;
-                    controller.onNotificationChanged(key, notification);
-                }
+            Object sbn = notificationEntrySbn(entry);
+            if (sbn instanceof android.service.notification.StatusBarNotification) {
+                android.service.notification.StatusBarNotification notification =
+                        (android.service.notification.StatusBarNotification) sbn;
+                // 交付确认与横幅宿主无关：重启后还没画过横幅时也必须能确认构造的焦点通知已经生效。
+                noteConstructedFocusNotification(notification);
+                FocusBannerController controller = bannerController;
+                if (controller != null) controller.onNotificationChanged(key, notification);
             }
         } catch (Throwable throwable) {
             error("remember notification entry", throwable);
@@ -1560,43 +1557,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         });
     }
 
-    /**
-     * 记录状态栏视图，作为设备通知横幅的窗口锚点。
-     *
-     * <p>设备通知只有 {@code StrongToastModel}、没有通知条目，焦点横幅那条"用通知行当锚点"的
-     * 通路用不上；状态栏视图随状态栏常驻，宿主对锚点的检查（{@code isAttachedToWindow} /
-     * {@code isShown} / 所在 Display 与旋转）都能直接复用，横幅几何也保持同一套算法。
-     *
-     * <p>只记视图本身：{@code onFinishInflate} 在父级 {@code addView} 之前回调，此时还取不到
-     * 窗口根视图；状态栏被重建时按最新一次回调覆盖，避免锚点停留在已销毁的旧视图上。
-     */
-    private void hookStatusBarAnchor() {
-        for (String className : new String[]{
-                "com.android.systemui.statusbar.phone.MiuiPhoneStatusBarView",
-                "com.android.systemui.statusbar.phone.PhoneStatusBarView"}) {
-            Class<?> owner = FocusReflection.findClass(classLoader, className);
-            if (owner == null) {
-                log("status bar anchor skipped: " + className + " missing");
-                continue;
-            }
-            int hooked = XposedBridge.hookAllMethods(owner, "onFinishInflate",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            if (!(param.thisObject instanceof View)) return;
-                            View captured = (View) param.thisObject;
-                            // MiuiPhoneStatusBarView 覆写了 onFinishInflate 并回调 super，
-                            // 两个 Hook 会命中同一个实例；同一个锚点只记录一次。
-                            WeakReference<View> previous = statusBarAnchor;
-                            if (previous != null && previous.get() == captured) return;
-                            statusBarAnchor = new WeakReference<>(captured);
-                            log("status bar anchor captured: " + captured.getClass().getName());
-                        }
-                    }).size();
-            log("status bar anchor hooks " + className + "=" + hooked);
-        }
-    }
-
     private void dumpViewTree(View view, int depth, StringBuilder indent) {
         if (view == null || depth > 6) return;
         log(indent + view.getClass().getSimpleName()
@@ -1850,28 +1810,17 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 把强提示携带的状态栏内容改由模块横幅呈现。
+     * 把强提示携带的状态栏内容改由系统焦点通知呈现。
      *
-     * <p>勿扰/静音取 guide 的文本、颜色与图标（左右两侧分工：文本与颜色在 left，图标在 right），
-     * 充电没有 guide，取 {@code charge} 文案；停留时长取模型的 {@code duration}，点击动作取
-     * {@code target}。内容装进 {@link DeviceNotificationFocusSource} 后交给
-     * {@link FocusBannerController} 统一装窗，几何、收起、锁屏、旋转和外侧点击复用同一套逻辑。
+     * <p>勿扰/静音取 guide 的文本与图标（左右两侧分工：文本在 left，图标在 right），充电没有
+     * guide，取 {@code charge} 文案；停留时长取模型的 {@code duration}，点击动作取 {@code target}。
+     * 模块按 ROM 的焦点契约构造一条通知（{@link DeviceNotificationFocusPoster}），由系统自己把它
+     * 显示在状态栏焦点位。
      */
     private void showDeviceNotificationBanner(Object[] args) {
         Object model = args.length == 0 ? null : args[0];
         if (model == null) return;
-        Context context = systemUiContext;
-        if (context == null) {
-            log("device banner skipped: system ui context not ready");
-            return;
-        }
-        View anchor = statusBarAnchor == null ? null : statusBarAnchor.get();
-        if (anchor == null || !anchor.isAttachedToWindow()) {
-            log("device banner skipped: status bar anchor unavailable");
-            return;
-        }
         String text = null;
-        Integer textColor = null;
         String iconName = null;
         Object guide = readField(model, "statusBarGuideModel");
         if (guide != null) {
@@ -1879,7 +1828,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 GuidePart part = readGuidePart(guide, side);
                 if (part == null) continue;
                 if (text == null) text = part.text;
-                if (textColor == null) textColor = part.textColor;
                 if (iconName == null) iconName = part.iconResName;
             }
         }
@@ -1892,60 +1840,83 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             return;
         }
         Object duration = readField(model, "duration");
-        // 模型只给充电事件下发时长；为 0 时沿用默认值，避免横幅停留时间随宿主默认值漂移。
-        long visibleMs = DeviceNotificationFocusSource.visibleMsFrom(
+        // 模型只给充电事件下发时长；为 0 时沿用默认值，保证静音 / 勿扰与原强提示停留时间一致。
+        long visibleMs = DeviceNotificationFocusPoster.visibleMsFrom(
                 duration instanceof Long ? (Long) duration : null);
         Object target = readField(model, "target");
-        // 位置跟着状态栏时间：{@code statusBarGuideModel} 在 ROM 里就是状态栏那一行的引导内容；
-        // 居中会落到挖孔与焦点区，与用户期望不符。取不到时间视图时给 -1，由宿主居中。
-        int clockRight = statusBarClockRight(anchor);
-        int leftPx = clockRight < 0 ? -1 : clockRight + dp(DEVICE_BANNER_CLOCK_GAP_DP);
-        log("device banner request text=" + text + " color=" + textColor + " icon=" + iconName
-                + " duration=" + visibleMs + " target=" + (target instanceof PendingIntent)
-                + " clockRight=" + clockRight + " left=" + leftPx);
-        FocusBannerSource source;
-        try {
-            source = DeviceNotificationFocusSource.create(context, text, textColor, iconName,
-                    visibleMs, target instanceof PendingIntent ? (PendingIntent) target : null,
-                    stringValue(readField(model, "strongToastCategory")), leftPx);
-        } catch (Throwable t) {
-            // 内容建不出来就只记录：强提示窗口已经按掉，这里失败不应该影响其余 Hook。
-            error("device banner source", t);
-            return;
-        }
-        sharedBannerController().showSource(anchor, DEVICE_NOTIFICATION_BANNER_KEY, source, visibleMs);
+        PendingIntent contentIntent = target instanceof PendingIntent ? (PendingIntent) target : null;
+        log("device focus notification request text=" + text + " icon=" + iconName
+                + " duration=" + visibleMs + " target=" + (target instanceof PendingIntent));
+        postDeviceFocusNotification(text, iconName, visibleMs, contentIntent);
     }
 
     /**
-     * 状态栏时间的右边缘（屏幕坐标 px），取不到时返回 -1。
+     * 发一条按 ROM 焦点契约构造的通知，让系统自己显示在状态栏焦点位。
      *
-     * <p>本 ROM 的时间节点是 {@code MiuiClock id=clock}（92x88，位于左侧容器内、通知图标区之前），
-     * 按资源条目名查找，找不到时不做位置假设。
+     * <p>没有横幅兜底：这条通路不可用时只记录原因（设备通知呈现本就依赖系统焦点通路）。
      */
-    private int statusBarClockRight(View statusBar) {
-        View clock = findByResourceEntryName(statusBar, "clock");
-        if (clock == null || clock.getWidth() <= 0 || !clock.isAttachedToWindow()) return -1;
-        int[] location = new int[2];
-        try {
-            clock.getLocationOnScreen(location);
-        } catch (Throwable t) {
-            error("device banner clock location", t);
-            return -1;
+    private boolean postDeviceFocusNotification(String text, String iconResName, long visibleMs,
+                                                PendingIntent target) {
+        Context context = systemUiContext;
+        if (context == null) {
+            log("device focus notification skipped: system ui context not ready");
+            return false;
         }
-        return location[0] + clock.getWidth();
+        DeviceNotificationFocusPoster poster = deviceNotificationFocusPoster;
+        if (poster == null) {
+            poster = new DeviceNotificationFocusPoster(context);
+            deviceNotificationFocusPoster = poster;
+        }
+        if (!poster.isAvailable()) return false;
+        if (!poster.post(text, iconResName, visibleMs, target)) return false;
+        deviceFocusPostGeneration++;
+        return true;
     }
 
-    /** 按资源条目名在视图树里查找节点；同名的第一个节点优先。 */
-    private View findByResourceEntryName(View node, String name) {
-        if (node == null || TextUtils.isEmpty(name)) return null;
-        if (name.equals(viewId(node))) return node;
-        if (!(node instanceof ViewGroup)) return null;
-        ViewGroup group = (ViewGroup) node;
-        for (int index = 0; index < group.getChildCount(); index++) {
-            View found = findByResourceEntryName(group.getChildAt(index), name);
-            if (found != null) return found;
+    /**
+     * 模块构造的焦点通知进入通知管线后记录 ROM 侧的判定结果。
+     *
+     * <p>标记是模块自己写进 extras 的，不会与系统或第三方通知冲突。
+     */
+    private void noteConstructedFocusNotification(StatusBarNotification sbn) {
+        Notification notification = sbn.getNotification();
+        Bundle extras = notification == null ? null : notification.extras;
+        if (extras == null
+                || !extras.getBoolean(DeviceNotificationFocusPoster.EXTRA_MODULE_MARKER, false)) {
+            return;
         }
-        return null;
+        // 没有待确认的投递时忽略：SystemUI 重启后系统会把历史通知重投一遍，那不是本次投递的证据。
+        if (deviceFocusPostGeneration == 0) return;
+        if (deviceFocusDeliveredGeneration == deviceFocusPostGeneration) return;
+        deviceFocusDeliveredGeneration = deviceFocusPostGeneration;
+        // 一次真机日志就要能定位失败点，所以把 ROM 的判定与提示内容一起打出来。
+        log("device focus notification delivered key=" + sbn.getKey()
+                + describeFocusGates(sbn));
+    }
+
+    /**
+     * 诊断构造的焦点通知在 ROM 侧的判定结果。
+     *
+     * <p>{@code mIsFocusNotification} 看模块写的 extras 有没有被 ROM 认下；{@code showOnStatusBar}
+     * 是状态栏显示的闸门；{@code ticker} 与 {@code tickerIcon} 是提示最终显示的文字与图标。
+     */
+    private String describeFocusGates(StatusBarNotification sbn) {
+        StringBuilder text = new StringBuilder(" isFocusNotification=")
+                .append(getBooleanField(sbn, "mIsFocusNotification", false));
+        try {
+            Class<?> utils = FocusReflection.findClass(classLoader,
+                    "com.android.systemui.statusbar.notification.utils.FocusUtils");
+            if (utils == null) return text.append(" focusUtils=missing").toString();
+            Object showOnStatusBar = XposedHelpers.callStaticMethod(utils, "showOnStatusBar", sbn);
+            Object ticker = XposedHelpers.callStaticMethod(utils, "getStatusBarTicker", sbn);
+            Object tickerIcon = XposedHelpers.callStaticMethod(utils, "getStatusBarTickerIcon", sbn);
+            text.append(" showOnStatusBar=").append(showOnStatusBar)
+                    .append(" ticker=").append(preview(stringValue(ticker)))
+                    .append(" tickerIcon=").append(tickerIcon != null);
+        } catch (Throwable t) {
+            text.append(" gates=error:").append(t);
+        }
+        return text.toString();
     }
 
     /** guide 侧栏的文本／颜色／图标；{@code StatusBarGuideModel$TextParams} 与 {@code $IconParams} 的可读字段。 */
@@ -2473,6 +2444,24 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             textView.setSingleLine(true);
             textView.setHorizontallyScrolling(true);
             textView.setEllipsize(TextUtils.TruncateAt.MARQUEE);
+            CharSequence content = textView.getText();
+            float textWidth = content == null ? 0f
+                    : textView.getPaint().measureText(content.toString());
+            float visibleContentWidth = getVisibleContentWidth(textView);
+            // 装得下就静态显示。0.25.3 真机（竖屏、关闭宽度限制）：textWidth=126.0 与
+            // visibleContentWidth=126.0 相等，此时启动 MARQUEE 会把文字推出可见区，界面上只剩
+            // 焦点分隔竖线；横屏可见区足够宽才不会出现。空文本同样不启动。
+            if (visibleContentWidth > 0f && textWidth <= visibleContentWidth) {
+                stopNativeMarquee(textView);
+                textView.setSelected(false);
+                textView.setMarqueeRepeatLimit(0);
+                textView.scrollTo(0, 0);
+                log("focus text fits; marquee skipped width=" + textView.getWidth()
+                        + " textWidth=" + textWidth
+                        + " visibleContentWidth=" + visibleContentWidth
+                        + describeFocusTextGeometry(textView));
+                return textView.getWidth() > 0;
+            }
             textView.setFocusable(true);
             textView.setFocusableInTouchMode(true);
             // Re-selecting resets a marquee left in a completed/stale state by
@@ -2503,6 +2492,39 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         boolean ready = startNativeMarquee(textView);
         log("native focus marquee attempt=" + attempt);
         return ready;
+    }
+
+    /**
+     * 焦点文本视图的现场状态，用于定位"竖屏只看得到分隔竖线"这一类不可见问题。
+     *
+     * <p>文字装得下、又没启动跑马灯却仍然看不见时，只可能是这三类原因之一：横向滚动没归零、
+     * 颜色/透明度不可见、或者视图位置落在可见区之外。一次日志把三者一起打出来，避免继续靠猜。
+     */
+    private String describeFocusTextGeometry(TextView textView) {
+        try {
+            int[] location = new int[2];
+            textView.getLocationOnScreen(location);
+            Rect visible = new Rect();
+            boolean visibleRectOk = textView.getGlobalVisibleRect(visible);
+            StringBuilder text = new StringBuilder()
+                    .append(" scrollX=").append(textView.getScrollX())
+                    .append(" alpha=").append(textView.getAlpha())
+                    .append(" color=#").append(Integer.toHexString(textView.getCurrentTextColor()))
+                    .append(" vis=").append(textView.getVisibility())
+                    .append(" left=").append(textView.getLeft())
+                    .append(" screenX=").append(location[0])
+                    .append(" visibleRect=").append(visibleRectOk ? visible.toShortString() : "none");
+            ViewParent parent = textView.getParent();
+            if (parent instanceof View) {
+                View container = (View) parent;
+                text.append(" parentWidth=").append(container.getWidth())
+                        .append(" parentScrollX=").append(container.getScrollX())
+                        .append(" parentLeft=").append(container.getLeft());
+            }
+            return text.toString();
+        } catch (Throwable t) {
+            return " geometry=error:" + t;
+        }
     }
 
     private boolean hasMarqueeOverflow(TextView textView) {
@@ -2874,6 +2896,16 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             }
                             if (result) return;
 
+                            // 模块自己构造的设备通知焦点通知：ROM 的 shouldShow 只对携带 miui.focus.rv
+                            // 的通知返回 true，因此它会在这里被清掉（0.25.2 真机：15 个事件里 12 个卡在
+                            // 这一关，只有个别事件没走这次询问才显示出来）。构造的通知本来就是模块要
+                            // 显示的，直接放行。
+                            if (isConstructedDeviceFocusNotification(data)) {
+                                param.setResult(true);
+                                log("device focus shouldShow forced=true key=" + data.key);
+                                return;
+                            }
+
                             // HyperOS answers shouldShow=true only for a notification carrying its own
                             // miui.focus.rv. A whitelisted island notification is otherwise parsed and
                             // written into the bean and then never displayed, which is exactly the
@@ -2978,6 +3010,20 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * a repeat call. The set is bounded because notification keys are unbounded in principle and this
      * hook runs for every prompt evaluation.
      */
+    /**
+     * 是否是模块自己构造的设备通知焦点通知。
+     *
+     * <p>靠模块写进 extras 的标记识别（{@link DeviceNotificationFocusPoster#EXTRA_MODULE_MARKER}），
+     * 不会与系统或第三方通知冲突。
+     */
+    private static boolean isConstructedDeviceFocusNotification(FocusData data) {
+        if (data == null || data.sbn == null) return false;
+        Notification notification = data.sbn.getNotification();
+        Bundle extras = notification == null ? null : notification.extras;
+        return extras != null
+                && extras.getBoolean(DeviceNotificationFocusPoster.EXTRA_MODULE_MARKER, false);
+    }
+
     private boolean markForcedShouldShow(String key, StatusBarNotification sbn) {
         if (TextUtils.isEmpty(key)) return false;
         String generation = key + "@" + (sbn == null ? 0L : sbn.getPostTime());

@@ -24,13 +24,49 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-版本：`0.24.2`（versionCode 221，Debug 测试版）
+版本：`0.25.5`（versionCode 235，Debug 测试版）
+
+- 新增诊断：焦点文字装得下却看不见时，记录文本视图的滚动位置、透明度、文字颜色与坐标（用于定位竖屏只剩分隔竖线的问题）。
+
+以下为历史版本说明（0.25.4 及更早）。
+
+0.25.4：
+
+- 修复竖屏下设备通知焦点提示只显示分隔竖线、看不到文字的问题（文字装得下时不再启动跑马灯）。
+
+- 修复竖屏下设备通知焦点提示只显示分隔竖线、看不到文字的问题（文字装得下时不再启动跑马灯）。
+
+
+
+0.25.3：
+
+- 修复设备通知只有个别事件能显示焦点提示的问题：现在每次切换静音 / 勿扰 / 充电都会显示。
+- 彻底移除模块自绘横幅兜底：设备通知只走系统焦点通知通路，不再出现横幅。
+
+0.25.2：
+
+- 修复设备通知只有个别事件能显示焦点提示的问题：现在每次切换静音 / 勿扰 / 充电都会显示。
+- 彻底移除模块自绘横幅兜底：设备通知只走系统焦点通知通路，不再出现横幅。
+
+以下为历史版本说明（0.25.2 及更早）。
+
+0.25.2：
+
+- 修复重启系统界面后只显示模块横幅、以及横幅与状态栏焦点提示同时出现的问题。
+- 修复连续触发时部分事件不重新显示焦点提示的问题。
+- 充电事件现在也会带上焦点提示图标。
+
+0.25.1：
+
+- 把系统焦点通路的判定结果写进日志（`isFocusNotification` / `showOnStatusBar` / `ticker` / `tickerIcon`），行为不变。
+
+0.25.0：
+
+- 首次接入系统焦点通知通路：设备通知改由系统自己显示在状态栏焦点位，不再由模块自绘横幅（通路不可用时才回退横幅）。
+
+0.24.2：
 
 - 设备通知横幅横向改为紧跟状态栏时间右侧显示（0.24.1 为屏幕居中，会压在状态栏中间）。
-- 设备通知横幅回到状态栏那一行显示，不再落到状态栏下方的横幅区。
-- 静音 / 勿扰等系统没有下发停留时长的事件改回 5 秒自动收起（0.24.0 为 10 秒）。
-
-以下为历史版本说明（0.24.0 及更早）。
 
 0.24.1：
 
@@ -179,15 +215,15 @@ Android Gradle Plugin 8.7.3
 构建 debug 或 release 变体，APK 输出路径：
 
 ```text
-app/build/outputs/apk/debug/FocusRestore-0.24.2-debug.apk
-app/build/outputs/apk/release/FocusRestore-0.24.2-release.apk
+app/build/outputs/apk/debug/FocusRestore-0.25.5-debug.apk
+app/build/outputs/apk/release/FocusRestore-0.25.5-release.apk
 ```
 
 模块不声明网络、存储或后台服务权限。为显示白名单应用列表，Manifest 声明包可见性相关的 `QUERY_ALL_PACKAGES` 和小米系统权限 `com.android.permission.GET_INSTALLED_APPS`；关于项目按钮通过系统浏览器打开外部链接，网络访问由浏览器处理。配置 XML 保持私有，但导出的只读 Provider 必须允许不同签名的 SystemUI 查询，因此其他应用也可能读取模式、白名单等配置；Provider 不提供写接口。
 
 ## 安装和作用域
 
-1. 安装 `FocusRestore-0.24.2-release.apk` 或 `FocusRestore-0.24.2-debug.apk`。
+1. 安装 `FocusRestore-0.25.5-release.apk` 或 `FocusRestore-0.25.5-debug.apk`。
 2. 在 LSPosed 中启用本模块。
 3. 作用域应只有：
 

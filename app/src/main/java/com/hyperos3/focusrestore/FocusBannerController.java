@@ -47,10 +47,6 @@ public final class FocusBannerController {
 
     private static final long VISIBLE_MS = 10_000L;
     private static final long MAX_VISIBLE_MS = 20_000L;
-    /** 内容源自带时长的下限，避免模型给出极小值让窗口一闪而过。 */
-    private static final long MIN_SOURCE_VISIBLE_MS = 1_000L;
-    /** 贴状态栏行摆放时，距屏幕顶部的偏移；与 ROM 状态栏引导内容同一行。 */
-    private static final int STATUS_BAR_ROW_OFFSET_DP = 8;
     private static final long INTERACTION_MS = 4_000L;
     private static final long MONITOR_MS = 250L;
     private static final long UPDATE_MS = 80L;
@@ -94,9 +90,6 @@ public final class FocusBannerController {
     private boolean removingWindow;
     private int removalAttempts;
     private boolean updateScheduled;
-    /** 当前横幅的展示时长；由内容源指定时两者相等，交互动不动它就不再延长。 */
-    private long softVisibleMs = VISIBLE_MS;
-    private long hardVisibleMs = MAX_VISIBLE_MS;
     private long logPeriod;
     private int logCount;
 
@@ -186,33 +179,14 @@ public final class FocusBannerController {
      * 这里把源交给同一个窗口宿主，几何、测量、装窗、收起与触摸处理全部复用。
      */
     public boolean showSource(View anchor, String key, FocusBannerSource source) {
-        return showSource(anchor, key, source, 0L);
-    }
-
-    /**
-     * 展示由调用方直接提供的内容源，并按内容自身的时长收窗。
-     *
-     * <p>{@code visibleMs <= 0} 时沿用焦点横幅的默认时长与交互延长；正数表示内容自己带了停留
-     * 时长（设备通知取 {@code StrongToastModel.duration}），到期即收，触摸不再延长。
-     */
-    public boolean showSource(View anchor, String key, FocusBannerSource source, long visibleMs) {
         if (source == null) {
             event(key, "showSource rejected: missing source");
             return false;
         }
         pendingSource = source;
-        if (visibleMs > 0) {
-            softVisibleMs = Math.max(MIN_SOURCE_VISIBLE_MS, Math.min(visibleMs, MAX_VISIBLE_MS));
-            hardVisibleMs = softVisibleMs;
-        } else {
-            softVisibleMs = VISIBLE_MS;
-            hardVisibleMs = MAX_VISIBLE_MS;
-        }
         boolean accepted = show(anchor, key, null, false);
         if (!accepted) {
             pendingSource = null;
-            softVisibleMs = VISIBLE_MS;
-            hardVisibleMs = MAX_VISIBLE_MS;
         }
         return accepted;
     }
@@ -246,23 +220,13 @@ public final class FocusBannerController {
                     event(key, "show rejected: " + blocked);
                     return false;
                 }
-                // 内容源请求在 refreshNative 里被消费，先记住本次请求是否由内容源发起。
-                boolean sourceDriven = pendingSource != null;
                 clearPendingUpdate();
                 setAnchor(anchor);
                 currentSbn = sbn;
                 currentMediaRemoteViews = mediaRemoteViews;
                 refreshNative();
                 if (banner == null || removalPending) return false;
-                if (sourceDriven) {
-                    // 内容源驱动的新事件就是一次新的呈现：窗口按请求重新计时，否则连续切换
-                    // （例如勿扰开→关）的后一次内容只能继承上一条的剩余时长。
-                    long now = SystemClock.uptimeMillis();
-                    softDeadline = now + softVisibleMs;
-                    hardDeadline = now + hardVisibleMs;
-                } else {
-                    extendDeadline(softVisibleMs);
-                }
+                extendDeadline(VISIBLE_MS);
                 event(key, "show accepted: existing native window; frame confirmation is separate");
                 return true;
             }
@@ -342,8 +306,8 @@ public final class FocusBannerController {
                         WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             }
             long now = SystemClock.uptimeMillis();
-            softDeadline = now + softVisibleMs;
-            hardDeadline = now + hardVisibleMs;
+            softDeadline = now + VISIBLE_MS;
+            hardDeadline = now + MAX_VISIBLE_MS;
             registerLifecycle(anchorContext);
             blocked = displayBlockedReason();
             if (blocked != null) {
@@ -517,7 +481,7 @@ public final class FocusBannerController {
             if (candidate.widthPx() <= 0 || candidate.minHeightPx() < 0) {
                 throw new IllegalStateException("native template has invalid dimensions");
             }
-            Geometry geometry = geometry(anchor, display, candidate);
+            Geometry geometry = geometry(anchor, display, candidate.widthPx());
             if (geometry.width <= 0 || geometry.maxHeight <= 0) {
                 throw new IllegalStateException("no safe display area for native template");
             }
@@ -768,8 +732,6 @@ public final class FocusBannerController {
         currentKey = null;
         currentSbn = null;
         currentMediaRemoteViews = false;
-        softVisibleMs = VISIBLE_MS;
-        hardVisibleMs = MAX_VISIBLE_MS;
         displayId = -1;
         windowAdded = false;
         removalPending = false;
@@ -777,15 +739,7 @@ public final class FocusBannerController {
         lastRenderAttempt = 0L;
     }
 
-    /**
-     * 计算横幅窗口的几何。
-     *
-     * <p>默认摆放让开状态栏、落在状态栏下方并居中；实现 {@link FocusBannerSource.StatusBarRow}
-     * 的源（设备通知）改从屏幕顶部起算，横向按内容源给的位置（状态栏时间右侧）摆放，越界时夹回
-     * 安全区。
-     */
-    private Geometry geometry(View anchor, Display display, FocusBannerSource source) {
-        int nativeWidth = source.widthPx();
+    private Geometry geometry(View anchor, Display display, int nativeWidth) {
         DisplayMetrics metrics = new DisplayMetrics();
         display.getRealMetrics(metrics);
         Rect bounds = new Rect(0, 0, metrics.widthPixels, metrics.heightPixels);
@@ -822,19 +776,8 @@ public final class FocusBannerController {
         int usableWidth = Math.max(0, bounds.width() - left - right - 2 * margin);
         Geometry result = new Geometry();
         result.width = Math.min(nativeWidth, usableWidth);
-        int safeLeft = bounds.left + left;
-        int safeRight = bounds.right - right - margin;
-        if (source instanceof FocusBannerSource.StatusBarRow) {
-            // 贴状态栏行：与 ROM 的状态栏引导内容同一行，横向紧跟在状态栏时间右侧（起点由内容源给出）。
-            result.top = bounds.top + dp(windowContext, STATUS_BAR_ROW_OFFSET_DP);
-            int preferredLeft = ((FocusBannerSource.StatusBarRow) source).preferredLeftPx();
-            result.left = preferredLeft < 0
-                    ? safeLeft + margin + (usableWidth - result.width) / 2
-                    : Math.max(safeLeft, Math.min(preferredLeft, safeRight - result.width));
-        } else {
-            result.top = bounds.top + top + dp(windowContext, 6);
-            result.left = safeLeft + margin + (usableWidth - result.width) / 2;
-        }
+        result.left = bounds.left + left + margin + (usableWidth - result.width) / 2;
+        result.top = bounds.top + top + dp(windowContext, 6);
         result.maxHeight = Math.max(0, bounds.bottom - bottom - margin - result.top);
         return result;
     }
@@ -876,10 +819,7 @@ public final class FocusBannerController {
             FocusBannerSource clicked = render;
             bodyClickInProgress = true;
             try {
-                // 设备通知没有通知条目，点击由内容源自己的动作处理，不进通知点击通路。
-                boolean dispatched = clicked instanceof FocusBannerSource.BodyAction
-                        ? ((FocusBannerSource.BodyAction) clicked).onBodyTap()
-                        : openNotificationBodyForCurrent();
+                boolean dispatched = openNotificationBodyForCurrent();
                 if (dispatched && banner == this && render == clicked) dismiss("body-click");
             } catch (Throwable error) {
                 fail(notificationKey, "body click dispatch", error);
