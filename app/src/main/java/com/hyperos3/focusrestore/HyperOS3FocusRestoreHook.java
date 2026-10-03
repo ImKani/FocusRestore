@@ -109,6 +109,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private ClassLoader classLoader;
     /** Island view blocking is installed per plugin loader and re-armed when the plugin unloads. */
     private volatile boolean islandViewsBlocked;
+    /** 设备通知转焦点通知的自绘横幅窗口，按事件复用。 */
+    private DeviceNotificationBanner deviceNotificationBanner;
     private volatile Context systemUiContext;
     // FocusedTextView.startMarqueeLocal() copies this value into TextView.
     // -1 keeps long lyrics moving instead of stopping after one pass.
@@ -1725,6 +1727,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     log("strong toast suppressed: " + name + " " + describeStrongToast(param.args));
+                    showDeviceNotificationBanner(param.args);
                     param.setResult(null);
                 }
             }).size();
@@ -1774,6 +1777,60 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /**
+     * 把强提示携带的状态栏内容改由模块横幅呈现：勿扰/静音取 guide 的文本、颜色与图标，
+     * 充电没有 guide，取 {@code charge} 文案，时长取模型里的 {@code duration}。
+     */
+    private void showDeviceNotificationBanner(Object[] args) {
+        Object model = args.length == 0 ? null : args[0];
+        if (model == null || systemUiContext == null) return;
+        String text = null;
+        Integer textColor = null;
+        String iconName = null;
+        Object guide = readField(model, "statusBarGuideModel");
+        if (guide != null) {
+            for (String side : new String[]{"getLeft", "getRight"}) {
+                Object part = callGetter(guide, side);
+                if (part == null) continue;
+                Object textParams = callGetter(part, "getTextParams");
+                Object iconParams = callGetter(part, "getIconParams");
+                if (text == null && textParams != null) {
+                    Object value = callGetter(textParams, "getText");
+                    if (value instanceof String && !((String) value).isEmpty()) text = (String) value;
+                }
+                if (textColor == null && textParams != null) {
+                    Object value = callGetter(textParams, "getTextColor");
+                    if (value instanceof Integer) textColor = (Integer) value;
+                }
+                if (iconName == null && iconParams != null) {
+                    Object value = callGetter(iconParams, "getIconResName");
+                    if (value instanceof String && !((String) value).isEmpty()) {
+                        iconName = (String) value;
+                    }
+                }
+            }
+        }
+        if (text == null) {
+            Object charge = readField(model, "charge");
+            if (charge instanceof String && !((String) charge).isEmpty()) text = (String) charge;
+        }
+        if (text == null) return;
+        Object duration = readField(model, "duration");
+        long visibleMs = duration instanceof Long ? (Long) duration : 0L;
+        if (deviceNotificationBanner == null) {
+            deviceNotificationBanner = new DeviceNotificationBanner(systemUiContext,
+                    new DeviceNotificationBanner.Logger() {
+                        @Override public void log(String message) {
+                            HyperOS3FocusRestoreHook.this.log(message);
+                        }
+                        @Override public void error(String stage, Throwable error) {
+                            HyperOS3FocusRestoreHook.this.error(stage, error);
+                        }
+                    });
+        }
+        deviceNotificationBanner.show(text, textColor, iconName, visibleMs);
     }
 
     /** 诊断：强提示实际走了哪些方法，每个方法名只记一次。 */

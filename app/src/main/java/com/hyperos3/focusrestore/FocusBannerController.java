@@ -63,6 +63,8 @@ public final class FocusBannerController {
     private volatile boolean nativeOperation;
     private int nativeOperationDepth;
     private WeakReference<View> anchorRef = new WeakReference<>(null);
+    /** 由调用方直接提供内容源的展示请求；非空时跳过按通知选模板的分支。 */
+    private FocusBannerSource pendingSource;
     private BannerFrame banner;
     private WindowManager windowManager;
     private WindowManager.LayoutParams windowParams;
@@ -171,6 +173,23 @@ public final class FocusBannerController {
     }
 
     /**
+     * 展示由调用方直接提供的内容源，不依赖 {@code StatusBarNotification}。
+     *
+     * <p>设备通知（充电/静音/勿扰）没有通知条目，无法走 {@link #show} 的模板选择分支；
+     * 这里把源交给同一个窗口宿主，几何、测量、装窗、收起与触摸处理全部复用。
+     */
+    public boolean showSource(View anchor, String key, FocusBannerSource source) {
+        if (source == null) {
+            event(key, "showSource rejected: missing source");
+            return false;
+        }
+        pendingSource = source;
+        boolean accepted = show(anchor, key, null, false);
+        if (!accepted) pendingSource = null;
+        return accepted;
+    }
+
+    /**
      * Shows either the native Focus template or the media notification's own RemoteViews.
      * The latter is deliberately opt-in so existing banner behavior remains unchanged.
      */
@@ -180,7 +199,9 @@ public final class FocusBannerController {
             event(key, "show rejected: caller is not main thread; no deferred window created");
             return false;
         }
-        if (anchor == null || TextUtils.isEmpty(key) || sbn == null || sbn.getNotification() == null) {
+        if (anchor == null || TextUtils.isEmpty(key)
+                || (sbn == null && pendingSource == null)
+                || (sbn != null && sbn.getNotification() == null)) {
             event(key, "show rejected: missing anchor/key/notification");
             return false;
         }
@@ -417,7 +438,12 @@ public final class FocusBannerController {
         FocusBannerSource candidate = null;
         beginNativeOperation();
         try {
-            if (currentMediaRemoteViews) {
+            if (pendingSource != null) {
+                // 调用方直接给的源：不按通知选模板，几何与测量仍由宿主统一处理。
+                candidate = pendingSource;
+                pendingSource = null;
+                event(currentKey, "using caller-provided source");
+            } else if (currentMediaRemoteViews) {
                 if (!MediaNotificationBannerSource.isAvailable(currentSbn)) {
                     throw new IllegalStateException("media notification RemoteViews unavailable");
                 }
