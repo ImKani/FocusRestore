@@ -107,6 +107,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             });
 
     private ClassLoader classLoader;
+    /** Island view blocking is installed per plugin loader and re-armed when the plugin unloads. */
+    private volatile boolean islandViewsBlocked;
     private volatile Context systemUiContext;
     // FocusedTextView.startMarqueeLocal() copies this value into TextView.
     // -1 keeps long lyrics moving instead of stopping after one pass.
@@ -195,6 +197,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         hookApplicationAttach();
         hookDynamicIslandSystemProperty();
         disableDynamicIslandFeatureCache();
+        if (!com.hyperos3.focusrestore.BuildConfig.DEBUG
+                || currentSettings.disableIslandFeatureCache) {
+            hideDisplayCutoutPainting();
+            hideStrongToastMask();
+            hookDeviceNotificationConversion();
+            hookStatusBarTreeDump();
+        }
         log("loading in " + lpparam.packageName + "/" + lpparam.processName
                 + " awaiting persisted hook mode; default=OS"
                 + FocusRestoreSettings.DEFAULT_HOOK_MODE);
@@ -225,11 +234,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             new NativeFocusPluginDiscovery(new NativeFocusPluginDiscovery.Listener() {
                 @Override public void onLoader(ClassLoader loader) {
                     nativeBannerRenderer.install(loader);
+                    blockDynamicIslandViews(loader);
                 }
                 @Override public void onUnloaded(ClassLoader loader) {
                     FocusBannerController controller = bannerController;
                     if (controller != null) controller.dismiss("native-plugin-unloaded");
                     nativeBannerRenderer.onPluginDisconnected(loader);
+                    islandViewsBlocked = false;
                 }
                 @Override public void log(String message) {
                     HyperOS3FocusRestoreHook.this.log(message);
@@ -1506,6 +1517,430 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             // The property hook still covers initialization if this class is not loaded yet.
             error("set FEATURE_DYNAMIC_ISLAND", t);
         }
+    }
+
+    /**
+     * 诊断：打印状态栏视图树（类名 / id / 可见性 / 尺寸 / 透明度 / 背景色）。
+     *
+     * <p>用于定位"屏蔽超级岛后仍然全黑显示脑门"的绘制者：插件岛通路与
+     * {@code DisplayCutoutBaseView.drawCutouts} 经日志确认都未被调用，需要直接看视图树。
+     */
+    private void hookStatusBarTreeDump() {
+        hookTreeDump("com.android.systemui.statusbar.phone.MiuiPhoneStatusBarView");
+        hookTreeDump("com.android.systemui.statusbar.phone.PhoneStatusBarView");
+    }
+
+    private void hookTreeDump(String className) {
+        Class<?> owner = FocusReflection.findClass(classLoader, className);
+        if (owner == null) {
+            log("status bar tree dump skipped: " + className + " missing");
+            return;
+        }
+        XposedBridge.hookAllMethods(owner, "onFinishInflate", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (!(param.thisObject instanceof View)) return;
+                View root = (View) param.thisObject;
+                root.post(() -> {
+                    log("status bar tree root=" + className);
+                    dumpViewTree(root, 0, new StringBuilder());
+                });
+            }
+        });
+    }
+
+    private void dumpViewTree(View view, int depth, StringBuilder indent) {
+        if (view == null || depth > 6) return;
+        log(indent + view.getClass().getSimpleName()
+                + " id=" + viewId(view)
+                + " vis=" + view.getVisibility()
+                + " " + view.getWidth() + "x" + view.getHeight()
+                + " alpha=" + view.getAlpha()
+                + " bg=" + backgroundDescription(view.getBackground())
+                + " drawable=" + imageDrawableDescription(view));
+        if (!(view instanceof android.view.ViewGroup)) return;
+        android.view.ViewGroup group = (android.view.ViewGroup) view;
+        indent.append("  ");
+        for (int index = 0; index < group.getChildCount(); index++) {
+            dumpViewTree(group.getChildAt(index), depth + 1, indent);
+        }
+        indent.setLength(indent.length() - 2);
+    }
+
+    private String viewId(View view) {
+        int id = view.getId();
+        if (id == View.NO_ID) return "-";
+        try {
+            return view.getResources().getResourceEntryName(id);
+        } catch (Throwable t) {
+            return "0x" + Integer.toHexString(id);
+        }
+    }
+
+    private String backgroundDescription(android.graphics.drawable.Drawable background) {
+        if (background == null) return "null";
+        if (background instanceof android.graphics.drawable.ColorDrawable) {
+            return "Color#"
+                    + Integer.toHexString(((android.graphics.drawable.ColorDrawable) background).getColor());
+        }
+        return background.getClass().getSimpleName();
+    }
+
+    private String imageDrawableDescription(View view) {
+        if (!(view instanceof android.widget.ImageView)) return "-";
+        return backgroundDescription(((android.widget.ImageView) view).getDrawable());
+    }
+
+    /**
+     * 设备通知（充电/静音/勿扰）转焦点通知 —— 第一步：抓取真实载荷。
+     *
+     * <p>强提示窗口已按掉，这些事件目前没有任何视觉呈现。
+     * {@code DeviceNotificationListenerImpl.handleDeviceNotification(Bundle, DeviceNotificationModel)}
+     * 是设备通知的唯一入口；这里把 bundle 的标量字段与模型的左右文本完整记录，
+     * 下一步据此构造焦点通知（内容/图标/时长直接取这里的值，不再靠推断字段名）。
+     */
+    private void hookDeviceNotificationConversion() {
+        try {
+            Class<?> listener = FocusReflection.findClass(classLoader,
+                    "com.android.systemui.devicenotification.listener.DeviceNotificationListenerImpl");
+            if (listener == null) {
+                log("device notification conversion skipped: listener missing");
+                return;
+            }
+            XposedBridge.hookAllMethods(listener, "handleDeviceNotification", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    log("device notification payload " + describeDeviceNotification(param.args));
+                }
+            });
+            log("device notification conversion hook installed");
+        } catch (Throwable t) {
+            error("hookDeviceNotificationConversion", t);
+        }
+    }
+
+    private String describeDeviceNotification(Object[] args) {
+        StringBuilder text = new StringBuilder();
+        for (Object argument : args) {
+            if (text.length() > 0) text.append(" | ");
+            if (argument instanceof Bundle) {
+                Bundle bundle = (Bundle) argument;
+                text.append("bundle[");
+                for (String key : bundle.keySet()) {
+                    Object value = bundle.get(key);
+                    if (value instanceof String || value instanceof Integer || value instanceof Long
+                            || value instanceof Boolean) {
+                        text.append(key).append('=').append(value).append(' ');
+                    }
+                }
+                text.append(']');
+            } else if (argument == null) {
+                text.append("null");
+            } else {
+                text.append(argument.getClass().getSimpleName())
+                        .append('{').append(describeDeviceNotificationModel(argument)).append('}');
+            }
+        }
+        return text.toString();
+    }
+
+    private String describeDeviceNotificationModel(Object model) {
+        StringBuilder text = new StringBuilder();
+        for (String side : new String[]{"getLeft", "getRight"}) {
+            Object sideValue = callGetter(model, side);
+            if (sideValue == null) continue;
+            Object textParams = callGetter(sideValue, "getTextParams");
+            Object content = textParams == null ? null : callGetter(textParams, "getText");
+            text.append(side).append('=').append(content).append(' ');
+        }
+        return text.toString().trim();
+    }
+
+    private Object callGetter(Object target, String method) {
+        if (target == null) return null;
+        try {
+            return XposedHelpers.callMethod(target, method);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * 去掉强提示（StrongToast）里那块横跨状态栏的黑色"脑门"。
+     *
+     * <p>设备通知（充电/静音/勿扰）在 {@code FEATURE_DYNAMIC_ISLAND=false} 时不再走岛，而是走
+     * {@code com.miui.toast.MIUIStrongToast}：它自带名为 {@code StrongToastView} 的独立窗口，
+     * 其中 {@code mCutOut} 覆盖挖孔、{@code mRoundRect}（{@code com.miui.toast.view.RoundRect}）
+     * 画出两端外反圆角的黑色圆角矩形。拦掉 RoundRect 的绘制即可消除黑底，图标与文字不受影响。
+     */
+    private void hideStrongToastMask() {
+        try {
+            Class<?> roundRect = FocusReflection.findClass(classLoader,
+                    "com.miui.toast.view.RoundRect");
+            if (roundRect == null) {
+                log("strong toast mask kept: RoundRect missing");
+            } else {
+                suppressCutoutDraw(roundRect, "onDraw", "strong-toast-round-rect");
+                log("strong toast mask suppressed: RoundRect.onDraw skipped");
+            }
+        } catch (Throwable t) {
+            error("hideStrongToastMask", t);
+        }
+        suppressStrongToastWindow();
+        logStrongToastCalls();
+    }
+
+    /**
+     * 直接不显示强提示窗口。
+     *
+     * <p>日志已确认充电时必然走到 {@code showCustomStrongToast → getWindowParam → setValue}，
+     * 而 {@code RoundRect.onDraw} 从未被调用，说明那块横跨状态栏的黑条由该窗口内其它视图绘制
+     * （候选：{@code mCutOut} / {@code mSTBgFL} / {@code mSTBgCenterIv}）。这里先把窗口整个按掉，
+     * 若仍出现黑条，{@code onAttachedToWindow} 上的视图树 dump 会给出确切节点。
+     */
+    private void suppressStrongToastWindow() {
+        Class<?> toast = FocusReflection.findClass(classLoader, "com.miui.toast.MIUIStrongToast");
+        if (toast == null) {
+            log("strong toast window kept: MIUIStrongToast missing");
+            return;
+        }
+        suppressStrongToastShow(toast, "showCustomStrongToast");
+        suppressStrongToastShow(toast, "showStrongToast");
+        XposedBridge.hookAllMethods(toast, "onAttachedToWindow", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (!(param.thisObject instanceof View)) return;
+                View root = (View) param.thisObject;
+                root.post(() -> {
+                    log("strong toast tree:");
+                    dumpViewTree(root, 0, new StringBuilder());
+                });
+            }
+        });
+    }
+
+    private void suppressStrongToastShow(Class<?> owner, String name) {
+        try {
+            int hooked = XposedBridge.hookAllMethods(owner, name, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    log("strong toast suppressed: " + name + " " + describeStrongToast(param.args));
+                    param.setResult(null);
+                }
+            }).size();
+            log("strong toast suppression " + name + " hooks=" + hooked);
+        } catch (Throwable t) {
+            error("suppressStrongToastShow " + name, t);
+        }
+    }
+
+    /**
+     * 读取强提示自带的状态栏内容模型。
+     *
+     * <p>{@code StrongToastModel.statusBarGuideModel} 就是 ROM 给状态栏/岛准备的内容
+     * （left/center/right 各自的 text/textColor 与 iconResName），岛开着时渲染成岛，
+     * 关掉后只剩强提示窗口那块黑底。转焦点通知直接复用这份数据，不再自行拼文案。
+     */
+    private String describeStrongToast(Object[] args) {
+        if (args.length == 0 || args[0] == null) return "<no-model>";
+        Object model = args[0];
+        StringBuilder text = new StringBuilder("category=")
+                .append(readField(model, "strongToastCategory"))
+                .append(" charge=").append(readField(model, "charge"))
+                .append(" rate=").append(readField(model, "chargeRate"))
+                .append(" duration=").append(readField(model, "duration"));
+        Object guide = readField(model, "statusBarGuideModel");
+        if (guide == null) return text.append(" guide=null").toString();
+        for (String side : new String[]{"getLeft", "getCenter", "getRight"}) {
+            Object part = callGetter(guide, side);
+            if (part == null) continue;
+            Object textParams = callGetter(part, "getTextParams");
+            Object iconParams = callGetter(part, "getIconParams");
+            text.append(' ').append(side).append("[text=")
+                    .append(textParams == null ? null : callGetter(textParams, "getText"))
+                    .append(" color=")
+                    .append(textParams == null ? null : callGetter(textParams, "getTextColor"))
+                    .append(" icon=")
+                    .append(iconParams == null ? null : callGetter(iconParams, "getIconResName"))
+                    .append(']');
+        }
+        return text.toString();
+    }
+
+    private Object readField(Object target, String name) {
+        if (target == null) return null;
+        try {
+            return XposedHelpers.getObjectField(target, name);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 诊断：强提示实际走了哪些方法，每个方法名只记一次。 */
+    private void logStrongToastCalls() {
+        Class<?> toast = FocusReflection.findClass(classLoader, "com.miui.toast.MIUIStrongToast");
+        if (toast == null) {
+            log("strong toast call trace skipped: MIUIStrongToast missing");
+            return;
+        }
+        int hooked = 0;
+        for (java.lang.reflect.Method method : toast.getDeclaredMethods()) {
+            if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) continue;
+            try {
+                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                    private boolean reported;
+
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        if (reported) return;
+                        reported = true;
+                        log("strong toast call " + method.getName());
+                    }
+                });
+                hooked++;
+            } catch (Throwable ignored) {
+                // 单个方法挂不上不影响其余诊断。
+            }
+        }
+        log("strong toast call trace hooks=" + hooked);
+    }
+
+    /**
+     * 隐藏系统自身绘制的挖孔覆盖层。
+     *
+     * <p>0.21.48/0.21.49 的日志证明插件岛通路一次都没走（FEATURE_DYNAMIC_ISLAND=false 已把插件岛关死），
+     * 但黑色"脑门"仍在，说明它不是岛画的，而是 {@code DisplayCutoutBaseView} 把
+     * {@code DisplayCutout.getCutoutPath()} 涂黑的结果：{@code onDraw} → {@code drawCutouts(Canvas)}，
+     * 另有 {@code drawCutoutProtection(Canvas)} 负责相机保护区域。两者都不画，挖孔区就不会再出现黑块。
+     */
+    private void hideDisplayCutoutPainting() {
+        try {
+            Class<?> cutoutView = FocusReflection.findClass(classLoader,
+                    "com.android.systemui.DisplayCutoutBaseView");
+            if (cutoutView == null) {
+                log("display cutout painting kept: DisplayCutoutBaseView missing");
+                return;
+            }
+            suppressCutoutDraw(cutoutView, "drawCutouts", "cutout");
+            suppressCutoutDraw(cutoutView, "drawCutoutProtection", "protection");
+            log("display cutout painting suppressed: drawCutouts/drawCutoutProtection skipped");
+        } catch (Throwable t) {
+            error("hideDisplayCutoutPainting", t);
+        }
+    }
+
+    /** 每类只记录第一次命中，避免逐帧刷屏。 */
+    private void suppressCutoutDraw(Class<?> owner, String name, String label) {
+        XposedBridge.hookAllMethods(owner, name, new XC_MethodHook() {
+            private boolean reported;
+
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                param.setResult(null);
+                if (reported) return;
+                reported = true;
+                log("display cutout painting suppressed first " + label + " draw skipped");
+            }
+        });
+    }
+
+    /**
+     * 屏蔽原生超级岛的视图层，在插件 ClassLoader 就绪后调用。
+     *
+     * <p>{@code FEATURE_DYNAMIC_ISLAND=false} 只挡住 SystemUI 侧的内容下发与图标归并；岛窗口仍可能被
+     * 插件创建出来，此时没有内容、只剩插件 {@code DynamicIslandBackgroundView} 画的那块黑色圆角背景，
+     * 表现就是整个状态栏全黑显示"脑门"。所以这里在插件入口拦截：不新增、不更新岛视图，
+     * 并把背景透明度钉为 0（只让黑底不可见，不改动插件的布局与状态计算）。
+     *
+     * <p>岛内容转焦点通知由 {@code islandCompat} 通路负责，这里不做任何转换。
+     */
+    private void blockDynamicIslandViews(ClassLoader pluginLoader) {
+        if (islandViewsBlocked) return;
+        try {
+            Class<?> contentPlugin = FocusReflection.findClass(pluginLoader,
+                    "miui.systemui.notification.NotificationDynamicIslandPluginImpl");
+            Class<?> windowView = FocusReflection.findClass(pluginLoader,
+                    "miui.systemui.dynamicisland.window.DynamicIslandWindowView");
+            Class<?> windowController = FocusReflection.findClass(pluginLoader,
+                    "miui.systemui.dynamicisland.window.DynamicIslandWindowViewController");
+            Class<?> background = FocusReflection.findClass(pluginLoader,
+                    "miui.systemui.dynamicisland.DynamicIslandBackgroundView");
+            if (background == null) {
+                log("Dynamic Island view blocking skipped: contentPlugin=" + (contentPlugin != null)
+                        + " windowView=" + (windowView != null)
+                        + " controller=" + (windowController != null) + " background=null");
+                return;
+            }
+            suppressIslandViewCall(contentPlugin, "addDynamicIslandView");
+            suppressIslandViewCall(contentPlugin, "updateDynamicIslandView");
+            suppressIslandViewCall(windowView, "updateDynamicIslandView");
+            suppressIslandViewCall(windowView, "updateDynamicIslandViewSuspend");
+            suppressIslandViewCall(windowController, "addDynamicIslandView");
+            suppressIslandViewCall(windowController, "updateDynamicIslandView");
+            // 兜底：黑色圆角底由该 View 的 onDraw 画，直接不画；并让它始终不可见、透明。
+            XposedBridge.hookAllMethods(background, "onDraw", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    param.setResult(null);
+                }
+            });
+            XposedBridge.hookAllMethods(background, "setVisibility", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (param.args.length == 1 && param.args[0] instanceof Integer) {
+                        param.args[0] = View.GONE;
+                    }
+                }
+            });
+            XposedBridge.hookAllMethods(background, "alphaAnimation", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (param.args.length == 1 && param.args[0] instanceof Float) param.args[0] = 0f;
+                }
+            });
+            if (contentPlugin != null) {
+                XposedBridge.hookAllMethods(contentPlugin, "handleDynamicIsland", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        log("Dynamic Island command "
+                                + (param.args.length > 0 ? islandCommand(param.args[0]) : "<none>"));
+                    }
+                });
+            }
+            islandViewsBlocked = true;
+            log("Dynamic Island views blocked: entries suppressed, background never drawn"
+                    + " contentPlugin=" + (contentPlugin != null) + " windowView=" + (windowView != null)
+                    + " controller=" + (windowController != null));
+        } catch (Throwable t) {
+            error("blockDynamicIslandViews", t);
+        }
+    }
+
+    /** 按方法名整组拦截，避免依赖只在插件 ClassLoader 里可见的参数类型。 */
+    private void suppressIslandViewCall(Class<?> owner, String name) {
+        if (owner == null) return;
+        XposedBridge.hookAllMethods(owner, name, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                param.setResult(null);
+                log("Dynamic Island view suppressed: " + owner.getSimpleName() + "#" + name);
+            }
+        });
+    }
+
+    /** 打印插件命令的 action 与标量参数，用于定位设备通知等真实入口。 */
+    private static String islandCommand(Object argument) {
+        if (!(argument instanceof Bundle)) return String.valueOf(argument);
+        Bundle bundle = (Bundle) argument;
+        StringBuilder text = new StringBuilder("action=").append(bundle.getString("action_key"));
+        for (String key : bundle.keySet()) {
+            if ("action_key".equals(key)) continue;
+            Object value = bundle.get(key);
+            if (value instanceof String || value instanceof Integer || value instanceof Boolean) {
+                text.append(' ').append(key).append('=').append(value);
+            }
+        }
+        return text.toString();
     }
 
     private void hookShowOnStatusBar() {
