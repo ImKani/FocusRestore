@@ -136,14 +136,22 @@ public final class SettingsActivity extends Activity {
     private Switch useSmallIconFallbackSwitch;
     private Switch notificationRowClickFallbackSwitch;
     private Switch independentFocusBannerSwitch;
+    private LinearLayout nativeBannerOptionsPanel;
     private EditText generalSeparatorInput;
     private EditText sideSeparatorInput;
     private Switch mediaFocusSwitch;
+    private Button mediaFocusBannerClickButton;
+    private Button mediaFocusCastClickButton;
+    private Button mediaFocusCastNativeButton;
+    private Button mediaFocusCastMiPlayButton;
     private Switch specialBannerNormalBackgroundSwitch;
     private Switch ordinaryBannerBackgroundSwitch;
     private int pendingWidthLandscapeDp;
     private boolean pendingSpecialBannerNormalBackground;
     private boolean pendingMediaFocusEnabled;
+    private boolean pendingMediaFocusNativeBanner;
+    private int pendingMediaFocusCastPicker = FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_PICKER;
+    private boolean pendingMediaFocusCastDirect = FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_DIRECT;
     private boolean pendingManual, pendingCompatRetry, pendingMarqueeBounce, pendingIslandCompat,
             pendingDisableIslandProperty, pendingDisableIslandFeatureCache, pendingAllowFocusClick,
             pendingHideNotificationIcons, pendingShowFocusDivider, pendingShowIslandIcon,
@@ -457,12 +465,28 @@ public final class SettingsActivity extends Activity {
             public void onStopTrackingTouch(SeekBar bar) { }
         });
         focusPanel.addView(landscapeWidthSeekBar, matchWrap(dp(2)));
-        specialBannerNormalBackgroundSwitch = createSwitch("统一使用纯色背景");
-        focusPanel.addView(specialBannerNormalBackgroundSwitch, matchWrap(dp(4)));
-        ordinaryBannerBackgroundSwitch = createSwitch("使用普通通知背景");
-        focusPanel.addView(ordinaryBannerBackgroundSwitch, matchWrap(dp(4)));
         mediaFocusSwitch = createSwitch("启用媒体焦点通知（实验性）");
         focusPanel.addView(mediaFocusSwitch, matchWrap(dp(4)));
+        focusPanel.addView(text("点击媒体焦点通知", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        mediaFocusBannerClickButton = createChoiceButton("展开媒体横幅",
+                () -> selectMediaFocusClick(false));
+        mediaFocusCastClickButton = createChoiceButton("直接展开流转界面",
+                () -> selectMediaFocusClick(true));
+        focusPanel.addView(twoChoiceSelector(mediaFocusBannerClickButton,
+                mediaFocusCastClickButton), matchWrap(dp(4)));
+        focusPanel.addView(text("二选一。直接展开流转界面时不再弹出媒体横幅。", 13, COLOR_TEXT_SECONDARY),
+                matchWrap(dp(4)));
+        focusPanel.addView(text("媒体横幅无缝流转入口", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        mediaFocusCastNativeButton = createChoiceButton("安卓原生",
+                () -> selectMediaFocusCastPicker(FocusRestoreSettings.CAST_PICKER_NATIVE));
+        mediaFocusCastMiPlayButton = createChoiceButton("小米妙播",
+                () -> selectMediaFocusCastPicker(FocusRestoreSettings.CAST_PICKER_MIPLAY));
+        focusPanel.addView(twoChoiceSelector(mediaFocusCastNativeButton,
+                mediaFocusCastMiPlayButton), matchWrap(dp(4)));
+        focusPanel.addView(text(
+                "安卓原生：打开系统的媒体输出选择器。"
+                        + "小米妙播：打开 MIUI 妙播设备面板（实验性，面板来自系统插件；不可用时自动回退安卓原生）。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
         hideNotificationIconsSwitch = createSwitch("隐藏其他通知图标（HyperOS 4）");
                 focusPanel.addView(text("最大显示时间（秒）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
         focusMaxDisplayInput = input("0 = 不限制，2 - 3600 秒");
@@ -501,6 +525,10 @@ public final class SettingsActivity extends Activity {
             ordinaryBannerBackgroundSwitch.setChecked(!pendingSpecialBannerNormalBackground);
         }
         if (mediaFocusSwitch != null) mediaFocusSwitch.setChecked(pendingMediaFocusEnabled);
+        if (mediaFocusCastNativeButton != null) {
+            updateMediaFocusCastPickerButtons();
+        }
+        updateMediaFocusClickButtons();
         showFocusDividerSwitch.setChecked(pendingShowFocusDivider);
         updateModeButtons();
         updateWidthControls();
@@ -519,6 +547,9 @@ public final class SettingsActivity extends Activity {
         iconPanel.addView(showIslandIconSwitch, matchWrap(dp(4)));
         iconPanel.addView(tintIslandIconSwitch, matchWrap(dp(4)));
         iconPanel.addView(useSmallIconFallbackSwitch, matchWrap(0));
+        iconPanel.addView(text(
+                "实验性图标路径依赖 ROM 通知资源，可能显示异常或影响焦点图标；不建议启用。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         root.addView(iconPanel, matchWrap(dp(12)));
 
         root.addView(sectionHeader("点击行为"), matchWrap(dp(8)));
@@ -527,6 +558,17 @@ public final class SettingsActivity extends Activity {
         interactionPanel.addView(independentFocusBannerSwitch, matchWrap(dp(4)));
         interactionPanel.addView(text(
                 "使用系统原生模板显示横幅。默认关闭；开启后优先展开，点击外侧收起。模板兼容性仍需测试。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        nativeBannerOptionsPanel = new LinearLayout(this);
+        nativeBannerOptionsPanel.setOrientation(LinearLayout.VERTICAL);
+        nativeBannerOptionsPanel.setPadding(dp(20), 0, 0, 0);
+        specialBannerNormalBackgroundSwitch = createSwitch("横幅：统一使用纯色背景");
+        ordinaryBannerBackgroundSwitch = createSwitch("横幅：使用普通通知背景");
+        nativeBannerOptionsPanel.addView(specialBannerNormalBackgroundSwitch, matchWrap(dp(2)));
+        nativeBannerOptionsPanel.addView(ordinaryBannerBackgroundSwitch, matchWrap(dp(2)));
+        interactionPanel.addView(nativeBannerOptionsPanel, matchWrap(dp(2)));
+        interactionPanel.addView(text(
+                "上面两个选项仅在原生横幅启用时生效；实验性功能可能因 ROM 版本不兼容，不建议日常启用。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         allowFocusClickSwitch = createSwitch("旧版：打开通知内容（实验性）");
         notificationRowClickFallbackSwitch = createSwitch(
@@ -639,6 +681,9 @@ public final class SettingsActivity extends Activity {
         outState.putInt("m3.widthLandscape", pendingWidthLandscapeDp);
         outState.putBoolean("m3.specialBackground", pendingSpecialBannerNormalBackground);
         outState.putBoolean("m3.mediaFocus", pendingMediaFocusEnabled);
+        outState.putBoolean("m3.mediaFocusNativeBanner", pendingMediaFocusNativeBanner);
+        outState.putInt("m3.mediaFocusCastPicker", pendingMediaFocusCastPicker);
+        outState.putBoolean("m3.mediaFocusCastDirect", pendingMediaFocusCastDirect);
         
         outState.putInt("m3.delay", pendingDelayMs);
         outState.putBoolean("m3.retry", pendingCompatRetry);
@@ -685,6 +730,12 @@ public final class SettingsActivity extends Activity {
         pendingWidthLandscapeDp = state.getInt("m3.widthLandscape", pendingWidthLandscapeDp);
         pendingSpecialBannerNormalBackground = state.getBoolean("m3.specialBackground", pendingSpecialBannerNormalBackground);
         pendingMediaFocusEnabled = state.getBoolean("m3.mediaFocus", pendingMediaFocusEnabled);
+        pendingMediaFocusNativeBanner = state.getBoolean("m3.mediaFocusNativeBanner",
+                pendingMediaFocusNativeBanner);
+        pendingMediaFocusCastPicker = FocusRestoreSettings.normalizeCastPicker(
+                state.getInt("m3.mediaFocusCastPicker", pendingMediaFocusCastPicker));
+        pendingMediaFocusCastDirect = state.getBoolean("m3.mediaFocusCastDirect",
+                pendingMediaFocusCastDirect);
         
         pendingDelayMs = state.getInt("m3.delay", pendingDelayMs);
         pendingCompatRetry = state.getBoolean("m3.retry", pendingCompatRetry);
@@ -830,17 +881,36 @@ public final class SettingsActivity extends Activity {
         }
         if (allowFocusClickSwitch != null) allowFocusClickSwitch.setOnCheckedChangeListener((b, c) -> {
             pendingAllowFocusClick = c;
+            if (c) {
+                pendingIndependentFocusBanner = false;
+                if (independentFocusBannerSwitch != null) independentFocusBannerSwitch.setChecked(false);
+            }
+            updateExperimentalControls();
             markPending();
         });
         if (notificationRowClickFallbackSwitch != null) {
             notificationRowClickFallbackSwitch.setOnCheckedChangeListener((b, c) -> {
                 pendingNotificationRowClickFallback = c;
+                if (c) {
+                    pendingIndependentFocusBanner = false;
+                    if (independentFocusBannerSwitch != null) independentFocusBannerSwitch.setChecked(false);
+                }
+                updateExperimentalControls();
                 markPending();
             });
         }
         if (independentFocusBannerSwitch != null) {
             independentFocusBannerSwitch.setOnCheckedChangeListener((b, c) -> {
                 pendingIndependentFocusBanner = c;
+                if (c) {
+                    pendingAllowFocusClick = false;
+                    pendingNotificationRowClickFallback = false;
+                    if (allowFocusClickSwitch != null) allowFocusClickSwitch.setChecked(false);
+                    if (notificationRowClickFallbackSwitch != null) {
+                        notificationRowClickFallbackSwitch.setChecked(false);
+                    }
+                }
+                updateExperimentalControls();
                 markPending();
             });
         }
@@ -917,8 +987,23 @@ public final class SettingsActivity extends Activity {
         setModeSpecificSwitchEnabled(tintIslandIconSwitch,
                 pendingIslandCompat && (pendingShowIslandIcon || pendingUseSmallIconFallback));
         setModeSpecificSwitchEnabled(useSmallIconFallbackSwitch, pendingIslandCompat);
-        setModeSpecificSwitchEnabled(notificationRowClickFallbackSwitch, true);
+        boolean nativeBannerEnabled = pendingIndependentFocusBanner;
+        if (nativeBannerEnabled) {
+            pendingAllowFocusClick = false;
+            pendingNotificationRowClickFallback = false;
+            if (allowFocusClickSwitch != null && allowFocusClickSwitch.isChecked()) {
+                allowFocusClickSwitch.setChecked(false);
+            }
+            if (notificationRowClickFallbackSwitch != null
+                    && notificationRowClickFallbackSwitch.isChecked()) {
+                notificationRowClickFallbackSwitch.setChecked(false);
+            }
+        }
+        setModeSpecificSwitchEnabled(specialBannerNormalBackgroundSwitch, nativeBannerEnabled);
+        setModeSpecificSwitchEnabled(ordinaryBannerBackgroundSwitch, nativeBannerEnabled);
         setModeSpecificSwitchEnabled(independentFocusBannerSwitch, true);
+        setModeSpecificSwitchEnabled(allowFocusClickSwitch, !nativeBannerEnabled);
+        setModeSpecificSwitchEnabled(notificationRowClickFallbackSwitch, !nativeBannerEnabled);
     }
 
     private void selectIslandTextMode(int mode) {
@@ -1279,6 +1364,9 @@ public final class SettingsActivity extends Activity {
         pendingWidthLandscapeDp = settings.widthLandscapeDp;
         pendingSpecialBannerNormalBackground = settings.specialBannerNormalBackground;
         pendingMediaFocusEnabled = settings.mediaFocusEnabled;
+        pendingMediaFocusNativeBanner = settings.mediaFocusNativeBanner;
+        pendingMediaFocusCastPicker = settings.mediaFocusCastPicker;
+        pendingMediaFocusCastDirect = settings.mediaFocusCastDirect;
         pendingDelayMs = settings.marqueeDelayMs;
         pendingCompatRetry = settings.compatRetry;
         pendingMarqueeBounce = settings.marqueeBounce;
@@ -1319,6 +1407,9 @@ public final class SettingsActivity extends Activity {
                 .widthLandscapeDp(pendingWidthLandscapeDp)
                 .specialBannerNormalBackground(pendingSpecialBannerNormalBackground)
                 .mediaFocusEnabled(pendingMediaFocusEnabled)
+                .mediaFocusNativeBanner(pendingMediaFocusNativeBanner)
+                .mediaFocusCastPicker(pendingMediaFocusCastPicker)
+                .mediaFocusCastDirect(pendingMediaFocusCastDirect)
                 .marqueeDelayMs(pendingDelayMs)
                 .compatRetry(pendingCompatRetry)
                 .marqueeBounce(pendingMarqueeBounce)
@@ -1489,6 +1580,36 @@ public final class SettingsActivity extends Activity {
         rightParams.leftMargin = dp(8);
         selector.addView(right, rightParams);
         return selector;
+    }
+
+    private void selectMediaFocusClick(boolean castDirect) {
+        if (pendingMediaFocusCastDirect == castDirect) return;
+        pendingMediaFocusCastDirect = castDirect;
+        // 二选一：直接展开流转界面与媒体横幅互斥。
+        pendingMediaFocusNativeBanner = !castDirect && pendingMediaFocusNativeBanner;
+        if (castDirect) pendingMediaFocusNativeBanner = false;
+        updateMediaFocusClickButtons();
+        markPending();
+    }
+
+    private void updateMediaFocusClickButtons() {
+        styleModeButton(mediaFocusBannerClickButton, !pendingMediaFocusCastDirect);
+        styleModeButton(mediaFocusCastClickButton, pendingMediaFocusCastDirect);
+    }
+
+    private void selectMediaFocusCastPicker(int picker) {
+        int normalized = FocusRestoreSettings.normalizeCastPicker(picker);
+        if (pendingMediaFocusCastPicker == normalized) return;
+        pendingMediaFocusCastPicker = normalized;
+        updateMediaFocusCastPickerButtons();
+        markPending();
+    }
+
+    private void updateMediaFocusCastPickerButtons() {
+        styleModeButton(mediaFocusCastNativeButton,
+                pendingMediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_NATIVE);
+        styleModeButton(mediaFocusCastMiPlayButton,
+                pendingMediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_MIPLAY);
     }
 
     private Button createModeButton(String label, int mode) {

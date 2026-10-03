@@ -769,11 +769,15 @@ final class HyperOS4FocusController {
         }
 
         void showContent(View nextContent, DisplayItem item, HookSettings settings) {
-            boolean sameBannerTarget = bannerClicks && settings.independentFocusBanner
+            // 媒体焦点始终可点击：媒体横幅开关或直接展开流转界面都需要接管点击。
+            boolean bannerClickMode = settings.independentFocusBanner
+                    || settings.mediaFocusNativeBanner
+                    || settings.mediaFocusCastDirect;
+            boolean sameBannerTarget = bannerClicks && bannerClickMode
                     && currentNotificationEntry == item.notificationEntry
                     && TextUtils.equals(currentItemKey, item.key);
             clearContent(sameBannerTarget);
-            bannerClicks = settings.independentFocusBanner;
+            bannerClicks = bannerClickMode;
             blockClicks = !settings.allowFocusClick && !bannerClicks;
             notificationRowClicks = !bannerClicks && settings.allowFocusClick
                     && settings.notificationRowClickFallback;

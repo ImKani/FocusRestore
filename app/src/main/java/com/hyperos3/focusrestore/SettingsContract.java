@@ -34,6 +34,11 @@ final class SettingsContract {
     /** Historical slot retained; it is no longer read or written by current code. */
     static final int ISLAND_CUSTOM_RULES = 28;
     static final int MEDIA_FOCUS_ENABLED = 29;
+    static final int MEDIA_FOCUS_NATIVE_BANNER = 30;
+    /** Cast picker choice: 1 Android native, 2 MIUI MiPlay. */
+    static final int MEDIA_FOCUS_CAST_PICKER = 31;
+    /** Replaces the media banner when on: clicking a media focus opens the cast UI directly. */
+    static final int MEDIA_FOCUS_CAST_DIRECT = 32;
 
     static final String[] COLUMNS = {
             "limit_text_width", "text_width_dp", "marquee_delay_ms", "compat_retry",
@@ -45,7 +50,8 @@ final class SettingsContract {
             "use_small_icon_fallback", "notification_row_click_fallback", "independent_focus_banner",
             "island_text_mode", "focus_max_display_seconds", "focus_timeout_exempt_packages",
             "width_landscape_dp", "special_banner_normal_background", "notification_icon_hide_mode",
-            "island_custom_rules", "media_focus_enabled"
+            "island_custom_rules", "media_focus_enabled", "media_focus_native_banner",
+            "media_focus_cast_picker", "media_focus_cast_direct"
     };
 
     /** Encode the Provider wire format here so column names and values share one contract. */
@@ -71,7 +77,10 @@ final class SettingsContract {
                  settings.specialBannerNormalBackground ? 1 : 0,
                  0, // Retired selective icon-hide mode column remains for wire compatibility.
                  "",
-                 settings.mediaFocusEnabled ? 1 : 0};
+                 settings.mediaFocusEnabled ? 1 : 0,
+                  settings.mediaFocusNativeBanner ? 1 : 0,
+                  settings.mediaFocusCastPicker,
+                  settings.mediaFocusCastDirect ? 1 : 0};
     }
 
     private static String joinPackages(java.util.Set<String> packages) {

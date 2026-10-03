@@ -73,6 +73,7 @@ public final class FocusBannerController {
     private PowerManager power;
     private String currentKey;
     private StatusBarNotification currentSbn;
+    private boolean currentMediaRemoteViews;
     private int displayId = -1;
     private int displayRotation;
     private long softDeadline;
@@ -145,8 +146,8 @@ public final class FocusBannerController {
 
     public FocusBannerController(Logger logger, NativeFocusTemplateRenderer renderer,
                                  NotificationOpener notificationOpener) {
-        if (logger == null || renderer == null || notificationOpener == null) {
-            throw new IllegalArgumentException("logger/renderer/opener == null");
+        if (logger == null || notificationOpener == null) {
+            throw new IllegalArgumentException("logger/opener == null");
         }
         this.logger = logger;
         this.renderer = renderer;
@@ -166,6 +167,15 @@ public final class FocusBannerController {
 
     /** True means add/update was accepted, not that a frame has reached the display. */
     public boolean show(View anchor, String key, StatusBarNotification sbn) {
+        return show(anchor, key, sbn, false);
+    }
+
+    /**
+     * Shows either the native Focus template or the media notification's own RemoteViews.
+     * The latter is deliberately opt-in so existing banner behavior remains unchanged.
+     */
+    public boolean show(View anchor, String key, StatusBarNotification sbn,
+                        boolean mediaRemoteViews) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             event(key, "show rejected: caller is not main thread; no deferred window created");
             return false;
@@ -190,6 +200,7 @@ public final class FocusBannerController {
                 clearPendingUpdate();
                 setAnchor(anchor);
                 currentSbn = sbn;
+                currentMediaRemoteViews = mediaRemoteViews;
                 refreshNative();
                 if (banner == null || removalPending) return false;
                 extendDeadline(VISIBLE_MS);
@@ -204,6 +215,7 @@ public final class FocusBannerController {
 
             currentKey = key;
             currentSbn = sbn;
+            currentMediaRemoteViews = mediaRemoteViews;
             displayId = display.getDisplayId();
             displayRotation = display.getRotation();
             Context anchorContext = anchor.getContext();
@@ -305,7 +317,24 @@ public final class FocusBannerController {
                 return;
             }
             currentSbn = sbn;
+            // Media banners render from the media-session MediaData, which updates far more often
+            // than the notification payload. Rebuilding the whole frame on each update cancels
+            // in-progress gestures (seek drag, button taps); refresh the content in place instead.
+            if (banner.render instanceof MediaNotificationBannerSource) {
+                ((MediaNotificationBannerSource) banner.render).refreshContent();
+                return;
+            }
             scheduleUpdate(UPDATE_MS);
+        });
+    }
+
+    /** Refreshes a visible media banner in place when the ROM media data changes. */
+    public void refreshMediaContent(String key) {
+        runMain("media-refresh", () -> {
+            if (banner == null || removalPending || !sameKey(key)) return;
+            if (banner.render instanceof MediaNotificationBannerSource) {
+                ((MediaNotificationBannerSource) banner.render).refreshContent();
+            }
         });
     }
 
@@ -388,9 +417,16 @@ public final class FocusBannerController {
         FocusBannerSource candidate = null;
         beginNativeOperation();
         try {
-            try {
-                candidate = renderer.create(currentKey, currentSbn);
-            } catch (Throwable nativeError) {
+            if (currentMediaRemoteViews) {
+                if (!MediaNotificationBannerSource.isAvailable(currentSbn)) {
+                    throw new IllegalStateException("media notification RemoteViews unavailable");
+                }
+                candidate = MediaNotificationBannerSource.create(anchor.getContext(), currentSbn);
+                event(currentKey, "using media notification RemoteViews");
+            } else {
+                try {
+                    candidate = renderer.create(currentKey, currentSbn);
+                } catch (Throwable nativeError) {
                 // A focusType=CUSTOM notification is rendered by FocusNotifPreHandler through
                 // buildNoParamsFocusNotification, which never calls createStandardTemplateView, so the
                 // native-template route can never become ready for it however long we wait. Fall back
@@ -400,6 +436,7 @@ public final class FocusBannerController {
                 event(currentKey, "native template unavailable; using the notification's own RemoteViews");
                 candidate = RemoteViewsFocusBannerSource.create(anchor.getContext(), currentSbn,
                         isNightMode(anchor));
+                }
             }
             if (candidate == null || candidate.view() == null || candidate.context() == null) {
                 throw new IllegalStateException("native source/template not ready");
@@ -666,6 +703,7 @@ public final class FocusBannerController {
         power = null;
         currentKey = null;
         currentSbn = null;
+        currentMediaRemoteViews = false;
         displayId = -1;
         windowAdded = false;
         removalPending = false;

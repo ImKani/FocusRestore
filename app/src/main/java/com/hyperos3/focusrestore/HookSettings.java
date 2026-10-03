@@ -16,6 +16,9 @@ final class HookSettings {
     final int widthLandscapeDp;
     final boolean specialBannerNormalBackground;
     final boolean mediaFocusEnabled;
+    final boolean mediaFocusNativeBanner;
+    final int mediaFocusCastPicker;
+    final boolean mediaFocusCastDirect;
     final boolean compatRetry;
     final boolean marqueeBounce;
     final boolean islandCompat;
@@ -38,7 +41,8 @@ final class HookSettings {
 
     private HookSettings(int hookMode, boolean limitWidth, int widthDp, int widthLandscapeDp,
                           boolean specialBannerNormalBackground,
-                          boolean mediaFocusEnabled, int marqueeDelayMs,
+                          boolean mediaFocusEnabled, boolean mediaFocusNativeBanner,
+                          int mediaFocusCastPicker, boolean mediaFocusCastDirect, int marqueeDelayMs,
                          boolean compatRetry, boolean marqueeBounce, boolean islandCompat,
                          boolean disableIslandProperty, boolean disableIslandFeatureCache,
                          boolean allowFocusClick, boolean hideNotificationIcons,
@@ -57,6 +61,10 @@ final class HookSettings {
                 FocusRestoreSettings.MAX_LANDSCAPE_WIDTH_DP);
         this.specialBannerNormalBackground = specialBannerNormalBackground;
         this.mediaFocusEnabled = mediaFocusEnabled;
+        this.mediaFocusCastPicker = FocusRestoreSettings.normalizeCastPicker(mediaFocusCastPicker);
+        this.mediaFocusCastDirect = mediaFocusCastDirect;
+        // 二选一：直接展开流转界面时不再走媒体横幅。
+        this.mediaFocusNativeBanner = mediaFocusNativeBanner && !mediaFocusCastDirect;
         this.marqueeDelayMs = clamp(marqueeDelayMs, 0, 5000);
         this.compatRetry = compatRetry;
         this.marqueeBounce = marqueeBounce;
@@ -93,7 +101,9 @@ final class HookSettings {
     static HookSettings fromSettings(FocusRestoreSettings source) {
         return new HookSettings(source.hookMode, source.limitWidth, source.widthDp,
                 source.widthLandscapeDp, source.specialBannerNormalBackground,
-                source.mediaFocusEnabled, source.marqueeDelayMs, source.compatRetry, source.marqueeBounce,
+                source.mediaFocusEnabled, source.mediaFocusNativeBanner,
+                source.mediaFocusCastPicker, source.mediaFocusCastDirect,
+                source.marqueeDelayMs, source.compatRetry, source.marqueeBounce,
                 source.islandCompat, source.disableIslandProperty,
                 source.disableIslandFeatureCache, source.allowFocusClick,
                 source.hideNotificationIcons, source.showFocusDivider, source.showIslandIcon,
@@ -169,6 +179,18 @@ final class HookSettings {
                 && cursor.getInt(SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND) != 0;
         boolean mediaFocusEnabled = hasValue(cursor, columnCount, SettingsContract.MEDIA_FOCUS_ENABLED)
                 && cursor.getInt(SettingsContract.MEDIA_FOCUS_ENABLED) != 0;
+        boolean mediaFocusNativeBanner = hasValue(cursor, columnCount,
+                SettingsContract.MEDIA_FOCUS_NATIVE_BANNER)
+                ? cursor.getInt(SettingsContract.MEDIA_FOCUS_NATIVE_BANNER) != 0
+                : FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_NATIVE_BANNER;
+        int mediaFocusCastPicker = hasValue(cursor, columnCount,
+                SettingsContract.MEDIA_FOCUS_CAST_PICKER)
+                ? cursor.getInt(SettingsContract.MEDIA_FOCUS_CAST_PICKER)
+                : FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_PICKER;
+        boolean mediaFocusCastDirect = hasValue(cursor, columnCount,
+                SettingsContract.MEDIA_FOCUS_CAST_DIRECT)
+                ? cursor.getInt(SettingsContract.MEDIA_FOCUS_CAST_DIRECT) != 0
+                : FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_DIRECT;
         boolean hideNotificationIcons = hasValue(cursor, columnCount,
                 SettingsContract.HIDE_NOTIFICATION_ICONS)
                 ? cursor.getInt(SettingsContract.HIDE_NOTIFICATION_ICONS) != 0
@@ -202,7 +224,9 @@ final class HookSettings {
                 ? cursor.getInt(SettingsContract.HOOK_MODE) : FocusRestoreSettings.DEFAULT_HOOK_MODE;
         return new HookSettings(hookMode, limitWidth, widthDp, widthLandscapeDp,
                 specialBannerNormalBackground,
-                mediaFocusEnabled, marqueeDelayMs, compatRetry, marqueeBounce,
+                mediaFocusEnabled, mediaFocusNativeBanner, mediaFocusCastPicker,
+                mediaFocusCastDirect, marqueeDelayMs,
+                compatRetry, marqueeBounce,
                 islandCompat, disableIslandProperty, disableIslandFeatureCache,
                 allowFocusClick, hideNotificationIcons, showFocusDivider,
                 showIslandIcon, tintIslandIcon, useSmallIconFallback,
@@ -227,6 +251,8 @@ final class HookSettings {
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
                 + " independentFocusBanner=" + independentFocusBanner
+                + " mediaFocusCastPicker=" + mediaFocusCastPicker
+                + " mediaFocusCastDirect=" + mediaFocusCastDirect
                 + " islandTextMode=" + islandTextMode
                 + " focusMaxDisplaySeconds=" + focusMaxDisplaySeconds
                 + " forcePackages=" + islandForcePackages

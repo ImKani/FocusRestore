@@ -31,10 +31,11 @@ public class SettingsContractTest {
                 "hook_mode", "hide_notification_icons", "show_focus_divider",
                 "show_island_icon", "tint_island_icon", "expand_island_on_click",
                 "use_small_icon_fallback", "notification_row_click_fallback", "independent_focus_banner",
-                 "island_text_mode", "focus_max_display_seconds", "focus_timeout_exempt_packages",
-                 "width_landscape_dp", "special_banner_normal_background", "notification_icon_hide_mode",
-                 "island_custom_rules", "media_focus_enabled"
-         }, SettingsContract.COLUMNS);
+                "island_text_mode", "focus_max_display_seconds", "focus_timeout_exempt_packages",
+                "width_landscape_dp", "special_banner_normal_background", "notification_icon_hide_mode",
+                "island_custom_rules", "media_focus_enabled", "media_focus_native_banner",
+                "media_focus_cast_picker", "media_focus_cast_direct"
+        }, SettingsContract.COLUMNS);
         assertEquals(13, SettingsContract.HOOK_MODE);
         assertEquals(14, SettingsContract.HIDE_NOTIFICATION_ICONS);
         assertEquals(15, SettingsContract.SHOW_FOCUS_DIVIDER);
@@ -52,5 +53,42 @@ public class SettingsContractTest {
         assertEquals(27, SettingsContract.NOTIFICATION_ICON_HIDE_MODE);
         assertEquals(28, SettingsContract.ISLAND_CUSTOM_RULES);
         assertEquals(29, SettingsContract.MEDIA_FOCUS_ENABLED);
+        assertEquals(30, SettingsContract.MEDIA_FOCUS_NATIVE_BANNER);
+        assertEquals(31, SettingsContract.MEDIA_FOCUS_CAST_PICKER);
+        assertEquals(32, SettingsContract.MEDIA_FOCUS_CAST_DIRECT);
+    }
+
+    @Test
+    public void castPickerChoiceRoundTripsThroughContract() {
+        // 安卓原生 / 小米妙播二态必须能独立读写，未知取值回落到安卓原生。
+        for (int picker : new int[]{FocusRestoreSettings.CAST_PICKER_NATIVE,
+                FocusRestoreSettings.CAST_PICKER_MIPLAY}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit()
+                    .mediaFocusCastPicker(picker).build();
+            Object[] row = SettingsContract.toRow(settings, "");
+            assertEquals(SettingsContract.COLUMNS.length, row.length);
+            assertEquals(picker, row[SettingsContract.MEDIA_FOCUS_CAST_PICKER]);
+            assertEquals(picker, HookSettings.fromSettings(settings).mediaFocusCastPicker);
+        }
+        // 旧版本写入的 0（已移除的关闭态）与任何未知取值都回落到安卓原生。
+        assertEquals(FocusRestoreSettings.CAST_PICKER_NATIVE,
+                FocusRestoreSettings.normalizeCastPicker(0));
+        assertEquals(FocusRestoreSettings.CAST_PICKER_NATIVE,
+                FocusRestoreSettings.normalizeCastPicker(7));
+    }
+
+    @Test
+    public void directCastReplacesTheMediaBanner() {
+        // 二选一：直接展开流转界面时媒体横幅必须关闭，反之亦然。
+        FocusRestoreSettings direct = FocusRestoreSettings.edit()
+                .mediaFocusNativeBanner(true).mediaFocusCastDirect(true).build();
+        assertEquals(true, direct.mediaFocusCastDirect);
+        assertEquals(false, direct.mediaFocusNativeBanner);
+        assertEquals(false, HookSettings.fromSettings(direct).mediaFocusNativeBanner);
+
+        FocusRestoreSettings banner = FocusRestoreSettings.edit()
+                .mediaFocusNativeBanner(true).mediaFocusCastDirect(false).build();
+        assertEquals(true, banner.mediaFocusNativeBanner);
+        assertEquals(false, banner.mediaFocusCastDirect);
     }
 }

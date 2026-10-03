@@ -18,6 +18,11 @@ public final class FocusRestoreSettings {
     public static final String KEY_SPECIAL_BANNER_NORMAL_BACKGROUND = "special_banner_normal_background";
     public static final String KEY_NOTIFICATION_ICON_HIDE_MODE = "notification_icon_hide_mode";
     public static final String KEY_MEDIA_FOCUS_ENABLED = "media_focus_enabled";
+    public static final String KEY_MEDIA_FOCUS_NATIVE_BANNER = "media_focus_native_banner";
+    /** Which picker the media banner's seamless-transfer icon opens. */
+    public static final String KEY_MEDIA_FOCUS_CAST_PICKER = "media_focus_cast_picker";
+    /** Clicks a media focus straight into the cast UI instead of the media banner. */
+    public static final String KEY_MEDIA_FOCUS_CAST_DIRECT = "media_focus_cast_direct";
     public static final String KEY_MARQUEE_DELAY_MS = "marquee_delay_ms";
     public static final String KEY_COMPAT_RETRY = "compat_retry";
     public static final String KEY_MARQUEE_BOUNCE = "marquee_bounce";
@@ -59,6 +64,12 @@ public final class FocusRestoreSettings {
     public static final int DEFAULT_WIDTH_LANDSCAPE_DP = DEFAULT_WIDTH_DP;
     public static final boolean DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND = true;
     public static final boolean DEFAULT_MEDIA_FOCUS_ENABLED = false;
+    public static final boolean DEFAULT_MEDIA_FOCUS_NATIVE_BANNER = false;
+    /** 1 uses the Android picker; 2 uses MIUI 妙播. */
+    public static final int CAST_PICKER_NATIVE = 1;
+    public static final int CAST_PICKER_MIPLAY = 2;
+    public static final int DEFAULT_MEDIA_FOCUS_CAST_PICKER = CAST_PICKER_NATIVE;
+    public static final boolean DEFAULT_MEDIA_FOCUS_CAST_DIRECT = false;
     public static final int DEFAULT_MARQUEE_DELAY_MS = 200;
     public static final boolean DEFAULT_COMPAT_RETRY = false;
     public static final boolean DEFAULT_MARQUEE_BOUNCE = true;
@@ -89,6 +100,9 @@ public final class FocusRestoreSettings {
     public final int widthLandscapeDp;
     public final boolean specialBannerNormalBackground;
     public final boolean mediaFocusEnabled;
+    public final boolean mediaFocusNativeBanner;
+    public final int mediaFocusCastPicker;
+    public final boolean mediaFocusCastDirect;
     public final boolean compatRetry;
     public final boolean marqueeBounce;
     public final boolean islandCompat;
@@ -118,6 +132,10 @@ public final class FocusRestoreSettings {
                 MAX_LANDSCAPE_WIDTH_DP);
         this.specialBannerNormalBackground = editor.specialBannerNormalBackground;
         this.mediaFocusEnabled = editor.mediaFocusEnabled;
+        this.mediaFocusCastPicker = normalizeCastPicker(editor.mediaFocusCastPicker);
+        // 二选一：直接展开流转界面时不再走媒体横幅。
+        this.mediaFocusCastDirect = editor.mediaFocusCastDirect;
+        this.mediaFocusNativeBanner = editor.mediaFocusNativeBanner && !this.mediaFocusCastDirect;
         this.compatRetry = editor.compatRetry;
         this.marqueeBounce = editor.marqueeBounce;
         this.islandCompat = editor.islandCompat;
@@ -153,6 +171,9 @@ public final class FocusRestoreSettings {
         private int widthLandscapeDp = DEFAULT_WIDTH_LANDSCAPE_DP;
         private boolean specialBannerNormalBackground = DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND;
         private boolean mediaFocusEnabled = DEFAULT_MEDIA_FOCUS_ENABLED;
+        private boolean mediaFocusNativeBanner = DEFAULT_MEDIA_FOCUS_NATIVE_BANNER;
+        private int mediaFocusCastPicker = DEFAULT_MEDIA_FOCUS_CAST_PICKER;
+        private boolean mediaFocusCastDirect = DEFAULT_MEDIA_FOCUS_CAST_DIRECT;
         private int marqueeDelayMs = DEFAULT_MARQUEE_DELAY_MS;
         private boolean compatRetry = DEFAULT_COMPAT_RETRY;
         private boolean marqueeBounce = DEFAULT_MARQUEE_BOUNCE;
@@ -184,6 +205,9 @@ public final class FocusRestoreSettings {
             this.widthLandscapeDp = source.widthLandscapeDp;
             this.specialBannerNormalBackground = source.specialBannerNormalBackground;
             this.mediaFocusEnabled = source.mediaFocusEnabled;
+            this.mediaFocusNativeBanner = source.mediaFocusNativeBanner;
+            this.mediaFocusCastPicker = source.mediaFocusCastPicker;
+            this.mediaFocusCastDirect = source.mediaFocusCastDirect;
             this.marqueeDelayMs = source.marqueeDelayMs;
             this.compatRetry = source.compatRetry;
             this.marqueeBounce = source.marqueeBounce;
@@ -213,6 +237,9 @@ public final class FocusRestoreSettings {
         public Editor widthLandscapeDp(int value) { this.widthLandscapeDp = value; return this; }
         public Editor specialBannerNormalBackground(boolean value) { this.specialBannerNormalBackground = value; return this; }
         public Editor mediaFocusEnabled(boolean value) { this.mediaFocusEnabled = value; return this; }
+        public Editor mediaFocusNativeBanner(boolean value) { this.mediaFocusNativeBanner = value; return this; }
+        public Editor mediaFocusCastPicker(int value) { this.mediaFocusCastPicker = value; return this; }
+        public Editor mediaFocusCastDirect(boolean value) { this.mediaFocusCastDirect = value; return this; }
         public Editor compatRetry(boolean value) { this.compatRetry = value; return this; }
         public Editor marqueeBounce(boolean value) { this.marqueeBounce = value; return this; }
         public Editor islandCompat(boolean value) { this.islandCompat = value; return this; }
@@ -299,6 +326,12 @@ public final class FocusRestoreSettings {
                         DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND))
                 .mediaFocusEnabled(preferences.getBoolean(KEY_MEDIA_FOCUS_ENABLED,
                         DEFAULT_MEDIA_FOCUS_ENABLED))
+                .mediaFocusNativeBanner(preferences.getBoolean(KEY_MEDIA_FOCUS_NATIVE_BANNER,
+                        DEFAULT_MEDIA_FOCUS_NATIVE_BANNER))
+                .mediaFocusCastPicker(normalizeCastPicker(preferences.getInt(
+                        KEY_MEDIA_FOCUS_CAST_PICKER, DEFAULT_MEDIA_FOCUS_CAST_PICKER)))
+                .mediaFocusCastDirect(preferences.getBoolean(KEY_MEDIA_FOCUS_CAST_DIRECT,
+                        DEFAULT_MEDIA_FOCUS_CAST_DIRECT))
                 .marqueeDelayMs(preferences.getInt(KEY_MARQUEE_DELAY_MS, DEFAULT_MARQUEE_DELAY_MS))
                 .compatRetry(preferences.getBoolean(KEY_COMPAT_RETRY, DEFAULT_COMPAT_RETRY))
                 .marqueeBounce(preferences.getBoolean(KEY_MARQUEE_BOUNCE, DEFAULT_MARQUEE_BOUNCE))
@@ -352,6 +385,8 @@ public final class FocusRestoreSettings {
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
                 + " independentFocusBanner=" + independentFocusBanner
+                + " mediaFocusCastPicker=" + mediaFocusCastPicker
+                + " mediaFocusCastDirect=" + mediaFocusCastDirect
                 + " islandTextMode=" + islandTextMode
                 + " focusMaxDisplaySeconds=" + focusMaxDisplaySeconds
                 + " forcePackages=" + islandForcePackages
@@ -372,6 +407,9 @@ public final class FocusRestoreSettings {
                 .putInt(KEY_WIDTH_LANDSCAPE_DP, widthLandscapeDp)
                 .putBoolean(KEY_SPECIAL_BANNER_NORMAL_BACKGROUND, specialBannerNormalBackground)
                 .putBoolean(KEY_MEDIA_FOCUS_ENABLED, mediaFocusEnabled)
+                .putBoolean(KEY_MEDIA_FOCUS_NATIVE_BANNER, mediaFocusNativeBanner)
+                .putInt(KEY_MEDIA_FOCUS_CAST_PICKER, mediaFocusCastPicker)
+                .putBoolean(KEY_MEDIA_FOCUS_CAST_DIRECT, mediaFocusCastDirect)
                 .putInt(KEY_MARQUEE_DELAY_MS, marqueeDelayMs)
                 .putBoolean(KEY_COMPAT_RETRY, compatRetry)
                 .putBoolean(KEY_MARQUEE_BOUNCE, marqueeBounce)
@@ -401,6 +439,11 @@ public final class FocusRestoreSettings {
 
     static int normalizeIslandTextMode(int value) {
         return value == ISLAND_TEXT_MODE_COMPACT ? ISLAND_TEXT_MODE_COMPACT : ISLAND_TEXT_MODE_FULL;
+    }
+
+    /** Keeps the cast picker inside its two known states, falling back to the Android picker. */
+    static int normalizeCastPicker(int value) {
+        return value == CAST_PICKER_MIPLAY ? CAST_PICKER_MIPLAY : CAST_PICKER_NATIVE;
     }
 
     /**
