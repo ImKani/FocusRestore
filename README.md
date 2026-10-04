@@ -24,12 +24,21 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-版本：`0.27.0`（versionCode 243，Debug 测试版）
+版本：`0.29.0`（versionCode 245，Debug 测试版）
 
-- 修复竖屏下设备通知焦点提示（充电 / 静音 / 勿扰）只显示分隔竖线、看不到文字的问题。真机复核：三类通知的开关共 15 次全部正常显示文字。
+- 超级岛图标：契约要求的图片取不到时，改为按名字去应用自己的包里查同名图标（沿用设备通知那条已验证的做法）；同时记录查找结果，便于判断是否命中。
+- （沿用 0.27.0）修复竖屏下设备通知焦点提示（充电 / 静音 / 勿扰）只显示分隔竖线、看不到文字的问题。真机复核：三类通知的开关共 15 次全部正常显示文字。
 - 自带界面内容的系统焦点提示仍由系统渲染，模块不再重复写入。
 
-以下为历史版本说明（0.26.2 及更早）。
+以下为历史版本说明（0.28.0 及更早）。
+
+0.28.0：
+
+- 诊断：超级岛图标取不到时，记录载荷要求的图片引用名与通知实际提供的图片键，用于定位"焦点位显示应用图标而不是岛图标"。
+
+0.27.0：
+
+- 修复竖屏下设备通知焦点提示（充电 / 静音 / 勿扰）只显示分隔竖线、看不到文字的问题。
 
 0.26.2：
 
@@ -237,15 +246,15 @@ Android Gradle Plugin 8.7.3
 构建 debug 或 release 变体，APK 输出路径：
 
 ```text
-app/build/outputs/apk/debug/FocusRestore-0.27.0-debug.apk
-app/build/outputs/apk/release/FocusRestore-0.27.0-release.apk
+app/build/outputs/apk/debug/FocusRestore-0.29.0-debug.apk
+app/build/outputs/apk/release/FocusRestore-0.29.0-release.apk
 ```
 
 模块不声明网络、存储或后台服务权限。为显示白名单应用列表，Manifest 声明包可见性相关的 `QUERY_ALL_PACKAGES` 和小米系统权限 `com.android.permission.GET_INSTALLED_APPS`；关于项目按钮通过系统浏览器打开外部链接，网络访问由浏览器处理。配置 XML 保持私有，但导出的只读 Provider 必须允许不同签名的 SystemUI 查询，因此其他应用也可能读取模式、白名单等配置；Provider 不提供写接口。
 
 ## 安装和作用域
 
-1. 安装 `FocusRestore-0.27.0-release.apk` 或 `FocusRestore-0.27.0-debug.apk`。
+1. 安装 `FocusRestore-0.29.0-release.apk` 或 `FocusRestore-0.29.0-debug.apk`。
 2. 在 LSPosed 中启用本模块。
 3. 作用域应只有：
 

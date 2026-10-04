@@ -3911,7 +3911,17 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             icon = iconFromBundle(pictures, payloadReference);
             if (icon != null) return new SelectedFocusIcon(icon,
                     currentSettings.tintIslandIcon, true, "island:" + payloadReference);
+            // 引用名拿不到时，借设备通知那条已经验证过的做法：按名字去应用自己的包里找 drawable。
+            // 岛载荷下发的引用名形如 miui.focus.pic_weather，第三方应用通常没有这个资源名，
+            // 所以这只是一种可能落空的兜底；成功与否由 logFocusIconResolution 的
+            // islandDrawable 字段记录下来（能找到就说明该应用真的按这个名字放了资源）。
+            Icon packageDrawable = islandIconFromPackage(packageName, payloadReference);
+            if (packageDrawable != null) {
+                return new SelectedFocusIcon(packageDrawable, currentSettings.tintIslandIcon,
+                        true, "islandDrawable:" + packageName + "/" + payloadReference);
+            }
         }
+        logFocusIconResolution(pictures, islandParam, packageName, dark);
 
         if (!allowFallback) return null;
         if (currentSettings.useSmallIconFallback) {
@@ -3924,7 +3934,99 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 "applicationIcon");
     }
 
+    /**
+     * 岛图标的兜底：把载荷引用名当资源名，去应用自己的包里找同名 drawable。
+     *
+     * <p>与设备通知 {@code DeviceNotificationFocusPoster#drawableFromPackage} 同一套思路
+     * （`getResourcesForApplication` + `getIdentifier(name, "drawable", pkg)` + 位图化），
+     * 目标包换成发通知的应用。设备通知那条路能成立是因为模型直接给的就是 ROM 组件包里的资源名；
+     * 岛载荷给的是 {@code miui.focus.pic_*} 这类引用名，第三方应用一般不会用这个名字定义资源，
+     * 所以这里只当兜底，命中与否都要能从日志看出来，不能当成"一定修好了"。
+     */
+    private Icon islandIconFromPackage(String packageName, String reference) {
+        String resourceName = IslandPayloadParser.drawableNameFromReference(reference);
+        if (resourceName == null || TextUtils.isEmpty(packageName)) return null;
+        Context context = systemUiContext;
+        if (context == null) return null;
+        Drawable drawable = drawableFromOtherPackage(context, packageName, resourceName);
+        return drawable == null ? null : drawableToIcon(drawable);
+    }
 
+    private static Drawable drawableFromOtherPackage(Context context, String packageName, String name) {
+        try {
+            Resources resources = context.getPackageManager().getResourcesForApplication(packageName);
+            if (resources == null) return null;
+            int id = resources.getIdentifier(name, "drawable", packageName);
+            return id == 0 ? null : resources.getDrawable(id, null);
+        } catch (Throwable throwable) {
+            debug("island icon drawable lookup failed package=" + packageName
+                    + " name=" + name + " reason=" + throwable.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    private Icon drawableToIcon(Drawable drawable) {
+        if (drawable == null || systemUiContext == null) return null;
+        try {
+            int size = Math.max(1, Math.round(
+                    32f * systemUiContext.getResources().getDisplayMetrics().density));
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            drawable.setBounds(0, 0, size, size);
+            drawable.draw(new Canvas(bitmap));
+            return Icon.createWithBitmap(bitmap);
+        } catch (Throwable throwable) {
+            error("island icon rasterize", throwable);
+            return null;
+        }
+    }
+
+    /**
+     * 诊断：岛图标取不到时，把"载荷要求的引用名"、"通知实际提供的 pics 键"和"按名字查应用资源的结果"
+     * 一起打出来。
+     *
+     * <p>0.27.0 之前这条通路在 OS3 上一次都没有真正跑过：所有 OS3 真机日志里
+     * {@code showIslandIcon} 都是 false，`applied island focus icon` 全部是
+     * {@code applicationIcon}（唯一一次岛图标解析成功是 0.13.22 的 OS4 日志
+     * `light=island:miui.focus.pic_isl…`）。让日志能区分"载荷没引用岛图"、
+     * "引用了但通知的 {@code miui.focus.pics} 里没有这个键"、"键在但不是 Icon"、
+     * "按引用名去应用包里也没查到"四种情况——它们需要完全不同的修法。
+     */
+    private void logFocusIconResolution(Bundle pictures, String islandParam, String packageName,
+                                        boolean dark) {
+        if (!firstDiagnosis("focusIcon|" + dark)) return;
+        String tickerReference = IslandPayloadParser.findTickerPictureReference(islandParam, dark);
+        String islandReference = IslandPayloadParser.findPictureReference(islandParam, dark);
+        StringBuilder keys = new StringBuilder();
+        if (pictures != null) {
+            for (String key : pictures.keySet()) {
+                if (keys.length() > 0) keys.append(',');
+                keys.append(key);
+            }
+        }
+        Object islandValue = pictures == null || islandReference == null
+                ? null : pictures.get(islandReference);
+        String resourceName = IslandPayloadParser.drawableNameFromReference(islandReference);
+        boolean drawableFound = false;
+        if (resourceName != null && systemUiContext != null && !TextUtils.isEmpty(packageName)) {
+            try {
+                Resources resources = systemUiContext.getPackageManager()
+                        .getResourcesForApplication(packageName);
+                drawableFound = resources != null
+                        && resources.getIdentifier(resourceName, "drawable", packageName) != 0;
+            } catch (Throwable ignored) {
+                drawableFound = false;
+            }
+        }
+        debug("focus icon resolution dark=" + dark
+                + " showIslandIcon=" + currentSettings.showIslandIcon
+                + " package=" + packageName
+                + " islandRef=" + islandReference
+                + " islandValue=" + (islandValue == null ? "absent" : islandValue.getClass().getSimpleName())
+                + " islandDrawable=" + (resourceName == null ? "n/a"
+                        : drawableFound ? "found:" + resourceName : "missing:" + resourceName)
+                + " tickerRef=" + tickerReference
+                + " picsKeys=[" + keys + "]");
+    }
 
     private Icon applicationIcon(String packageName) {
         Context context = systemUiContext;

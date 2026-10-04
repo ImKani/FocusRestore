@@ -260,6 +260,22 @@ final class IslandPayloadParser {
         return null;
     }
 
+    /**
+     * 把载荷引用名转成"可以拿去应用包里查 drawable 的名字"：
+     * {@code miui.focus.pic_weather} → {@code weather}。
+     *
+     * <p>只认契约前缀，其余一律返回 null —— 不做模糊猜测。这条兜底本身很可能落空（第三方应用
+     * 一般不会用 {@code miui.focus.pic_*} 这个名字定义资源），但推导规则必须可预测、可单测，
+     * 失败时也应该干净地退到通知 smallIcon / 应用图标，而不是按一个猜出来的名字乱查。
+     */
+    static String drawableNameFromReference(String reference) {
+        if (reference == null) return null;
+        String trimmed = reference.trim();
+        String prefix = "miui.focus.pic_";
+        if (!trimmed.startsWith(prefix)) return null;
+        String name = trimmed.substring(prefix.length());
+        return name.length() == 0 ? null : name;
+    }
 
     private static String cleanPictureReference(Object value) {
         if (value == null || value == JSONObject.NULL) return null;
