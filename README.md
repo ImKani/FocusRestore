@@ -107,37 +107,60 @@ Debug 版本额外提供以下兼容选项，普通用户通常不需要修改�
 
 ## 日志抓取
 
-### 推荐：清空后复现并保存完整日志
+安装或更新模块后，先在 LSPosed 中启用模块并确认作用域为 `com.android.systemui`。以下两种方案任选其一，二者都要求**先开始抓取，再手动重启系统界面**，这样可以同时记录 SystemUI 重启后的模块加载过程。不要在命令中自动执行 `killall` 或 `force-stop`，请使用设备上已有的“重启系统界面”方式手动重启。
 
-连接设备并确认 ADB 可用后，在电脑执行：
+### 手机端：MT 终端
+
+在 MT 终端执行：
+
+```sh
+su
+/system/bin/logcat -c
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.29.4.log
+```
+
+保持命令运行，然后通过设备上的方式手动重启系统界面。完成复现后回到 MT 终端，按 `Ctrl+C` 停止抓取。日志保存在：
+
+```text
+/sdcard/focus-restore-0.29.4.log
+```
+
+### 电脑端：ADB + PowerShell
+
+在电脑上执行：
 
 ```powershell
 adb devices
 adb logcat -c
-adb shell am force-stop com.android.systemui
-adb shell su -c 'killall com.android.systemui' 2>$null
-adb logcat -v threadtime -b main -b system -b crash | Tee-Object -FilePath "focus-restore.log"
+adb logcat -v threadtime -b main -b system -b crash | Tee-Object -FilePath ".\focus-restore.log"
 ```
 
-保持日志命令运行，然后在手机上复现问题。完成后按 `Ctrl+C` 停止抓取。
+保持命令运行，然后在手机上手动重启系统界面。完成复现后回到 PowerShell，按 `Ctrl+C` 停止抓取。日志保存在执行命令时的电脑当前目录：
 
-如果设备不允许通过 `su` 重启 SystemUI，只执行：
-
-```powershell
-adb shell am force-stop com.android.systemui
-adb logcat -v threadtime -b main -b system -b crash | Tee-Object -FilePath "focus-restore.log"
+```text
+.\focus-restore.log
 ```
 
-### 已有日志中过滤模块相关内容
+### 新旧命令的区别
 
-```powershell
-Select-String -Path .\focus-restore.log -Pattern 'HyperOS3FocusRestore|FocusRestore|LSPosed|Xposed|DIAG'
+旧命令：
+
+```sh
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.29.1.log
 ```
 
-也可以直接实时过滤：
+新 README 同时保留了这类手机端过滤方案，并增加电脑端完整日志方案。两者区别如下：
+
+- **手机端旧命令**：在设备本机运行，使用 Tag 白名单，只保存 `HyperOS3FocusRestore`、`FocusedNotifPromptView`、`PromptViewAnimState` 和 `AndroidRuntime`，文件位于 `/sdcard`，体积较小，适合直接发送分析。
+- **电脑端新命令**：通过 ADB 读取 `main`、`system`、`crash` 三个缓冲区，不按 Tag 过滤，同时在 PowerShell 显示并保存到电脑的 `focus-restore.log`，信息更完整，但文件可能更大、包含更多隐私内容。
+- **`-b main -b system -b crash`**：表示读取指定日志缓冲区；手机端过滤命令未指定缓冲区时使用系统默认缓冲区，通常主要是 `main`，因此可能遗漏 `system` 或 `crash` 中的旁证。
+- **`Tee-Object`**：只负责把电脑端收到的日志同时显示和写入文件，不改变日志内容，也不是额外的过滤器。
+- **手动重启SystemUI**：两种方案都不再由命令自动重启，避免不同 ROM 的重启命令差异；应在开始抓取后手动重启，以便记录模块重新加载过程。
+
+如果需要在电脑端使用与手机端相同的 Tag 过滤方案：
 
 ```powershell
-adb logcat -v threadtime -b main -b system -b crash | Select-String 'HyperOS3FocusRestore|FocusRestore|LSPosed|Xposed|DIAG'
+adb logcat -v threadtime -b main -b system -b crash | Select-String 'HyperOS3FocusRestore|FocusedNotifPromptView|PromptViewAnimState|AndroidRuntime'
 ```
 
 日志中常见的 `DIAG` 行用于确认阶段性状态，例如模块加载、模式选择、设备通知投递、图标解析、焦点显示、取消和失败原因。日志只用于判断运行阶段，不等同于所有 ROM 上的显示成功；最终显示效果仍需结合设备画面确认。
@@ -227,4 +250,3 @@ adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore
 
 - Debug 和 Release 均使用当前项目保留签名，便于测试包覆盖安装。
 - Release 不代表已完成所有设备和 ROM 的真机兼容性验证。
-- 发布说明应注明版本号、APK 类型、签名摘要、已知限制和对应的源码 Tag。
