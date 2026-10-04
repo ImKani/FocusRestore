@@ -424,7 +424,10 @@ final class HyperOS4FocusController {
     private synchronized void renderBest() {
         renderGeneration++;
         FocusHostView host = focusHost;
-        if (host == null) return;
+        if (host == null) {
+            if (BuildConfig.DEBUG) logger.log("DIAG device stage=os4-render result=host-missing candidates=" + items.size());
+            return;
+        }
         if (renderPosted && renderPostHost == host) return;
         renderPosted = true;
         renderPostHost = host;
@@ -456,6 +459,9 @@ final class HyperOS4FocusController {
             }
             best = selected;
         }
+        if (BuildConfig.DEBUG) logger.log("DIAG device stage=os4-select key="
+                + (best == null ? "none" : best.key) + " candidates=" + items.size()
+                + " generation=" + generation);
         render(host, best, generation);
         if (best == null) {
             displayedKey = null;
@@ -550,6 +556,15 @@ final class HyperOS4FocusController {
             setNotificationIconsHidden(settings.hideNotificationIcons);
             host.setVisibility(View.VISIBLE);
             host.showContent(content, item, settings);
+            if (BuildConfig.DEBUG) host.post(() -> {
+                if (!isRenderCurrent(host, generation)) return;
+                android.graphics.Rect visible = new android.graphics.Rect();
+                logger.log("DIAG device stage=os4-layout key=" + item.key
+                        + " attached=" + host.isAttachedToWindow() + " shown=" + host.isShown()
+                        + " size=" + host.getWidth() + "x" + host.getHeight()
+                        + " globalVisible=" + host.getGlobalVisibleRect(visible)
+                        + " rect=" + visible + " text=" + DebugText.preview(item.text));
+            });
             logger.log("OS4 focus shown key=" + item.key + " package=" + item.packageName
                     + " source=" + item.source + " priority=" + item.priority
                     + " widthDp=" + settings.widthDp + " limit=" + settings.limitWidth

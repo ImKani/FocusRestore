@@ -113,8 +113,17 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     /** 设备通知的构造焦点通知通路；首次使用时创建。 */
     private DeviceNotificationFocusPoster deviceNotificationFocusPoster;
     /** 每次设备通知请求的代次与已确认投递的代次，只用于把投递结果按次记录，不参与任何呈现决策。 */
-    private int deviceFocusPostGeneration;
-    private int deviceFocusDeliveredGeneration = -1;
+    private long deviceFocusPostGeneration;
+    private long deviceFocusDeliveredGeneration = -1;
+    private int pendingDeviceFocusId = -1;
+    private String activeDeviceEventId;
+    private long deviceChargeDeadline;
+    private long lastDeviceChargeUpdate;
+    private boolean deviceChargeSessionClosed;
+    /** 同一同步命令经过 listener / StrongToast 时只投递一次；不按文案或时间猜测并吞掉后续事件。 */
+    private final ThreadLocal<Boolean> deviceConversionPosted = new ThreadLocal<>();
+    private volatile WeakReference<Object> deviceListenerRef = new WeakReference<>(null);
+    private final DeviceChargingEventPolicy deviceChargingPolicy = new DeviceChargingEventPolicy();
     private volatile Context systemUiContext;
     // FocusedTextView.startMarqueeLocal() copies this value into TextView.
     // -1 keeps long lyrics moving instead of stopping after one pass.
@@ -1601,30 +1610,350 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * 设备通知（充电/静音/勿扰）转焦点通知 —— 第一步：抓取真实载荷。
-     *
-     * <p>强提示窗口已按掉，这些事件目前没有任何视觉呈现。
-     * {@code DeviceNotificationListenerImpl.handleDeviceNotification(Bundle, DeviceNotificationModel)}
-     * 是设备通知的唯一入口；这里把 bundle 的标量字段与模型的左右文本完整记录，
-     * 下一步据此构造焦点通知（内容/图标/时长直接取这里的值，不再靠推断字段名）。
+     * 接口事实来源：K80u SystemUI 17.03.260226.r 的 CommandQueueDelegate.setStatus、
+     * DeviceNotificationListenerImpl.handleDeviceNotification、DynamicIslandPluginController.onPluginLoaded。
+     * 小米私有协议许可未确认，仅按接口独立实现，未复制 ROM 代码。
+     * 岛关闭时 ROM 不注册设备通知 listener，所以命令入口与内容模型入口必须同时覆盖。
      */
     private void hookDeviceNotificationConversion() {
+        hookDeviceEntry("com.miui.systemui.statusbar.CommandQueueDelegate", "setStatus", true);
+        hookDeviceEntry("com.android.systemui.devicenotification.listener.DeviceNotificationListenerImpl",
+                "handleDeviceNotification", false);
+        hookDeviceNotificationRemoval();
+        hookDeviceBatteryUpdates();
+    }
+
+    /** 岛关闭后原电池 callback 不注册；从 ROM 全局电池入口取得真实厂商状态，而不是猜广播扩展字段。 */
+    private void hookDeviceBatteryUpdates() {
         try {
             Class<?> listener = FocusReflection.findClass(classLoader,
                     "com.android.systemui.devicenotification.listener.DeviceNotificationListenerImpl");
-            if (listener == null) {
-                log("device notification conversion skipped: listener missing");
-                return;
-            }
-            XposedBridge.hookAllMethods(listener, "handleDeviceNotification", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    log("device notification payload " + describeDeviceNotification(param.args));
+            if (listener != null) XposedBridge.hookAllConstructors(listener, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    deviceListenerRef = new WeakReference<>(param.thisObject);
+                    debug("device stage=battery listener=captured");
                 }
             });
-            log("device notification conversion hook installed");
-        } catch (Throwable t) {
-            error("hookDeviceNotificationConversion", t);
+            Class<?> monitor = FocusReflection.findClass(classLoader, "com.android.keyguard.KeyguardUpdateMonitor");
+            if (monitor == null) {
+                debug("device stage=install battery result=monitor-missing");
+                return;
+            }
+            int count = XposedBridge.hookAllMethods(monitor, "handleBatteryUpdate", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.args.length == 0 || param.args[0] == null) return;
+                    try { handleDeviceBatteryUpdate(param.args[0]); }
+                    catch (Throwable error) { HyperOS3FocusRestoreHook.this.error("device battery update", error); }
+                }
+            }).size();
+            debug("device stage=install battery hooks=" + count);
+        } catch (Throwable error) { error("device battery hook", error); }
+    }
+
+    private synchronized void handleDeviceBatteryUpdate(Object status) throws Exception {
+        if (!modeHooksInstalled) return;
+        Integer plugged = deviceBatteryInt(status, "plugged");
+        Integer state = deviceBatteryInt(status, "status");
+        Integer level = deviceBatteryInt(status, "level");
+        Integer wire = deviceBatteryInt(status, "wireState");
+        Integer speed = deviceBatteryInt(status, "chargeSpeed");
+        Integer watts = deviceBatteryInt(status, "maxChargingWattage");
+        if (plugged == null || state == null || level == null || wire == null) {
+            debug("device stage=battery result=required-field-missing");
+            return;
+        }
+        int chargeSpeed = speed == null ? 0 : speed;
+        DeviceChargingEventPolicy.Event event = deviceChargingPolicy.observe(plugged, state,
+                chargeSpeed, watts == null ? 0 : watts, wire);
+        debug("device stage=battery event=" + event + " plugged=" + plugged + " status=" + state
+                + " level=" + level + " wire=" + wire + " speed=" + speed + " watts=" + watts);
+        if (event == DeviceChargingEventPolicy.Event.CANCEL) {
+            deviceChargeSessionClosed = true;
+            cancelDeviceCharge("battery-disconnected");
+            return;
+        }
+        if (event == DeviceChargingEventPolicy.Event.START) {
+            deviceChargeSessionClosed = false;
+            deviceChargeDeadline = 0L;
+        }
+        if (installedHookMode != FocusRestoreSettings.HOOK_MODE_OS4) return;
+        if (event != DeviceChargingEventPolicy.Event.START && event != DeviceChargingEventPolicy.Event.UPDATE) return;
+        // 已超时的充电提示不因普通电池状态变化重新弹出；只有新接电事件启动新提示。
+        if (event == DeviceChargingEventPolicy.Event.UPDATE && !"charge".equals(activeDeviceEventId)
+                && (deviceChargeSessionClosed || deviceChargeDeadline == 0L
+                || SystemClock.elapsedRealtime() >= deviceChargeDeadline)) {
+            debug("device stage=battery result=update-without-active-charge");
+            return;
+        }
+        boolean wireless = wire == 10;
+        long chargeWindowMs = wireless ? 10000L : 5000L;
+        if (event == DeviceChargingEventPolicy.Event.START) {
+            deviceChargeDeadline = SystemClock.elapsedRealtime() + chargeWindowMs;
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("notifyId", "charge");
+        metadata.put("package_name", "miui.systemui.plugin");
+        metadata.put("duration", wireless ? 10000L : 5000L);
+        DeviceNotificationPayload payload = null;
+        Object listener = deviceListenerRef.get();
+        if (listener != null) {
+            try {
+                Method builder = findChargeModelBuilder(listener.getClass(), status.getClass());
+                if (builder == null) {
+                    debug("device stage=battery-model result=builder-method-missing runtime="
+                            + status.getClass().getName());
+                    throw new NoSuchMethodException("structModelForCharge");
+                }
+                int modelType = chargeSpeed == 0 ? 0 : chargeSpeed == 3 ? 2 : 1;
+                Object model = builder.invoke(listener, Integer.toString(level), modelType, status);
+                payload = DeviceNotificationPayload.read(model, metadata, true,
+                        message -> debug("device stage=battery-model " + message));
+                debug("device stage=battery-model result=" + (model == null ? "null" : "rom-builder")
+                        + " type=" + modelType);
+            } catch (Throwable error) {
+                debug("device stage=battery-model result=builder-failed error=" + error);
+            }
+        } else debug("device stage=battery-model result=listener-unavailable");
+        if (payload == null || TextUtils.isEmpty(payload.text)) {
+            Context context = systemUiContext;
+            if (context == null) {
+                debug("device stage=battery-resource result=context-not-ready");
+                return;
+            }
+            String resource = chargeSpeed == 0 ? "strong_toast_charging" : "strong_toast_quick_charging";
+            int id = context.getResources().getIdentifier(resource, "string", SYSTEM_UI);
+            debug("device stage=battery-resource name=" + resource + " id=" + id);
+            if (id == 0 || level < 0 || level > 100) {
+                debug("device stage=battery-resource result=resource-or-level-invalid");
+                return;
+            }
+            payload = DeviceNotificationPayload.chargingResource(context.getString(id), level, wireless);
+        }
+        postDevicePayload(payload, "batteryFallback");
+    }
+
+    private Integer deviceBatteryInt(Object status, String field) {
+        Object value = readField(status, field);
+        if (value instanceof Number) return ((Number) value).intValue();
+        debug("device stage=battery-field name=" + field + " result=missing-or-invalid");
+        return null;
+    }
+    private Method findChargeModelBuilder(Class<?> listenerClass, Class<?> statusClass) {
+        for (Method method : listenerClass.getDeclaredMethods()) {
+            Class<?>[] parameters = method.getParameterTypes();
+            if (!"structModelForCharge".equals(method.getName()) || parameters.length != 3
+                    || parameters[0] != String.class || parameters[1] != int.class
+                    || !parameters[2].isAssignableFrom(statusClass)) continue;
+            try { method.setAccessible(true); } catch (Throwable ignored) {
+                debug("device stage=battery-model method-access=restricted");
+            }
+            return method;
+        }
+        return null;
+    }
+
+    private synchronized void cancelDeviceCharge(String reason) {
+        debug("device stage=cancel reason=" + reason + " active=" + activeDeviceEventId);
+        if (!"charge".equals(activeDeviceEventId)) return;
+        if (deviceNotificationFocusPoster != null) deviceNotificationFocusPoster.cancel();
+        activeDeviceEventId = null;
+        pendingDeviceFocusId = -1;
+    }
+
+    private void hookDeviceEntry(String className, String methodName, boolean command) {
+        try {
+            Class<?> owner = FocusReflection.findClass(classLoader, className);
+            if (owner == null) {
+                debug("device stage=install entry=" + className + "." + methodName + " result=class-missing");
+                return;
+            }
+            int count = XposedBridge.hookAllMethods(owner, methodName, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                    if (command && !hasStrongToastAction(param.args)) return;
+                    param.setObjectExtra("focusrestore.device.previous", deviceConversionPosted.get());
+                    param.setObjectExtra("focusrestore.device.entered", Boolean.TRUE);
+                    try {
+                        debug("device stage=entry source=" + methodName + " mode=OS" + installedHookMode
+                                + " args=" + describeDeviceNotification(param.args));
+                        if (!modeHooksInstalled) {
+                            debug("device stage=entry source=" + methodName + " result=mode-not-ready");
+                            return;
+                        }
+                        if (Boolean.TRUE.equals(deviceConversionPosted.get())) {
+                            debug("device stage=entry source=" + methodName + " result=already-posted-in-command");
+                            return;
+                        }
+                        if (convertDeviceEntry(param.args, command, methodName)) deviceConversionPosted.set(true);
+                    } catch (Throwable error) {
+                        HyperOS3FocusRestoreHook.this.error("device entry " + methodName, error);
+                    }
+                }
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (!Boolean.TRUE.equals(param.getObjectExtra("focusrestore.device.entered"))) return;
+                    Object previous = param.getObjectExtra("focusrestore.device.previous");
+                    if (previous == null) deviceConversionPosted.remove();
+                    else deviceConversionPosted.set((Boolean) previous);
+                    if (param.hasThrowable()) debug("device stage=entry-return source=" + methodName
+                            + " romError=" + param.getThrowable());
+                }
+            }).size();
+            debug("device stage=install entry=" + className + "." + methodName + " hooks=" + count);
+        } catch (Throwable error) {
+            error("device hook " + className + "." + methodName, error);
+        }
+    }
+
+    private static boolean hasStrongToastAction(Object[] args) {
+        if (args != null) for (Object arg : args) if ("strong_toast_action".equals(arg)) return true;
+        return false;
+    }
+
+    private Map<String, Object> deviceMetadata(Object[] args) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (args == null) return metadata;
+        for (Object arg : args) {
+            if (!(arg instanceof Bundle)) continue;
+            Bundle bundle = (Bundle) arg;
+            for (String key : bundle.keySet()) {
+                try {
+                    Object value = bundle.get(key);
+                    metadata.put(key, value);
+                    debug("device stage=bundle key=" + key + " type="
+                            + (value == null ? "null" : value.getClass().getName())
+                            + " value=" + (value instanceof CharSequence ? preview(value.toString())
+                            : value instanceof Number || value instanceof Boolean ? value : "<object>"));
+                } catch (Throwable error) {
+                    debug("device stage=bundle key=" + key + " result=read-failed error=" + error);
+                }
+            }
+        }
+        return metadata;
+    }
+
+    private boolean convertDeviceEntry(Object[] args, boolean command, String entry) {
+        Map<String, Object> metadata = deviceMetadata(args);
+        boolean os4 = installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4;
+        DeviceNotificationPayload payload = null;
+        DeviceNotificationPayload.Logger logger = message -> debug("device stage=payload entry=" + entry + " " + message);
+        if (command) {
+            // island_param 仅在岛开启时写入；关闭时 param 的旧 guide 仍包含静音/勿扰文本。
+            for (String key : new String[]{"island_param", "param"}) {
+                Object json = metadata.get(key);
+                debug("device stage=json entry=" + entry + " key=" + key
+                        + " available=" + (json instanceof String && !((String) json).isEmpty()));
+                if (!(json instanceof String)) continue;
+                payload = DeviceNotificationPayload.readJson((String) json, metadata, os4, logger);
+                if (payload != null && !TextUtils.isEmpty(payload.text)) break;
+            }
+        } else if (args != null) {
+            for (Object model : args) {
+                if (model == null || model instanceof Bundle) continue;
+                payload = DeviceNotificationPayload.read(model, metadata, os4, logger);
+                if (!TextUtils.isEmpty(payload.text)) break;
+            }
+        }
+        if (payload == null || TextUtils.isEmpty(payload.text)) {
+            // OS3 充电通知可只有 Bundle.charge 而没有 guide / island JSON。
+            DeviceNotificationPayload charge = DeviceNotificationPayload.read(null, metadata, os4, logger);
+            if (!TextUtils.isEmpty(charge.text)) payload = charge;
+        }
+        return postDevicePayload(payload, entry);
+    }
+
+    private synchronized boolean postDevicePayload(DeviceNotificationPayload payload, String entry) {
+        if (payload == null || TextUtils.isEmpty(payload.text)) {
+            debug("device stage=request entry=" + entry + " result=no-text legacy-fallback=available");
+            return false;
+        }
+        if ("charge".equals(payload.eventId) && deviceChargeSessionClosed) {
+            debug("device stage=request entry=" + entry + " result=closed-charge-session");
+            return false;
+        }
+        PendingIntent target = payload.target instanceof PendingIntent ? (PendingIntent) payload.target : null;
+        debug("device stage=request entry=" + entry + " source=" + payload.source
+                + " text=" + preview(payload.text) + " icon=" + payload.iconName
+                + " duration=" + payload.visibleMs + " target=" + (target != null)
+                + " targetResult=" + (payload.target == null ? "absent" : target == null ? "unsupported-type" : "accepted"));
+        boolean update = "charge".equals(payload.eventId) && "charge".equals(activeDeviceEventId);
+        boolean chargeRetry = "charge".equals(payload.eventId) && !update && deviceChargeDeadline > 0L;
+        long now = SystemClock.elapsedRealtime();
+        long duration = payload.visibleMs;
+        if (update || chargeRetry) {
+            duration = deviceChargeDeadline - now;
+            if (duration <= 0L) {
+                deviceChargeSessionClosed = true;
+                cancelDeviceCharge("charge-update-expired");
+                return false;
+            }
+            if (update && now - lastDeviceChargeUpdate < 200L) {
+                debug("device stage=request entry=" + entry + " result=charge-update-throttled");
+                return true;
+            }
+        }
+        boolean posted = postDeviceFocusNotification(payload.text, payload.iconName, duration,
+                target, update, payload.iconPackage, payload.iconCategory, payload.iconFormat);
+        if (posted) {
+            if ("charge".equals(activeDeviceEventId) && !"charge".equals(payload.eventId)) {
+                deviceChargeSessionClosed = true;
+            }
+            activeDeviceEventId = payload.eventId;
+            if ("charge".equals(payload.eventId)) {
+                if (!update && deviceChargeDeadline == 0L) deviceChargeDeadline = now + duration;
+                lastDeviceChargeUpdate = now;
+            }
+        }
+        debug("device stage=request entry=" + entry + " result=" + (posted ? "posted" : "failed"));
+        return posted;
+    }
+
+    private void hookChargeCleanup(String className, String methodName) {
+        try {
+            Class<?> owner = FocusReflection.findClass(classLoader, className);
+            if (owner == null) {
+                debug("device stage=install cleanup=" + className + "." + methodName + " result=class-missing");
+                return;
+            }
+            int count = XposedBridge.hookAllMethods(owner, methodName, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (Boolean.TRUE.equals(deviceConversionPosted.get())) {
+                        debug("device stage=cleanup source=" + methodName + " result=inside-new-event");
+                        return;
+                    }
+                    cancelDeviceCharge("rom-" + methodName);
+                }
+            }).size();
+            debug("device stage=install cleanup=" + methodName + " hooks=" + count);
+        } catch (Throwable error) { error("device cleanup " + methodName, error); }
+    }
+
+    private void hookDeviceNotificationRemoval() {
+        hookChargeCleanup("com.android.systemui.devicenotification.listener.DeviceNotificationListenerImpl", "clearChargeStatusCache");
+        hookChargeCleanup("com.android.systemui.devicenotification.listener.DeviceNotificationListenerImpl", "access$releaseValueAnimation");
+        hookChargeCleanup("com.android.systemui.devicenotification.listener.DeviceNotificationListenerImpl$removeChargeIslandRunnable$1", "run");
+        try {
+            Class<?> owner = FocusReflection.findClass(classLoader,
+                    "com.android.systemui.statusbar.notification.DynamicIslandController");
+            if (owner == null) {
+                debug("device stage=install removal result=controller-missing");
+                return;
+            }
+            int count = XposedBridge.hookAllMethods(owner, "removeDynamicIslandView", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.args.length == 0 || !"charge".equals(param.args[0])) return;
+                    debug("device stage=remove event=charge active=" + activeDeviceEventId
+                            + " inCommand=" + Boolean.TRUE.equals(deviceConversionPosted.get())
+                            + " romError=" + param.getThrowable());
+                    // 新充电事件内部可能先撤旧岛；不能因此取消刚发出的替代通知。
+                    if (!"charge".equals(activeDeviceEventId)
+                            || Boolean.TRUE.equals(deviceConversionPosted.get())) return;
+                    if (deviceNotificationFocusPoster != null) deviceNotificationFocusPoster.cancel();
+                    activeDeviceEventId = null;
+                    pendingDeviceFocusId = -1;
+                }
+            }).size();
+            debug("device stage=install removal hooks=" + count);
+        } catch (Throwable error) {
+            error("device removal hook", error);
         }
     }
 
@@ -1735,8 +2064,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 protected void beforeHookedMethod(MethodHookParam param) {
                     // 先按掉窗口：横幅只是替代呈现，它自己失败不能把强提示放回屏幕。
                     param.setResult(null);
-                    log("strong toast suppressed: " + name + " " + describeStrongToast(param.args));
                     try {
+                        debug("device stage=legacy source=" + name + " " + describeStrongToast(param.args));
                         showDeviceNotificationBanner(param.args);
                     } catch (Throwable t) {
                         error("device notification banner", t);
@@ -1819,36 +2148,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * 显示在状态栏焦点位。
      */
     private void showDeviceNotificationBanner(Object[] args) {
-        Object model = args.length == 0 ? null : args[0];
-        if (model == null) return;
-        String text = null;
-        String iconName = null;
-        Object guide = readField(model, "statusBarGuideModel");
-        if (guide != null) {
-            for (String side : new String[]{"getLeft", "getRight"}) {
-                GuidePart part = readGuidePart(guide, side);
-                if (part == null) continue;
-                if (text == null) text = part.text;
-                if (iconName == null) iconName = part.iconResName;
-            }
-        }
-        if (text == null) {
-            Object charge = readField(model, "charge");
-            if (charge instanceof String && !((String) charge).isEmpty()) text = (String) charge;
-        }
-        if (text == null) {
-            log("device banner skipped: model carries no text");
+        if (!modeHooksInstalled || Boolean.TRUE.equals(deviceConversionPosted.get())) {
+            debug("device stage=legacy result=" + (!modeHooksInstalled ? "mode-not-ready" : "already-posted-in-command"));
             return;
         }
-        Object duration = readField(model, "duration");
-        // 模型只给充电事件下发时长；为 0 时沿用默认值，保证静音 / 勿扰与原强提示停留时间一致。
-        long visibleMs = DeviceNotificationFocusPoster.visibleMsFrom(
-                duration instanceof Long ? (Long) duration : null);
-        Object target = readField(model, "target");
-        PendingIntent contentIntent = target instanceof PendingIntent ? (PendingIntent) target : null;
-        log("device focus notification request text=" + text + " icon=" + iconName
-                + " duration=" + visibleMs + " target=" + (target instanceof PendingIntent));
-        postDeviceFocusNotification(text, iconName, visibleMs, contentIntent);
+        convertDeviceEntry(args, false, "strongToastFallback");
     }
 
     /**
@@ -1856,11 +2160,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      *
      * <p>没有横幅兜底：这条通路不可用时只记录原因（设备通知呈现本就依赖系统焦点通路）。
      */
-    private boolean postDeviceFocusNotification(String text, String iconResName, long visibleMs,
-                                                PendingIntent target) {
+    private synchronized boolean postDeviceFocusNotification(String text, String iconResName, long visibleMs,
+                                                PendingIntent target, boolean update,
+                                                String iconPackage, String iconCategory, String iconFormat) {
         Context context = systemUiContext;
         if (context == null) {
-            log("device focus notification skipped: system ui context not ready");
+            debug("device stage=post result=context-not-ready");
             return false;
         }
         DeviceNotificationFocusPoster poster = deviceNotificationFocusPoster;
@@ -1868,9 +2173,37 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             poster = new DeviceNotificationFocusPoster(context);
             deviceNotificationFocusPoster = poster;
         }
-        if (!poster.isAvailable()) return false;
-        if (!poster.post(text, iconResName, visibleMs, target)) return false;
-        deviceFocusPostGeneration++;
+        if (!poster.isAvailable()) {
+            debug("device stage=post result=unavailable");
+            return false;
+        }
+        if (!poster.post(text, iconResName, visibleMs, target, update,
+                iconPackage, iconCategory, iconFormat)) return false;
+        deviceFocusPostGeneration = poster.lastPostSequence();
+        pendingDeviceFocusId = poster.lastPostedId();
+        final long sequence = deviceFocusPostGeneration;
+        final DeviceNotificationFocusPoster activePoster = poster;
+        final int id = pendingDeviceFocusId;
+        Handler handler = mainHandler;
+        if (handler != null && BuildConfig.DEBUG) handler.postDelayed(() -> {
+            if (sequence == deviceFocusPostGeneration && id == pendingDeviceFocusId
+                    && deviceFocusDeliveredGeneration != sequence) {
+                debug("device stage=delivery result=not-observed-after-1500ms id=" + id
+                        + " sequence=" + sequence + " mode=OS" + installedHookMode);
+            }
+        }, 1500L);
+        if (handler != null) handler.postDelayed(() -> {
+            synchronized (HyperOS3FocusRestoreHook.this) {
+                if (sequence != deviceFocusPostGeneration || id != pendingDeviceFocusId) return;
+                debug("device stage=expiry id=" + id + " sequence=" + sequence
+                        + " event=" + activeDeviceEventId);
+                boolean expiringCharge = "charge".equals(activeDeviceEventId);
+                activePoster.cancel();
+                activeDeviceEventId = null;
+                pendingDeviceFocusId = -1;
+                if (expiringCharge) deviceChargeSessionClosed = true;
+            }
+        }, update ? Math.max(1L, visibleMs) : Math.max(1000L, visibleMs));
         return true;
     }
 
@@ -1879,7 +2212,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      *
      * <p>标记是模块自己写进 extras 的，不会与系统或第三方通知冲突。
      */
-    private void noteConstructedFocusNotification(StatusBarNotification sbn) {
+    private synchronized void noteConstructedFocusNotification(StatusBarNotification sbn) {
         Notification notification = sbn.getNotification();
         Bundle extras = notification == null ? null : notification.extras;
         if (extras == null
@@ -1887,9 +2220,16 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             return;
         }
         // 没有待确认的投递时忽略：SystemUI 重启后系统会把历史通知重投一遍，那不是本次投递的证据。
-        if (deviceFocusPostGeneration == 0) return;
-        if (deviceFocusDeliveredGeneration == deviceFocusPostGeneration) return;
-        deviceFocusDeliveredGeneration = deviceFocusPostGeneration;
+        long sequence = extras.getLong(DeviceNotificationFocusPoster.EXTRA_POST_SEQUENCE, -1L);
+        if (deviceFocusPostGeneration == 0 || sbn.getId() != pendingDeviceFocusId
+                || sequence != deviceFocusPostGeneration) {
+            debug("device stage=delivery result=stale-or-untracked id=" + sbn.getId()
+                    + " sequence=" + sequence + " expected=" + deviceFocusPostGeneration);
+            return;
+        }
+        if (deviceFocusDeliveredGeneration == sequence) return;
+        deviceFocusDeliveredGeneration = sequence;
+        debug("device stage=delivery result=observed id=" + sbn.getId() + " sequence=" + sequence);
         // 一次真机日志就要能定位失败点，所以把 ROM 的判定与提示内容一起打出来。
         log("device focus notification delivered key=" + sbn.getKey()
                 + describeFocusGates(sbn));
@@ -1911,10 +2251,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             if (utils == null) return text.append(" focusUtils=missing").toString();
             Object showOnStatusBar = XposedHelpers.callStaticMethod(utils, "showOnStatusBar", sbn);
             Object ticker = XposedHelpers.callStaticMethod(utils, "getStatusBarTicker", sbn);
-            Object tickerIcon = XposedHelpers.callStaticMethod(utils, "getStatusBarTickerIcon", sbn);
+            // OS4 FocusUtils 已无 getStatusBarTickerIcon；直接按 extras 二级键读取，不猜 ROM 方法。
+            SelectedFocusIcon tickerIcon = selectFocusIcon(sbn.getNotification(), null,
+                    sbn.getPackageName(), false, true);
+            SelectedFocusIcon darkIcon = selectFocusIcon(sbn.getNotification(), null,
+                    sbn.getPackageName(), true, true);
             text.append(" showOnStatusBar=").append(showOnStatusBar)
                     .append(" ticker=").append(preview(stringValue(ticker)))
-                    .append(" tickerIcon=").append(tickerIcon != null);
+                    .append(" tickerIcon=").append(tickerIcon == null ? "none" : tickerIcon.source)
+                    .append(" tickerIconDark=").append(darkIcon == null ? "none" : darkIcon.source);
         } catch (Throwable t) {
             text.append(" gates=error:").append(t);
         }
@@ -4441,6 +4786,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             error("OS4 getNotification key=" + key, t);
         }
         PendingIntent contentIntent = notification == null ? null : notification.contentIntent;
+        boolean constructedDevice = notification != null && notification.extras != null
+                && notification.extras.getBoolean(DeviceNotificationFocusPoster.EXTRA_MODULE_MARKER, false);
+        if (constructedDevice) debug("device stage=os4-candidate key=" + key
+                + " isOriginalFocus=" + data.isOriginalFocus + " ticker=" + preview(data.ticker)
+                + " expired=" + isFocusDisplayExpired(data)
+                + " " + focusExtrasInventory(notification.extras));
 
         boolean hasNativeStatusBarContent = OS4FocusPriorityPolicy.hasNativeStatusBarContent(
                 data.barRv != null || data.barNightRv != null,
@@ -4485,6 +4836,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             } catch (Throwable t) {
                 error("OS4 native showOnStatusBar key=" + key, t);
             }
+            if (constructedDevice) debug("device stage=os4-gate key=" + key
+                    + " showOnStatusBar=" + showOnStatusBar);
             if (!showOnStatusBar) {
                 log("OS4 native Focus rejected by showOnStatusBar key=" + key
                         + " " + data.summary());
@@ -4494,6 +4847,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     false, true);
             SelectedFocusIcon focusIconDark = selectFocusIcon(notification, data.islandParam, data.packageName,
                     true, true);
+            if (constructedDevice) debug("device stage=os4-icon key=" + key
+                    + " light=" + (focusIcon == null ? "none" : focusIcon.source)
+                    + " dark=" + (focusIconDark == null ? "none" : focusIconDark.source));
             log("OS4 native focus icon key=" + key + " light="
                     + (focusIcon == null ? "none" : focusIcon.source) + " dark="
                     + (focusIconDark == null ? "none" : focusIconDark.source));
