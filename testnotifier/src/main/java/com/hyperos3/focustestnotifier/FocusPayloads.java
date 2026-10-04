@@ -63,6 +63,20 @@ final class FocusPayloads {
             "{\"protocol\":1,\"scene\":\"small-only\",\"param_island\":{"
                     + "\"smallIslandArea\":{\"title\":\"进站中\"}}}";
 
+    /**
+     * Island payload whose only job is to reference {@code miui.focus.pic_island_test} in the
+     * small/big island areas. Combined with {@code FocusTestNotifier#pictures()} publishing that
+     * exact key under {@code miui.focus.pics}, this exercises the island-icon main contract
+     * ({@code island:<ref>}) instead of the app-icon fallback.
+     */
+    static final String ISLAND_ICON_PARAM =
+            "{\"param_v2\":{\"param_island\":{"
+                    + "\"bigIslandArea\":{\"imageTextInfoLeft\":{\"type\":1,"
+                    + "\"picInfo\":{\"type\":1,\"pic\":\"miui.focus.pic_island_test\"},"
+                    + "\"textInfo\":{\"title\":\"岛图标测试\",\"showHighlightColor\":false}}},"
+                    + "\"smallIslandArea\":{\"picInfo\":{\"type\":1,"
+                    + "\"pic\":\"miui.focus.pic_island_test\"}}}}}";
+
     private FocusPayloads() {
     }
 }

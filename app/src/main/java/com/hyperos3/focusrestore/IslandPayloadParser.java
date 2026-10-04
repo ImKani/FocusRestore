@@ -278,9 +278,13 @@ final class IslandPayloadParser {
     }
 
     private static String cleanPictureReference(Object value) {
-        if (value == null || value == JSONObject.NULL) return null;
-        String reference = String.valueOf(value).trim();
-        return reference.startsWith("miui.focus.pic_") ? reference : null;
+        // 来源：用户 0.29.2 设备日志中的出行载荷与 miui.focus.pics 键；协议所有者、
+        // 版本及许可未确认。本项目独立按键精确读取，不复制外部实现。
+        // Bundle 引用是键名，不是 drawable 名；island_pic_small 也属于有效的精确引用。
+        // 仅接受标识符字符串，避免把 URL、对象或空值当成图标；资源名兜底仍单独限制前缀。
+        if (!(value instanceof String)) return null;
+        String reference = ((String) value).trim();
+        return reference.matches("[A-Za-z0-9_.-]+") ? reference : null;
     }
 
     static ParsedText parseCompact(String payload, String sideSeparator) {

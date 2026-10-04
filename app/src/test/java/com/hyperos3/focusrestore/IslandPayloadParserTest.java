@@ -231,6 +231,43 @@ public class IslandPayloadParserTest {
     }
 
     @Test
+    public void travelPictureUsesExactBundleKeyWithoutPrefix() {
+        // 0.29.2 日志确认 Bundle 有此键，旧实现却返回 null，导致回退应用图标。
+        assertEquals("island_pic_small",
+                IslandPayloadParser.findPictureReference(TRAVEL_PAYLOAD, false));
+        assertEquals("island_pic_small",
+                IslandPayloadParser.findPictureReference(TRAVEL_PAYLOAD, true));
+        assertNull(IslandPayloadParser.drawableNameFromReference("island_pic_small"));
+        assertEquals("weather_icon", IslandPayloadParser.drawableNameFromReference(
+                "miui.focus.pic_weather_icon"));
+    }
+
+    @Test
+    public void exactPictureKeysRejectNonStringsAndExternalLocations() {
+        for (String value : new String[]{"123", "true", "null", "{}", "[]",
+                "\"\"", "\"https://example.invalid/icon.png\"", "\"../icon\""}) {
+            assertNull(IslandPayloadParser.findPictureReference("{\"pic\":" + value + "}", false));
+        }
+        assertEquals("island_pic", IslandPayloadParser.findTickerPictureReference(
+                "{\"tickerPic\":\"island_pic\"}", false));
+    }
+
+    @Test
+    public void buttonEightIslandIconPayloadKeepsTextAndPictureReference() {
+        String payload = "{\"param_v2\":{\"param_island\":{"
+                + "\"bigIslandArea\":{\"imageTextInfoLeft\":{\"type\":1,"
+                + "\"picInfo\":{\"type\":1,\"pic\":\"miui.focus.pic_island_test\"},"
+                + "\"textInfo\":{\"title\":\"岛图标测试\"}}},"
+                + "\"smallIslandArea\":{\"picInfo\":{\"type\":1,"
+                + "\"pic\":\"miui.focus.pic_island_test\"}}}}}}";
+        IslandPayloadParser.ParsedText parsed = IslandPayloadParser.parse(payload, "·", "·");
+        assertNotNull(parsed);
+        assertEquals("岛图标测试", parsed.text);
+        assertEquals("miui.focus.pic_island_test",
+                IslandPayloadParser.findPictureReference(payload, false));
+    }
+
+    @Test
     public void extractsSmallIslandPictureBeforeOtherPictures() {
         String payload = "{\"param_v2\":{\"baseInfo\":{\"picFunction\":\"miui.focus.pic_app\"},"
                 + "\"param_island\":{\"smallIslandArea\":{\"picInfo\":{"

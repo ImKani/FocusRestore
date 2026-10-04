@@ -1,14 +1,14 @@
+/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
 package com.hyperos3.focusrestore;
 
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 
-/** Sizes icons and optionally applies alpha-outline and status-bar tint. */
+/** 等比绘制图标，岛图标保留安全边距；可选状态栏单色着色。 */
 final class FocusIconStyler {
     static final class Result {
         final Icon icon;
@@ -20,58 +20,34 @@ final class FocusIconStyler {
         }
     }
 
-    private FocusIconStyler() {
-    }
+    private FocusIconStyler() { }
 
-    static Result load(Context context, Icon source, boolean outline,
+    static Result load(Context context, Icon source, boolean islandIcon,
                        boolean tint, int tintColor, int sizeDp) {
         if (context == null || source == null) return null;
         Drawable drawable = source.loadDrawable(context);
         if (drawable == null) return null;
         float density = context.getResources().getDisplayMetrics().density;
         int size = Math.max(1, Math.min(128, Math.round(sizeDp * density)));
-        int outlinePx = outline ? Math.max(1, Math.round(density)) : 0;
-        Bitmap original = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-        Canvas sourceCanvas = new Canvas(original);
-        drawable.setBounds(outlinePx, outlinePx, size - outlinePx, size - outlinePx);
-        drawable.draw(sourceCanvas);
-
-        int[] pixels = new int[size * size];
-        original.getPixels(pixels, 0, size, 0, 0, size, size);
-        int[] output = new int[pixels.length];
-        if (outline) {
-            for (int y = 0; y < size; y++) {
-                for (int x = 0; x < size; x++) {
-                    int maxAlpha = 0;
-                    int left = Math.max(0, x - outlinePx);
-                    int right = Math.min(size - 1, x + outlinePx);
-                    int top = Math.max(0, y - outlinePx);
-                    int bottom = Math.min(size - 1, y + outlinePx);
-                    for (int sy = top; sy <= bottom; sy++) {
-                        for (int sx = left; sx <= right; sx++) {
-                            maxAlpha = Math.max(maxAlpha,
-                                    Color.alpha(pixels[sy * size + sx]));
-                        }
-                    }
-                    output[y * size + x] = Color.argb(maxAlpha, 0, 0, 0);
-                }
-            }
-        }
-        Bitmap styled = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
-        styled.setPixels(output, 0, size, 0, 0, size, size);
-        Canvas canvas = new Canvas(styled);
+        // 不再扩张黑色描边：它会填掉透明孔洞，浅色背景下与黑色主体合成一团。
+        // 岛图标留 1dp 透明安全边距，并按原比例居中，避免外缘贴边及非方形图失真。
+        int padding = islandIcon ? Math.min((size - 1) / 2,
+                Math.max(1, Math.round(density))) : 0;
+        int[] bounds = FocusIconPixels.bounds(size, padding,
+                drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight());
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        drawable.setBounds(bounds[0], bounds[1], bounds[2], bounds[3]);
+        drawable.draw(canvas);
         if (tint) {
-            int color = tintColor & 0x00ffffff;
+            int[] pixels = new int[size * size];
+            bitmap.getPixels(pixels, 0, size, 0, 0, size, size);
             for (int index = 0; index < pixels.length; index++) {
-                int alpha = Color.alpha(pixels[index]);
-                pixels[index] = alpha == 0 ? Color.TRANSPARENT : (alpha << 24) | color;
+                pixels[index] = FocusIconPixels.recolor(pixels[index], tintColor);
             }
-            Bitmap tinted = Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888);
-            canvas.drawBitmap(tinted, 0f, 0f, null);
-        } else {
-            canvas.drawBitmap(original, 0f, 0f, null);
+            bitmap.setPixels(pixels, 0, size, 0, 0, size, size);
         }
-        return new Result(Icon.createWithBitmap(styled),
-                new BitmapDrawable(context.getResources(), styled));
+        return new Result(Icon.createWithBitmap(bitmap),
+                new BitmapDrawable(context.getResources(), bitmap));
     }
 }
