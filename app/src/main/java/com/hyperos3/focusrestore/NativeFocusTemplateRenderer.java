@@ -1,10 +1,16 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-only
- * Copyright (C) ImKani. 由 FocusRestore 项目维护。
+ * Copyright (C) ImKani.
+ * Project: FocusRestore
+ * Source: https://github.com/ImKani/FocusRestore
+ */
+
+/*
  * 原始项目：https://github.com/ImKani/FocusRestore
  * 外部事实来源：miui.systemui.plugin TemplateFactoryV3/TemplateBuilderV3 私有接口；分析版本和证据见 Notes/analysis。
  * 说明：本文件为 FocusRestore 独立实现，不复制或重新授权 SystemUI/plugin 代码。
  */
+
 package com.hyperos3.focusrestore;
 
 import android.app.Notification;

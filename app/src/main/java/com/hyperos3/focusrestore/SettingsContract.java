@@ -1,4 +1,10 @@
-/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani.
+ * Project: FocusRestore
+ * Source: https://github.com/ImKani/FocusRestore
+ */
+
 package com.hyperos3.focusrestore;
 
 /** Append-only Provider schema shared by producer, consumer and tests. */

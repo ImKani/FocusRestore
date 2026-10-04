@@ -4,6 +4,7 @@
  * Project: FocusRestore
  * Source: https://github.com/ImKani/FocusRestore
  */
+
 package com.hyperos3.focusrestore;
 
 /** Tracks the latest SystemUI-requested visibility while module hiding is active. */

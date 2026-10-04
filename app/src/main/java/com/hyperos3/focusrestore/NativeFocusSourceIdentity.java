@@ -1,3 +1,10 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani.
+ * Project: FocusRestore
+ * Source: https://github.com/ImKani/FocusRestore
+ */
+
 package com.hyperos3.focusrestore;
 
 /** Immutable identity of a template captured from the plugin's real notification pipeline. */

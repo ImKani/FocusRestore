@@ -1,4 +1,10 @@
-/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani.
+ * Project: FocusRestore
+ * Source: https://github.com/ImKani/FocusRestore
+ */
+
 package com.hyperos3.focusrestore;
 
 /** 与 Android 无关的图标像素与等比尺寸规则。 */

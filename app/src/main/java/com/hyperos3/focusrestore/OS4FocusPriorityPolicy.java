@@ -1,3 +1,10 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani.
+ * Project: FocusRestore
+ * Source: https://github.com/ImKani/FocusRestore
+ */
+
 package com.hyperos3.focusrestore;
 
 /** Pure HyperOS 4 display precedence shared by the Hook and unit tests. */

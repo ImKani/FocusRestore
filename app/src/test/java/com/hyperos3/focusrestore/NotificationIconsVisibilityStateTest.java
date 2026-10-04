@@ -4,6 +4,7 @@
  * Project: FocusRestore
  * Source: https://github.com/ImKani/FocusRestore
  */
+
 package com.hyperos3.focusrestore;
 
 import org.junit.Test;

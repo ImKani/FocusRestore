@@ -1,6 +1,11 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-only
- * Copyright (C) ImKani. 由 FocusRestore 项目维护。
+ * Copyright (C) ImKani.
+ * Project: FocusRestore
+ * Source: https://github.com/ImKani/FocusRestore
+ */
+
+/*
  * 原始项目：https://github.com/ImKani/FocusRestore
  * 外部事实来源：HyperOS 3 SystemUI APK os3系统界面_16.03.251211.r.apk 的 com.android.systemui
  * 16.03.251211.r（source go/retraceme 517ab4bb…ce5979）与系统界面组件包 miui.systemui.plugin
@@ -9,6 +14,7 @@
  * SystemUI / MIUI 资源及私有协议的版权所有者、原协议：未确认；沿用上述版本接口事实，
  * 本项目独立增加投递诊断、图标安全降级与请求序号。OS4 plugin 图片契约仍待验证。
  */
+
 package com.hyperos3.focusrestore;
 
 import android.app.Notification;

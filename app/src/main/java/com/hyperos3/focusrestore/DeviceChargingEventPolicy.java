@@ -1,4 +1,10 @@
-/* SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore */
+/*
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) ImKani.
+ * Project: FocusRestore
+ * Source: https://github.com/ImKani/FocusRestore
+ */
+
 package com.hyperos3.focusrestore;
 
 /** 电池通知只在接电/快充状态变化时产生，不把每次电量广播都当成一次新提示。 */
