@@ -16,6 +16,7 @@ import android.os.Looper;
 import android.os.Parcelable;
 import android.os.SystemClock;
 import android.service.notification.StatusBarNotification;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Rect;
@@ -1892,6 +1893,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         // 一次真机日志就要能定位失败点，所以把 ROM 的判定与提示内容一起打出来。
         log("device focus notification delivered key=" + sbn.getKey()
                 + describeFocusGates(sbn));
+        scheduleFocusPromptTextDump(sbn.getKey());
     }
 
     /**
@@ -2495,10 +2497,60 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     /**
+     * 设备通知的焦点提示显示后，把提示里的文本视图现场打两次（0.3s 与 1.3s）。
+     *
+     * <p>用来区分"文字颜色/几何不可见"和"显示后被清空"：前者的两次日志相同（都有文字、位置也对），
+     * 后者会看到 t0 有文字、t1 变成空 —— 真机上竖屏只剩分隔竖线时，这两次日志的差别就是答案。
+     */
+    private void scheduleFocusPromptTextDump(String key) {
+        mainHandler.postDelayed(() -> dumpFocusPromptTexts(key, "t0"), 300L);
+        mainHandler.postDelayed(() -> dumpFocusPromptTexts(key, "t1"), 1_300L);
+    }
+
+    private void dumpFocusPromptTexts(String key, String mark) {
+        try {
+            List<View> prompts = new ArrayList<>(os3PromptViews);
+            if (prompts.isEmpty()) {
+                log("focus prompt text dump " + mark + " key=" + key + " prompt=none");
+                return;
+            }
+            StringBuilder text = new StringBuilder();
+            int[] budget = {4};
+            for (View prompt : prompts) collectFocusTexts(prompt, text, budget);
+            log("focus prompt text dump " + mark + " key=" + key
+                    + (text.length() == 0 ? " textViews=none" : text.toString()));
+        } catch (Throwable t) {
+            error("focus prompt text dump", t);
+        }
+    }
+
+    private void collectFocusTexts(View node, StringBuilder out, int[] budget) {
+        if (node == null || budget[0] <= 0) return;
+        if (node instanceof TextView) {
+            out.append('[').append(describeFocusTextGeometry((TextView) node));
+            ViewParent parent = node.getParent();
+            if (parent instanceof View) {
+                View container = (View) parent;
+                out.append(" parentWidth=").append(container.getWidth())
+                        .append(" parentScrollX=").append(container.getScrollX());
+            }
+            out.append(']');
+            budget[0]--;
+        }
+        if (!(node instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) node;
+        for (int index = 0; index < group.getChildCount() && budget[0] > 0; index++) {
+            collectFocusTexts(group.getChildAt(index), out, budget);
+        }
+    }
+
+    /**
      * 焦点文本视图的现场状态，用于定位"竖屏只看得到分隔竖线"这一类不可见问题。
      *
      * <p>文字装得下、又没启动跑马灯却仍然看不见时，只可能是这三类原因之一：横向滚动没归零、
      * 颜色/透明度不可见、或者视图位置落在可见区之外。一次日志把三者一起打出来，避免继续靠猜。
+     * 0.25.6 起再加 {@code text} / {@code gravity} / {@code layoutAlign}，用来区分"文字没落到视图上"
+     * 与"文字在视图上但排布不可见"。
      */
     private String describeFocusTextGeometry(TextView textView) {
         try {
@@ -2507,10 +2559,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Rect visible = new Rect();
             boolean visibleRectOk = textView.getGlobalVisibleRect(visible);
             StringBuilder text = new StringBuilder()
+                    .append(" text=").append(preview(textView.getText() == null
+                            ? null : textView.getText().toString()))
                     .append(" scrollX=").append(textView.getScrollX())
                     .append(" alpha=").append(textView.getAlpha())
                     .append(" color=#").append(Integer.toHexString(textView.getCurrentTextColor()))
                     .append(" vis=").append(textView.getVisibility())
+                    .append(" gravity=").append(textView.getGravity())
+                    .append(" layoutAlign=").append(textView.getLayout() == null
+                            ? "none" : textView.getLayout().getAlignment())
                     .append(" left=").append(textView.getLeft())
                     .append(" screenX=").append(location[0])
                     .append(" visibleRect=").append(visibleRectOk ? visible.toShortString() : "none");
@@ -2902,6 +2959,16 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             // 显示的，直接放行。
                             if (isConstructedDeviceFocusNotification(data)) {
                                 param.setResult(true);
+                                // ROM 的 update() 先按自己当时的 mShouldShow（false）算出"提示无需
+                                // 变化"，于是走早退分支，压根不会把这次得到的 bean 交给提示视图；
+                                // 同一轮还有一次 setData(null) 把文字视图清空。两者叠加就是 0.25.6
+                                // 真机上"竖屏只剩分隔竖线"：文字从未落到视图上，t0/t1 两次 dump 都为空。
+                                // 因此放行的同时把这次询问携带的 bean 直接给提示视图。
+                                // 注意必须传 param.args[0]（bean 实例）：外层作用域的 bean 是
+                                // findClass 拿到的 Class 对象，传它会得到
+                                // IllegalArgumentException: … argument 1 has type FocusedNotifBean,
+                                // got java.lang.Class<FocusedNotifBean>。
+                                applyConstructedDevicePrompt(value, data);
                                 log("device focus shouldShow forced=true key=" + data.key);
                                 return;
                             }
@@ -3022,6 +3089,126 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         Bundle extras = notification == null ? null : notification.extras;
         return extras != null
                 && extras.getBoolean(DeviceNotificationFocusPoster.EXTRA_MODULE_MARKER, false);
+    }
+
+    /**
+     * 把设备通知焦点通知的提示内容写进提示视图，绕开 ROM 那次不会生效的交接。
+     *
+     * <p>0.25.6 真机（`log/focus-restore.0.25.6.log`）里，静音 / 勿扰关闭 / 充电事件的提示文字视图
+     * 在 t0、t1 两次现场 dump 中都是空的，而勿扰开启那次有文字，区别就在提示视图有没有拿到 bean：
+     * ROM 的 {@code FocusedNotifPromptController.update(int)} 先按它自己当时的 {@code mShouldShow}
+     * 算出"提示不用变化"并走早退分支，于是这次询问携带的 bean 永远不会经由
+     * {@code notifyNotifBeanChanged} 落到视图上；同一轮里的 {@code setData(null)} 又把
+     * {@code FocusedTextView} 清空，界面上只剩模块按自身状态画的分隔竖线。模块的放行发生在这次
+     * 计算之后，补不回那次交接，所以在这里自己写一次。
+     *
+     * <p>写入分两层，缺一不可：
+     * <ol>
+     *   <li>把 bean 交给视图（{@code setData}）：视图自己记录的 {@code mData} 随之正确，之后的
+     *       布局／点击路径读到的都是这条设备通知；</li>
+     *   <li>直接把文字写进 {@code mContentText}：{@code setData} 内部是否真的把文字落到视图上，
+     *       取决于它自己的 {@code shouldUpdate} 与动画时间窗（`mLastAnimationTime` 的 5036ms 判定）；
+     *       0.25.7 首版只做第 1 层时，真机上写入落在提示动画之后，文字要到 0.3s 之后才出现，
+     *       那一瞬间仍然只看得见分隔竖线。直接写一次就没有这个窗口。</li>
+     * </ol>
+     *
+     * <p>只处理模块构造的、自身不带 RemoteViews 的提示文字；ROM 的原生 RemoteViews 渲染优先，
+     * 不参与这条通路。
+     */
+    private void applyConstructedDevicePrompt(Object beanInstance, FocusData data) {
+        if (beanInstance == null) return;
+        // 文字取自已解析好的 FocusData，而不是在这里重读 bean 字段：0.26.1 真机证明，
+        // 这里一旦传错对象（当时把给 findAndHookMethod 用的 Class 当 bean 传了进来），
+        // 重读字段会静默拿到 null，而 FocusData 是 shouldShow 那一步已经解析好的结果。
+        String text = data == null ? null : data.content;
+        Object contentRv = getField(beanInstance, "contentRemoteViews");
+        if (!DeviceFocusPromptPolicy.shouldApplyToPromptView(
+                contentRv != null, !TextUtils.isEmpty(text), currentSettings.islandCompat)) {
+            return;
+        }
+        Method setData = findPromptSetDataMethod();
+        if (setData == null) {
+            error("applyConstructedDevicePrompt setData=missing", null);
+            return;
+        }
+        for (View promptView : promptViewsSnapshot()) {
+            try {
+                // 直接反射调用，不用 XposedHelpers.callMethod：后者会把 boolean 装箱成 Boolean，
+                // 于是去找 setData(FocusedNotifBean, Boolean) 而永远找不到真正的方法
+                //（0.26.0 真机：NoSuchMethodError ...#setData[class java.lang.Class, class java.lang.Boolean]）。
+                setData.invoke(promptView, beanInstance, false);
+                writePromptText(promptView, text);
+                showPromptContentIfHidden(promptView);
+            } catch (Throwable t) {
+                error("applyConstructedDevicePrompt setData", t);
+            }
+        }
+    }
+
+    /**
+     * 保证提示文字与内容容器都可见。只改这两处，提示整体的显示／动画仍由 ROM 决定，避免和它的
+     * 动画状态机打架；容器沿用 ROM 自己的 {@code showImmediately}。
+     */
+    private void writePromptText(View promptView, String text) {
+        Object content = getField(promptView, "mContentText");
+        if (!(content instanceof TextView)) return;
+        TextView textView = (TextView) content;
+        if (!TextUtils.equals(textView.getText(), text)) textView.setText(text);
+        if (textView.getVisibility() != View.VISIBLE) textView.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * 提示视图的 {@code setData(FocusedNotifBean, boolean)}。
+     *
+     * <p>按名字 + 形参个数在类层次里查找，不用 {@code XposedHelpers.callMethod}：后者拿装箱后的
+     * {@code Boolean} 去匹配形参类型，找不到 {@code boolean} 版本，会抛
+     * {@code NoSuchMethodError: …#setData[class java.lang.Class, class java.lang.Boolean]}
+     * （0.26.0 真机日志）。按个数取到的唯一匹配就是它，再反射调用即可正常传基本类型。
+     */
+    private Method findPromptSetDataMethod() {
+        try {
+            Class<?> owner = FocusReflection.findClass(
+                    "com.android.systemui.statusbar.phone.FocusedNotifPromptView", classLoader);
+            for (Class<?> type = owner; type != null && type != Object.class;
+                 type = type.getSuperclass()) {
+                for (Method method : type.getDeclaredMethods()) {
+                    if ("setData".equals(method.getName())
+                            && method.getParameterTypes().length == 2) {
+                        method.setAccessible(true);
+                        return method;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            error("findPromptSetDataMethod", t);
+        }
+        return null;
+    }
+
+    /** 提示视图实例的快照；注册表由 {@code setData} 的 after-hook 维护，读取时先复制避免并发修改。 */
+    private List<View> promptViewsSnapshot() {
+        synchronized (os3PromptViews) {
+            return new ArrayList<>(os3PromptViews);
+        }
+    }
+
+    /**
+     * 兜住 ROM 早退时连可见性也没动的情况：提示整体可见、但内容容器仍停在 hideImmediately 留下的
+     * 不可见状态时，用 ROM 自己的显示方法补一次，避免"文字有了却仍然看不见"。
+     */
+    private void showPromptContentIfHidden(View promptView) {
+        Object content = getField(promptView, "mContent");
+        if (!(content instanceof View)) return;
+        View contentView = (View) content;
+        if (contentView.getVisibility() == View.VISIBLE) return;
+        Class<?> controller = FocusReflection.findClass(
+                "com.android.systemui.statusbar.phone.FocusedNotifPromptController", classLoader);
+        if (controller == null) return;
+        try {
+            XposedHelpers.callStaticMethod(controller, "showImmediately", contentView);
+        } catch (Throwable t) {
+            error("applyConstructedDevicePrompt showImmediately", t);
+        }
     }
 
     private boolean markForcedShouldShow(String key, StatusBarNotification sbn) {
@@ -3736,6 +3923,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         return icon == null ? null : new SelectedFocusIcon(icon, false, false,
                 "applicationIcon");
     }
+
+
 
     private Icon applicationIcon(String packageName) {
         Context context = systemUiContext;

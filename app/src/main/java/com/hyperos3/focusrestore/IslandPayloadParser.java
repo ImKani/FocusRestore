@@ -260,6 +260,7 @@ final class IslandPayloadParser {
         return null;
     }
 
+
     private static String cleanPictureReference(Object value) {
         if (value == null || value == JSONObject.NULL) return null;
         String reference = String.valueOf(value).trim();
