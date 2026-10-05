@@ -20,7 +20,9 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-版本：`0.29.4`（versionCode 249）
+版本：`0.29.5`（versionCode 250）
+
+本次修复 HyperOS 3 模式下，充电提示到期或拔电后，再次接电时焦点通知不显示的问题；实际显示效果仍待真机复核。
 
 ## 功能概述
 
@@ -116,13 +118,13 @@ Debug 版本额外提供以下兼容选项，普通用户通常不需要修改�
 ```sh
 su
 /system/bin/logcat -c
-/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.29.4.log
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.29.5.log
 ```
 
 保持命令运行，然后通过设备上的方式手动重启系统界面。完成复现后回到 MT 终端，按 `Ctrl+C` 停止抓取。日志保存在：
 
 ```text
-/sdcard/focus-restore-0.29.4.log
+/sdcard/focus-restore-0.29.5.log
 ```
 
 ### 电脑端：ADB + PowerShell
@@ -200,8 +202,8 @@ clean Release 构建：
 
 当前版本产物命名：
 
-- `app/build/outputs/apk/debug/FocusRestore-0.29.4-debug.apk`
-- `app/build/outputs/apk/release/FocusRestore-0.29.4-release.apk`
+- `app/build/outputs/apk/debug/FocusRestore-0.29.5-debug.apk`
+- `app/build/outputs/apk/release/FocusRestore-0.29.5-release.apk`
 
 本地 Release 构建使用项目保留的 Debug 证书，适合测试和直接分发，不是应用商店生产签名。固定证书 SHA-256：
 
@@ -218,8 +220,8 @@ ab58b5e208e21aaa9a8628c3ceb661b2bb89cdcfb1d941fbf892ae4936e16809
 构建后检查版本和签名：
 
 ```powershell
-& '.\EnvTools\Android\Sdk\build-tools\36.0.0\aapt2.exe' dump badging '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.4-release.apk'
-& '.\EnvTools\Android\Sdk\build-tools\36.0.0\apksigner.bat' verify --print-certs '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.4-release.apk'
+& '.\EnvTools\Android\Sdk\build-tools\36.0.0\aapt2.exe' dump badging '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.5-release.apk'
+& '.\EnvTools\Android\Sdk\build-tools\36.0.0\apksigner.bat' verify --print-certs '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.5-release.apk'
 ```
 
 ## 安装与验证
@@ -227,13 +229,13 @@ ab58b5e208e21aaa9a8628c3ceb661b2bb89cdcfb1d941fbf892ae4936e16809
 安装前确认设备已解锁、已启用 ADB，并已备份相关配置。安装不会自动启用 LSPosed 模块，也不会自动将作用域加入 SystemUI。
 
 ```powershell
-adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\debug\FocusRestore-0.29.4-debug.apk'
+adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\debug\FocusRestore-0.29.5-debug.apk'
 ```
 
 或安装 Release：
 
 ```powershell
-adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.4-release.apk'
+adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.5-release.apk'
 ```
 
 安装后：

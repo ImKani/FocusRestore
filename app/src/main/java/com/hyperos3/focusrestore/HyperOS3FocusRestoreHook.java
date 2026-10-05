@@ -1871,7 +1871,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             debug("device stage=request entry=" + entry + " result=no-text legacy-fallback=available");
             return false;
         }
-        if ("charge".equals(payload.eventId) && deviceChargeSessionClosed) {
+        // OS3 的 StrongToast 先于电池回调到达；它没有 OS4 那套接电会话状态，不能把上一条
+        // 通知到期后的 closed 标记带到下一次充电提示，否则新接电时只剩竖线甚至完全没有焦点提示。
+        boolean os4ChargeLifecycle = installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4;
+        if (os4ChargeLifecycle && "charge".equals(payload.eventId) && deviceChargeSessionClosed) {
             debug("device stage=request entry=" + entry + " result=closed-charge-session");
             return false;
         }
@@ -1880,8 +1883,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 + " text=" + preview(payload.text) + " icon=" + payload.iconName
                 + " duration=" + payload.visibleMs + " target=" + (target != null)
                 + " targetResult=" + (payload.target == null ? "absent" : target == null ? "unsupported-type" : "accepted"));
-        boolean update = "charge".equals(payload.eventId) && "charge".equals(activeDeviceEventId);
-        boolean chargeRetry = "charge".equals(payload.eventId) && !update && deviceChargeDeadline > 0L;
+        boolean update = os4ChargeLifecycle && "charge".equals(payload.eventId)
+                && "charge".equals(activeDeviceEventId);
+        boolean chargeRetry = os4ChargeLifecycle && "charge".equals(payload.eventId)
+                && !update && deviceChargeDeadline > 0L;
         long now = SystemClock.elapsedRealtime();
         long duration = payload.visibleMs;
         if (update || chargeRetry) {
