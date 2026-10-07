@@ -25,9 +25,8 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 - 修复 OS3/OS4 旧协议进度通知（如外卖配送）点击无法展开横幅的问题。
 - 保留现有 V3、短信验证码和媒体通知横幅路径。
 
-旧协议进度横幅使用 ROM 原生模板独立创建，不移动系统已有视图；静态接口已核对，仍待 OS3/OS4 实机复核。此前 OS4 媒体横幅、小米妙播和安卓原生入口已由用户确认正常。
+旧协议进度横幅使用 ROM 原生模板独立创建，不移动系统已有视图。
 
-本项目由原作者 ImKani 持续维护，AI 仅作为本轮分析与编写的辅助工具。
 
 ## 功能概述
 
@@ -187,60 +186,30 @@ adb logcat -v threadtime -b main -b system -b crash | Select-String 'HyperOS3Foc
 
 ## 构建
 
-项目使用本地 Gradle、Android SDK 和 JDK 环境，不依赖运行时第三方库；Xposed API 仅作为编译期依赖。
+源码使用 Android Gradle Plugin 8.7.3、Android SDK 35，Java 源级兼容 8。仓库未附带 Gradle Wrapper；请准备兼容的 JDK、Gradle 和 Android SDK，并配置 SDK 路径。
 
-在工作区根目录执行 clean Debug 构建：
+在仓库根目录使用已配置的 Gradle 执行：
 
-```powershell
-$env:JAVA_HOME=(Resolve-Path '.\EnvTools\jdk-25.0.4+7').Path
-$env:GRADLE_USER_HOME=(Resolve-Path '.').Path+'\.gradle-local'
-$env:TEMP=$env:GRADLE_USER_HOME+'\tmp'
-$env:TMP=$env:TEMP
-& '.\EnvTools\gradle-9.7.1\bin\gradle.bat' -p '.\FocusRestoreLSPosed' :app:clean :app:assembleDebug --no-daemon --max-workers=1
+```shell
+gradle :app:clean :app:assembleDebug :app:assembleRelease
 ```
 
-clean Release 构建：
+构建脚本引用原作者本地保存的签名证书，证书私钥不随仓库提供。自行构建前需配置自己的签名；不同签名的 APK 不能直接覆盖官方发布包。
 
-```powershell
-& '.\EnvTools\gradle-9.7.1\bin\gradle.bat' -p '.\FocusRestoreLSPosed' :app:clean :app:assembleRelease --no-daemon --max-workers=1
-```
-
-当前版本产物命名：
-
-- `app/build/outputs/apk/debug/FocusRestore-0.29.12-debug.apk`
-- `app/build/outputs/apk/release/FocusRestore-0.29.12-release.apk`
-
-本地 Release 构建使用项目保留的 Debug 证书，适合测试和直接分发，不是应用商店生产签名。固定证书 SHA-256：
-
-```text
-ab58b5e208e21aaa9a8628c3ceb661b2bb89cdcfb1d941fbf892ae4936e16809
-```
-
-如果当前 JDK 环境导致 Release 的 `lintVitalAnalyzeRelease` 单独失败，可在确认失败原因后跳过该分析任务完成打包；发布前应如实记录该限制：
-
-```powershell
-& '.\EnvTools\gradle-9.7.1\bin\gradle.bat' -p '.\FocusRestoreLSPosed' :app:assembleRelease --no-daemon --max-workers=1 -x lintVitalAnalyzeRelease
-```
-
-构建后检查版本和签名：
-
-```powershell
-& '.\EnvTools\Android\Sdk\build-tools\36.0.0\aapt2.exe' dump badging '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.12-release.apk'
-& '.\EnvTools\Android\Sdk\build-tools\36.0.0\apksigner.bat' verify --print-certs '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.12-release.apk'
-```
+构建产物位于 `app/build/outputs/apk/`，文件名为 `FocusRestore-<versionName>-<buildType>.apk`。官方发布的 Debug 和 Release 使用同一测试证书，便于覆盖升级并保留配置。
 
 ## 安装与验证
 
 安装前确认设备已解锁、已启用 ADB，并已备份相关配置。安装不会自动启用 LSPosed 模块，也不会自动将作用域加入 SystemUI。
 
 ```powershell
-adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\debug\FocusRestore-0.29.12-debug.apk'
+adb install -r '.\FocusRestore-0.29.12-debug.apk'
 ```
 
 或安装 Release：
 
 ```powershell
-adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.12-release.apk'
+adb install -r '.\FocusRestore-0.29.12-release.apk'
 ```
 
 安装后：
