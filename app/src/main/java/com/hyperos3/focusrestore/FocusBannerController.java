@@ -460,7 +460,7 @@ public final class FocusBannerController {
                 event(currentKey, "using media notification RemoteViews");
             } else {
                 try {
-                    candidate = renderer.create(currentKey, currentSbn);
+                    candidate = renderer.create(currentKey, currentSbn, anchor.getContext());
                 } catch (Throwable nativeError) {
                 // A focusType=CUSTOM notification is rendered by FocusNotifPreHandler through
                 // buildNoParamsFocusNotification, which never calls createStandardTemplateView, so the

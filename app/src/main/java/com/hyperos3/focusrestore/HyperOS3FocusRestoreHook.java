@@ -439,6 +439,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     }
                 });
         os4Controller.install();
+        hookMediaNotificationLifecycle();
+        hookMediaOutputEntry();
+        hookMiPlayProbe();
         log("installedMode=OS4");
     }
 
@@ -548,6 +551,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * seamlessButton, UserHandle.getUserHandleForUid(appUid), MediaData.token)}; FocusRestore
      * independently resolves the same manager from the ROM's media view controller and calls the
      * same public method instead of copying the plugin/妙播 implementation.
+     *
+     * <p>OS4 接口事实来源：用户提供的 MT MCP APK，SystemUI 17.03.260226.r
+     * （versionCode 202602260）；MediaOutputDialogManager.createAndShow 的六参数重载，
+     * MediaControlPanel$$ExternalSyntheticLambda8 调用末尾布尔参数为 false。
+     * 出处：http://192.168.31.239:8787/mcp；
+     * 版权所有者及该 ROM 私有实现许可证未确认。本项目仅依据签名独立适配，未复制外部实现。
      */
     private void hookMediaOutputEntry() {
         try {
@@ -561,7 +570,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 }
             });
             MediaNotificationBannerSource.setSeamlessOpener(this::openMediaPicker);
-            log("OS3 media output picker hook installed");
+            log("media output picker hook installed");
         } catch (Throwable throwable) {
             error("hookMediaOutputEntry", throwable);
         }
@@ -598,10 +607,20 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         "com.android.systemui.animation.LaunchableView", classLoader);
                 if (launchableView != null && launchableView.isInstance(anchor)) anchorView = anchor;
             }
-            Method createAndShow = XposedHelpers.findMethodExact(manager.getClass(),
-                    "createAndShow", String.class, boolean.class, View.class,
-                    android.os.UserHandle.class, android.media.session.MediaSession.Token.class);
-            createAndShow.invoke(manager, packageName, true, anchorView, userHandle, token);
+            // OS4 接口多一个布尔参数，ROM 自身传 false；按已安装模式选择，保留 OS3 的旧接口。
+            Method createAndShow;
+            if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4) {
+                createAndShow = XposedHelpers.findMethodExact(manager.getClass(),
+                        "createAndShow", String.class, boolean.class, View.class,
+                        android.os.UserHandle.class, android.media.session.MediaSession.Token.class,
+                        boolean.class);
+                createAndShow.invoke(manager, packageName, true, anchorView, userHandle, token, false);
+            } else {
+                createAndShow = XposedHelpers.findMethodExact(manager.getClass(),
+                        "createAndShow", String.class, boolean.class, View.class,
+                        android.os.UserHandle.class, android.media.session.MediaSession.Token.class);
+                createAndShow.invoke(manager, packageName, true, anchorView, userHandle, token);
+            }
             log("media output picker opened key=" + key + " package=" + packageName
                     + " animated=" + (anchorView != null));
             return true;
@@ -893,8 +912,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     classLoader);
             Class<?> mediaData = FocusReflection.findClass(
                     "com.android.systemui.media.controls.shared.model.MediaData", classLoader);
-            XposedHelpers.findAndHookMethod(listener, "onMediaDataLoaded", String.class,
-                    String.class, mediaData, boolean.class, new XC_MethodHook() {
+            XC_MethodHook mediaDataLoadedHook = new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             String key = param.args == null || param.args.length == 0
@@ -934,7 +952,18 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             }
                             debug("media data captured key=" + key);
                         }
-                    });
+                    };
+            try {
+                // OS3 exposes the MediaDataManager.Listener callback with an extra
+                // immediately flag; OS4's listener uses the three-argument contract.
+                XposedHelpers.findAndHookMethod(listener, "onMediaDataLoaded", String.class,
+                        String.class, mediaData, boolean.class, mediaDataLoadedHook);
+                log("media data loaded hook signature=OS3");
+            } catch (Throwable os3SignatureMissing) {
+                XposedHelpers.findAndHookMethod(listener, "onMediaDataLoaded", String.class,
+                        String.class, mediaData, mediaDataLoadedHook);
+                log("media data loaded hook signature=OS4");
+            }
             XposedHelpers.findAndHookMethod(listener, "onMediaDataRemoved", String.class,
                     boolean.class, new XC_MethodHook() {
                         @Override
@@ -950,7 +979,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             debug("media data dropped key=" + key);
                         }
                     });
-            log("OS3 media notification lifecycle hooks installed");
+            log("media notification lifecycle hooks installed");
         } catch (Throwable throwable) {
             error("hookMediaNotificationLifecycle", throwable);
         }
@@ -1874,6 +1903,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         // OS3 的 StrongToast 先于电池回调到达；它没有 OS4 那套接电会话状态，不能把上一条
         // 通知到期后的 closed 标记带到下一次充电提示，否则新接电时只剩竖线甚至完全没有焦点提示。
         boolean os4ChargeLifecycle = installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4;
+        // 同时记录模式与会话快照，避免把 OS3 的残留标记误判为 OS4 会话拒绝。
+        debug("device stage=session entry=" + entry + " mode=" + installedHookMode
+                + " event=" + payload.eventId + " active=" + activeDeviceEventId
+                + " closed=" + deviceChargeSessionClosed + " deadline=" + deviceChargeDeadline
+                + " now=" + SystemClock.elapsedRealtime()
+                + " pendingId=" + pendingDeviceFocusId);
         if (os4ChargeLifecycle && "charge".equals(payload.eventId) && deviceChargeSessionClosed) {
             debug("device stage=request entry=" + entry + " result=closed-charge-session");
             return false;
@@ -2872,7 +2907,23 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
             StringBuilder text = new StringBuilder();
             int[] budget = {4};
-            for (View prompt : prompts) collectFocusTexts(prompt, text, budget);
+            for (View prompt : prompts) {
+                // 文本有值不等于宿主可见；只在 Debug 的有限次现场采样记录父层状态。
+                if (BuildConfig.DEBUG && prompt != null) {
+                    Rect visible = new Rect();
+                    boolean globalVisible = prompt.getGlobalVisibleRect(visible);
+                    ViewParent parent = prompt.getParent();
+                    debug("OS3 prompt host mark=" + mark + " key=" + key
+                            + " attached=" + prompt.isAttachedToWindow()
+                            + " shown=" + prompt.isShown() + " vis=" + prompt.getVisibility()
+                            + " alpha=" + prompt.getAlpha() + " width=" + prompt.getWidth()
+                            + " height=" + prompt.getHeight() + " globalVisible=" + globalVisible
+                            + " rect=" + visible.toShortString()
+                            + " parentAlpha=" + (parent instanceof View ? ((View) parent).getAlpha() : -1f)
+                            + " parentVis=" + (parent instanceof View ? ((View) parent).getVisibility() : -1));
+                }
+                collectFocusTexts(prompt, text, budget);
+            }
             log("focus prompt text dump " + mark + " key=" + key
                     + (text.length() == 0 ? " textViews=none" : text.toString()));
         } catch (Throwable t) {

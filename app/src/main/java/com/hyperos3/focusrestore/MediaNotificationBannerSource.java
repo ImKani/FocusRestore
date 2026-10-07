@@ -587,8 +587,11 @@ final class MediaNotificationBannerSource implements FocusBannerSource {
                         mediaController.getTransportControls().seekTo(progress);
                         sought = true;
                     }
-                } catch (Throwable ignored) {
-                    // transport unavailable; position refresh will snap back
+                } catch (Throwable error) {
+                    // 保留回弹行为，但 Debug 必须能区分未找到控制器与实际发送失败。
+                    if (BuildConfig.DEBUG) android.util.Log.e("HyperOS3FocusRestore",
+                            "DIAG media seek request failed key=" + sbn.getKey()
+                                    + " target=" + progress, error);
                 }
                 android.util.Log.i("HyperOS3FocusRestore",
                         "media seek drag stop progress=" + progress + " controller="
@@ -897,6 +900,12 @@ final class MediaNotificationBannerSource implements FocusBannerSource {
                 showLoadingThumb();
                 return;
             }
+            // 只在加载态结束时打印一次；sought 只证明请求发出，不证明播放器已跳转。
+            if (BuildConfig.DEBUG) android.util.Log.i("HyperOS3FocusRestore",
+                    "DIAG media seek complete key=" + sbn.getKey()
+                            + " result=" + (settled ? "settled" : "timeout")
+                            + " target=" + pendingSeekTargetMs + " position=" + position
+                            + " elapsed=" + (SystemClock.uptimeMillis() - pendingSeekSince));
             clearPendingSeek();
         }
         int progress = position >= 0 ? (int) Math.min(position, seekBar.getMax()) : 0;

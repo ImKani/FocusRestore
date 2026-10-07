@@ -8,6 +8,10 @@
 /*
  * 原始项目：https://github.com/ImKani/FocusRestore
  * 外部事实来源：miui.systemui.plugin TemplateFactoryV3/TemplateBuilderV3 私有接口；分析版本和证据见 Notes/analysis。
+ * 旧协议接口来源：MT 只读验证 OS3 17.1.4.71.0（9pip4krs）与 OS4 18.2.2.2.0（z1xngmhd），
+ * 小米 HyperOS 插件 FocusTemplate.wrapNotification / TemplateRevert.buildNormalViews；
+ * 具体作者/版权所有者及私有协议许可未确认。
+ * 本项目独立构造 TemplateRevert 与 Content，不复制 ROM 实现，不调用有超时副作用的 wrap。
  * 说明：本文件为 FocusRestore 独立实现，不复制或重新授权 SystemUI/plugin 代码。
  */
 
@@ -43,6 +47,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.json.JSONObject;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -117,6 +123,8 @@ final class NativeFocusTemplateRenderer {
                 return;
             }
             Installation installation = new Installation(pluginLoader);
+            installations.put(pluginLoader, installation);
+            installLegacyObserver(installation);
             try {
                 Class<?> factoryClass = load(pluginLoader, FACTORY);
                 Method standard = factoryClass.getDeclaredMethod("createStandardTemplateView",
@@ -148,11 +156,120 @@ final class NativeFocusTemplateRenderer {
                 }));
                 log("native renderer hooks installed; observing normal V3 production only");
             } catch (Throwable error) {
-                installation.connected = false;
-                installations.remove(pluginLoader);
-                unhook(installation);
+                // V3 与旧协议互不依赖；缺少 V3 合同不能撤销已安装的验证码入口。
                 report("native V3 renderer unavailable for plugin loader", error);
             }
+        }
+    }
+
+    /** 只观察 ROM 成功产出的旧协议内容，缓存身份与弱 Context，绝不保存其视图或模板。 */
+    private void installLegacyObserver(Installation installation) {
+        try {
+            Class<?> template = load(installation.loader,
+                    "miui.systemui.notification.focus.template.FocusTemplate");
+            Method wrap = template.getDeclaredMethod("wrapNotification", Context.class,
+                    StatusBarNotification.class, load(installation.loader, CONTENT));
+            installation.hooks.add(XposedBridge.hookMethod(wrap, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.hasThrowable() || param.thisObject == null
+                            || !"miui.systemui.notification.focus.template.TemplateRevert"
+                            .equals(param.thisObject.getClass().getName())) return;
+                    try {
+                        StatusBarNotification sbn = (StatusBarNotification) param.args[1];
+                        Stamp stamp = Stamp.read(sbn);
+                        String payload = FocusParamKeys.pick(sbn.getNotification().extras::get);
+                        if (!NativeSmsVerificationPolicy.accepts(sbn.getPackageName(), payload)) return;
+                        Object view = call(param.args[2], "getFocusNotification");
+                        if (!(view instanceof View)) return;
+                        synchronized (lock) {
+                            if (!installation.connected) return;
+                            Long removedAt = removedKeys.get(stamp.key);
+                            if (removedAt != null && stamp.postTime <= removedAt) return;
+                            Source previous = sources.get(stamp.key);
+                            if (previous != null && previous.stamp.postTime > stamp.postTime) return;
+                            removedKeys.remove(stamp.key);
+                            pruneSources();
+                            sources.put(stamp.key, new Source(installation, (Context) param.args[0], stamp));
+                            trim(sources, MAX_SOURCES);
+                        }
+                        debug("native source-ready key=" + stamp.key + " postTime=" + stamp.postTime
+                                + " paramKey=" + stamp.paramKey
+                                + " source=legacy-sms-verification template=TemplateRevert");
+                        notifySourceChanged();
+                    } catch (Throwable error) { report("observe legacy SMS source", error); }
+                }
+            }));
+            log("native renderer legacy SMS observer installed");
+        } catch (Throwable error) { report("install legacy SMS observer", error); }
+    }
+
+    /** 新建六份 ROM 内容，仅展示独立副本；不调用 covert 的全局 flip 状态或 wrap 的通知超时逻辑。 */
+    private Render createLegacy(Source source, StatusBarNotification sbn, Context hostContext) throws Exception {
+        Context context = source.pluginContext.get();
+        if (context == null) throw unavailable("legacy plugin Context released");
+        StatusBarNotification binding = cloneForBinding(sbn);
+        String payload = FocusParamKeys.pick(binding.getNotification().extras::get);
+        if (!NativeSmsVerificationPolicy.accepts(binding.getPackageName(), payload)) {
+            throw unavailable("legacy SMS parameters no longer match");
+        }
+        Object content = null;
+        FrameLayout expanded = null;
+        String stage = "construct-template";
+        try {
+            Object template = construct(load(source.installation.loader,
+                    "miui.systemui.notification.focus.template.TemplateRevert"),
+                    new Class<?>[]{JSONObject.class}, new JSONObject(payload));
+            content = construct(load(source.installation.loader, CONTENT_IMPL), new Class<?>[0]);
+            call(content, "setKey", binding.getKey());
+            call(content, "setSbn", binding);
+            call(template, "setBitmapBundle", binding.getNotification().extras.getBundle("miui.focus.pics"));
+            call(template, "setActionBundle", binding.getNotification().extras.getBundle("miui.focus.actions"));
+            stage = "build-native-views";
+            call(template, "buildNormalViews", context, binding, content);
+            View row = rowProvider == null ? null : rowProvider.findRow(binding.getKey());
+            stage = "resolve-systemui-context";
+            NativeLegacyAppearanceContext.Result resolved =
+                    NativeLegacyAppearanceContext.resolve(hostContext, row == null ? null : row.getContext(), context);
+            stage = "read-appearance";
+            NativeFocusAppearance appearance = NativeFocusAppearance.read(row, resolved.context);
+            debug("native legacy SMS appearance key=" + binding.getKey()
+                    + " source=legacy-sms-verification contextOrigin=" + resolved.origin
+                    + " baseDepth=" + resolved.baseDepth
+                    + " class=" + resolved.context.getClass().getName()
+                    + " package=" + resolved.context.getPackageName()
+                    + " width=" + appearance.width + " radius=" + appearance.radius
+                    + " dark=" + appearance.dark + " appearance=" + appearance.description);
+            stage = "select-native-theme-view";
+            String getter = appearance.dark ? "getFocusNotificationDark" : "getFocusNotification";
+            Object result = call(content, getter);
+            if (!(result instanceof View)) throw unavailable("legacy native view missing: " + getter);
+            View body = (View) result;
+            if (body.getParent() != null || body.isAttachedToWindow()) {
+                throw unavailable("legacy native view is not independent");
+            }
+            stage = "wrap-independent-native-view";
+            expanded = new FrameLayout(context);
+            expanded.setBackground(appearance.background);
+            roundClip(expanded, appearance.radius);
+            body.setLayoutParams(new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            expanded.addView(body);
+            synchronized (lock) {
+                if (!source.installation.connected || sources.get(binding.getKey()) != source) {
+                    throw unavailable("legacy source changed during creation");
+                }
+            }
+            return new Render(this, source.installation.loader, expanded, context, appearance.width,
+                    body.getMinimumHeight(), null, content, new String[0], Collections.emptyList(),
+                    binding, body, source, "native-legacy-sms/" + getter + "/" + appearance.description);
+        } catch (Throwable error) {
+            if (expanded != null) {
+                try { expanded.removeAllViews(); }
+                catch (Throwable cleanupError) { report("remove partial legacy container", cleanupError); }
+            }
+            cleanupBuilder(null, content, new String[0], Collections.emptyList());
+            throw new IllegalStateException("native legacy SMS creation failed at " + stage
+                    + ": " + message(error), unwrap(error));
         }
     }
 
@@ -216,6 +333,10 @@ final class NativeFocusTemplateRenderer {
     }
 
     Render create(String key, StatusBarNotification sbn) throws Exception {
+        return create(key, sbn, null);
+    }
+
+    Render create(String key, StatusBarNotification sbn, Context hostContext) throws Exception {
         requireMainThread();
         Stamp requested = Stamp.read(sbn);
         if (key == null || !key.equals(requested.key)) {
@@ -232,6 +353,12 @@ final class NativeFocusTemplateRenderer {
             source = sources.get(key);
         }
         if (source == null || !source.installation.connected) {
+            String payload = FocusParamKeys.pick(sbn.getNotification().extras::get);
+            // 旧协议不会生成 V3 缓存；缺来源时准确说明等待的入口，不误导成重复点击可补齐 V3。
+            if (NativeSmsVerificationPolicy.accepts(sbn.getPackageName(), payload)) {
+                throw unavailable("legacy SMS source unavailable; await successful native TemplateRevert.wrapNotification"
+                        + " (paramKey=" + requested.paramKey + ", " + observedSummary() + ")");
+            }
             throw unavailable("no observed native V3 template for this key; await normal plugin inflation"
                     + " (paramKey=" + requested.paramKey + ", "
                     + (source == null ? "cache-miss" : "loader-disconnected") + ", "
@@ -240,6 +367,11 @@ final class NativeFocusTemplateRenderer {
         if (!source.stamp.identity.matches(requested.identity)) {
             throw unavailable("native model/SBN identity is stale (key/package/user/uid/postTime/params); "
                     + "await this notification's normal V3 inflation");
+        }
+        if (source.legacy) {
+            debug("native renderer select key=" + key + " postTime=" + requested.postTime
+                    + " source=legacy-sms-verification template=TemplateRevert");
+            return createLegacy(source, sbn, hostContext);
         }
         Object factory = source.factory.get();
         if (factory == null) throw unavailable("native template factory was released");
@@ -467,7 +599,8 @@ final class NativeFocusTemplateRenderer {
         Iterator<Source> iterator = sources.values().iterator();
         while (iterator.hasNext()) {
             Source source = iterator.next();
-            if (!source.installation.connected || source.factory.get() == null) iterator.remove();
+            if (!source.installation.connected || (source.legacy
+                    ? source.pluginContext.get() == null : source.factory.get() == null)) iterator.remove();
         }
     }
 
@@ -499,7 +632,13 @@ final class NativeFocusTemplateRenderer {
     }
 
     private void cleanupBuilder(Object builder, Object content, String[] modules, List<Object> adapters) {
-        if (builder == null) return;
+        if (builder == null) {
+            if (content != null) {
+                try { call(content, "reset"); }
+                catch (Throwable error) { report("reset independent legacy content", error); }
+            }
+            return;
+        }
         for (String module : new LinkedHashSet<>(java.util.Arrays.asList(modules))) {
             if (module == null || module.isEmpty()) continue;
             try { call(builder, "removeModuleView", module); }
@@ -629,7 +768,7 @@ final class NativeFocusTemplateRenderer {
 
         @Override
         public void onAttached() {
-            if (closed.get()) return;
+            if (closed.get() || templateSource.legacy) return;
             if (Looper.myLooper() != Looper.getMainLooper()) {
                 owner.report("native render attach", new IllegalStateException("main thread required"));
                 return;
@@ -688,12 +827,25 @@ final class NativeFocusTemplateRenderer {
         final Object template;
         final Stamp stamp;
         final boolean isFlip;
+        final boolean legacy;
+        final WeakReference<Context> pluginContext;
+        Source(Installation installation, Context context, Stamp stamp) {
+            this.installation = installation;
+            this.factory = new WeakReference<>(null);
+            this.template = null;
+            this.stamp = stamp;
+            this.isFlip = false;
+            this.legacy = true;
+            this.pluginContext = new WeakReference<>(context);
+        }
         Source(Installation installation, Object factory, Object template, Stamp stamp, boolean isFlip) {
             this.installation = installation;
             this.factory = new WeakReference<>(factory);
             this.template = template;
             this.stamp = stamp;
             this.isFlip = isFlip;
+            this.legacy = false;
+            this.pluginContext = new WeakReference<>(null);
         }
     }
 
