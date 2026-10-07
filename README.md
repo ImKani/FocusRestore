@@ -20,13 +20,12 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-版本：`0.29.11`（versionCode 256）
+版本：`0.29.12`（versionCode 257）
 
-- 修复 OS3 系统短信验证码焦点横幅无法展开的问题。
-- 修复 OS4 媒体焦点横幅不显示的问题。
-- 修复 OS4 无缝流转入口，支持小米妙播和安卓原生输出选择界面。
+- 修复 OS3/OS4 旧协议进度通知（如外卖配送）点击无法展开横幅的问题。
+- 保留现有 V3、短信验证码和媒体通知横幅路径。
 
-用户已在目标 OS4 设备确认媒体横幅、小米妙播和安卓原生入口正常；OS3 原生流转保留原有接口，未重新实机复测。Debug 与 Release 均沿用固定测试签名。
+旧协议进度横幅使用 ROM 原生模板独立创建，不移动系统已有视图；静态接口已核对，仍待 OS3/OS4 实机复核。此前 OS4 媒体横幅、小米妙播和安卓原生入口已由用户确认正常。
 
 本项目由原作者 ImKani 持续维护，AI 仅作为本轮分析与编写的辅助工具。
 
@@ -124,13 +123,13 @@ Debug 版本额外提供以下兼容选项，普通用户通常不需要修改�
 ```sh
 su
 /system/bin/logcat -c
-/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.29.11.log
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.29.12.log
 ```
 
 保持命令运行，然后通过设备上的方式手动重启系统界面。完成复现后回到 MT 终端，按 `Ctrl+C` 停止抓取。日志保存在：
 
 ```text
-/sdcard/focus-restore-0.29.11.log
+/sdcard/focus-restore-0.29.12.log
 ```
 
 ### 电脑端：ADB + PowerShell
@@ -208,8 +207,8 @@ clean Release 构建：
 
 当前版本产物命名：
 
-- `app/build/outputs/apk/debug/FocusRestore-0.29.11-debug.apk`
-- `app/build/outputs/apk/release/FocusRestore-0.29.11-release.apk`
+- `app/build/outputs/apk/debug/FocusRestore-0.29.12-debug.apk`
+- `app/build/outputs/apk/release/FocusRestore-0.29.12-release.apk`
 
 本地 Release 构建使用项目保留的 Debug 证书，适合测试和直接分发，不是应用商店生产签名。固定证书 SHA-256：
 
@@ -226,8 +225,8 @@ ab58b5e208e21aaa9a8628c3ceb661b2bb89cdcfb1d941fbf892ae4936e16809
 构建后检查版本和签名：
 
 ```powershell
-& '.\EnvTools\Android\Sdk\build-tools\36.0.0\aapt2.exe' dump badging '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.11-release.apk'
-& '.\EnvTools\Android\Sdk\build-tools\36.0.0\apksigner.bat' verify --print-certs '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.11-release.apk'
+& '.\EnvTools\Android\Sdk\build-tools\36.0.0\aapt2.exe' dump badging '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.12-release.apk'
+& '.\EnvTools\Android\Sdk\build-tools\36.0.0\apksigner.bat' verify --print-certs '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.12-release.apk'
 ```
 
 ## 安装与验证
@@ -235,13 +234,13 @@ ab58b5e208e21aaa9a8628c3ceb661b2bb89cdcfb1d941fbf892ae4936e16809
 安装前确认设备已解锁、已启用 ADB，并已备份相关配置。安装不会自动启用 LSPosed 模块，也不会自动将作用域加入 SystemUI。
 
 ```powershell
-adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\debug\FocusRestore-0.29.11-debug.apk'
+adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\debug\FocusRestore-0.29.12-debug.apk'
 ```
 
 或安装 Release：
 
 ```powershell
-adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.11-release.apk'
+adb install -r '.\FocusRestoreLSPosed\app\build\outputs\apk\release\FocusRestore-0.29.12-release.apk'
 ```
 
 安装后：
