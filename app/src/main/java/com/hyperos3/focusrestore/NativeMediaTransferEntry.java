@@ -6,6 +6,7 @@
  */
 package com.hyperos3.focusrestore;
 
+import android.content.Context;
 import android.os.Looper;
 import android.view.View;
 
@@ -43,6 +44,18 @@ final class NativeMediaTransferEntry {
         Object modal = null;
         boolean dispatchStarted = false;
         try {
+            // 原生 listener 从锚点取 Application Context 读取 CTA；不能传只有应用资源的包 Context。
+            // 未确认上下文时交给安卓输出回退，不伪造同意，也不显式重复启动设备互联 CTA。
+            Context anchorContext = anchor.getContext();
+            Context applicationContext = anchorContext == null ? null : anchorContext.getApplicationContext();
+            if (applicationContext == null
+                    || !"com.android.systemui".equals(applicationContext.getPackageName())) {
+                logger.log("native MiPlay unavailable reason=anchor-application-context"
+                        + " anchorPackage=" + (anchorContext == null ? "null" : anchorContext.getPackageName())
+                        + " applicationPackage=" + (applicationContext == null
+                        ? "null" : applicationContext.getPackageName()));
+                return false;
+            }
             Object lazy = XposedHelpers.getObjectField(mediaViewController, "mediaTransferManager");
             Object manager = lazy == null ? null : XposedHelpers.callMethod(lazy, "get");
             if (manager == null || !XposedHelpers.getBooleanField(manager, "mSupportMiPlayAudio")) {
@@ -72,6 +85,8 @@ final class NativeMediaTransferEntry {
             }
             // 直接调用原生 listener，不调用 applyMediaTransferView，因此不加入 mViews 或注册回调。
             // CTA 未同意时 listener 自行打开 CTA 页；void 返回只代表分发，不应再叠加安卓回退。
+            logger.log("native MiPlay anchor applicationPackage=" + applicationContext.getPackageName()
+                    + " contextClass=" + anchorContext.getClass().getName());
             dispatchStarted = true;
             ((View.OnClickListener) listener).onClick(anchor);
         } catch (Throwable failure) {

@@ -20,11 +20,11 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-版本：`0.30.3`（versionCode 261）
+版本：`0.30.4`（versionCode 262）
 
-- HyperOS 4 媒体焦点跟随超级岛的媒体选择时机，首次播放才显示、同一媒体暂停保留，划掉通知栏媒体卡片后隐藏。
-- 从媒体横幅进入无缝流转后自动收起横幅。
-- 小米妙播改用通知栏和超级岛共用的原生流转窗口，保留安卓原生入口选项。
+- 修复从媒体横幅进入小米妙播时，已同意隐私政策仍重复弹出确认页的问题。
+- 保留原生隐私确认：尚未同意时仍由系统提示，不修改用户同意状态。
+- 保留媒体焦点生命周期、流转后收起横幅及安卓原生入口选项。
 
 长按优先交给系统通知行处理；媒体通知缺少通知行时沿用横幅的媒体会话打开入口。通知已移除或焦点已切换时不执行打开。
 
@@ -86,7 +86,7 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 “点击媒体焦点通知”和“无缝流转入口”需要同时启用媒体焦点通知；原有短按行为相关子项在“点击焦点通知展开横幅”关闭时不可用。
 
-HyperOS 4 媒体焦点使用原生媒体卡片选出的当前媒体：首次加入或切换媒体需处于播放中，同一媒体暂停保留；卡片被划掉或当前媒体移除后隐藏，恢复播放并被原生重新选中后恢复。通知 Entry 留存或更新不会单独恢复焦点。妙播复用 ROM 的原生流转入口及窗口，CTA、退出和动画交给系统；成功分发后收起对应媒体横幅，原生入口不可用则回退安卓输出面板。媒体横幅本身仍使用现有渲染方式。相关私有接口已核对 OS3/OS4 参考 ROM，最新修复仍需真机验证。
+HyperOS 4 媒体焦点使用原生媒体卡片选出的当前媒体：首次加入或切换媒体需处于播放中，同一媒体暂停保留；卡片被划掉或当前媒体移除后隐藏，恢复播放并被原生重新选中后恢复。通知 Entry 留存或更新不会单独恢复焦点。妙播复用 ROM 的原生流转入口及窗口，CTA、退出和动画交给系统；成功分发后收起对应媒体横幅，原生入口不可用则回退安卓输出面板。媒体横幅本身仍使用现有渲染方式。相关私有接口已核对 OS3/OS4 参考 ROM；用户已确认 0.30.4 修复媒体横幅妙播重复隐私确认，其他设备及 OS3 行为仍需分别验证。
 
 ### 滚动与兼容
 
@@ -129,13 +129,13 @@ Debug 版本额外提供以下兼容选项，普通用户通常不需要修改�
 ```sh
 su
 /system/bin/logcat -c
-/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.30.3.log
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.30.4.log
 ```
 
 保持命令运行，然后通过设备上的方式手动重启系统界面。完成复现后回到 MT 终端，按 `Ctrl+C` 停止抓取。日志保存在：
 
 ```text
-/sdcard/focus-restore-0.30.3.log
+/sdcard/focus-restore-0.30.4.log
 ```
 
 ### 电脑端：ADB + PowerShell
@@ -210,13 +210,13 @@ gradle :app:clean :app:assembleDebug :app:assembleRelease
 安装前确认设备已解锁、已启用 ADB，并已备份相关配置。安装不会自动启用 LSPosed 模块，也不会自动将作用域加入 SystemUI。
 
 ```powershell
-adb install -r '.\FocusRestore-0.30.3-debug.apk'
+adb install -r '.\FocusRestore-0.30.4-debug.apk'
 ```
 
 或安装 Release：
 
 ```powershell
-adb install -r '.\FocusRestore-0.30.3-release.apk'
+adb install -r '.\FocusRestore-0.30.4-release.apk'
 ```
 
 安装后：
