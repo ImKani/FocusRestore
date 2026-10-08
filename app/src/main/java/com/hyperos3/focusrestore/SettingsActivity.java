@@ -146,6 +146,10 @@ public final class SettingsActivity extends Activity {
     private Switch useSmallIconFallbackSwitch;
     private Switch notificationRowClickFallbackSwitch;
     private Switch independentFocusBannerSwitch;
+    private Switch longPressNotificationRowClickSwitch;
+    private SeekBar longPressSecondsSeekBar;
+    private TextView longPressSecondsValue;
+    private TextView longPressSecondsLabel;
     private LinearLayout nativeBannerOptionsPanel;
     private EditText generalSeparatorInput;
     private EditText sideSeparatorInput;
@@ -166,7 +170,9 @@ public final class SettingsActivity extends Activity {
             pendingDisableIslandProperty, pendingDisableIslandFeatureCache, pendingAllowFocusClick,
             pendingHideNotificationIcons, pendingShowFocusDivider, pendingShowIslandIcon,
             pendingTintIslandIcon, pendingUseSmallIconFallback,
-            pendingNotificationRowClickFallback, pendingIndependentFocusBanner;
+            pendingNotificationRowClickFallback, pendingIndependentFocusBanner,
+            pendingLongPressNotificationRowClick;
+    private float pendingLongPressSeconds;
     private int pendingHookMode, pendingWidthDp, pendingDelayMs, pendingIslandTextMode;
     private float pendingFocusMaxDisplaySeconds;
     private String pendingGeneralSeparator, pendingSideSeparator;
@@ -582,6 +588,24 @@ public final class SettingsActivity extends Activity {
                 "以上子项仅在“点击焦点通知展开横幅”启用时生效；“点击媒体焦点通知”与“无缝流转入口”"
                         + "还需同时开启“启用媒体焦点通知”。实验性功能可能因 ROM 版本不兼容，不建议日常启用。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        // 长按直接走通知列表点击，不能归入短按横幅子项或旧点击互斥链。
+        longPressNotificationRowClickSwitch = createSwitch("长按焦点通知模拟通知列表点击（实验性）");
+        interactionPanel.addView(longPressNotificationRowClickSwitch, matchWrap(dp(4)));
+        interactionPanel.addView(text(
+                "默认关闭；长按直接走通知列表点击，独立于短按横幅和旧版打开通知开关。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(4)));
+        LinearLayout longPressRow = valueRow("长按时间", String.format(Locale.US,
+                "%.1f 秒", pendingLongPressSeconds));
+        longPressSecondsLabel = (TextView) longPressRow.getChildAt(0);
+        longPressSecondsValue = (TextView) longPressRow.getChildAt(1);
+        interactionPanel.addView(longPressRow, matchWrap(dp(4)));
+        longPressSecondsSeekBar = new SeekBar(this);
+        styleSeekBar(longPressSecondsSeekBar);
+        // 与宽度限制共用控件样式；每格 0.1 秒，端点严格对应 0.2 和 10 秒。
+        longPressSecondsSeekBar.setMax(98);
+        longPressSecondsSeekBar.setProgress(Math.round(pendingLongPressSeconds * 10f) - 2);
+        interactionPanel.addView(longPressSecondsSeekBar, matchWrap(dp(2)));
+        interactionPanel.addView(rangeRow("最小 0.2 秒", "最大 10 秒"), matchWrap(dp(8)));
         allowFocusClickSwitch = createSwitch("旧版：打开通知内容（实验性）");
         notificationRowClickFallbackSwitch = createSwitch(
                 "直接打开失败时模拟通知列表点击（实验性）");
@@ -623,6 +647,7 @@ public final class SettingsActivity extends Activity {
         allowFocusClickSwitch.setChecked(pendingAllowFocusClick);
         notificationRowClickFallbackSwitch.setChecked(pendingNotificationRowClickFallback);
         independentFocusBannerSwitch.setChecked(pendingIndependentFocusBanner);
+        longPressNotificationRowClickSwitch.setChecked(pendingLongPressNotificationRowClick);
         syncBannerBackgroundField();
         syncMediaFocusClickField();
         syncMediaFocusCastPickerField();
@@ -716,6 +741,8 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.useSmallIconFallback", pendingUseSmallIconFallback);
         outState.putBoolean("m3.rowClickFallback", pendingNotificationRowClickFallback);
         outState.putBoolean("m3.independentFocusBanner", pendingIndependentFocusBanner);
+        outState.putBoolean("m3.longPressNotificationRowClick", pendingLongPressNotificationRowClick);
+        outState.putFloat("m3.longPressSeconds", pendingLongPressSeconds);
         outState.putString("m3.general", pendingGeneralSeparator);
         outState.putString("m3.side", pendingSideSeparator);
         outState.putStringArrayList("m3.packages", new ArrayList<>(pendingForcePackages));
@@ -772,6 +799,11 @@ public final class SettingsActivity extends Activity {
                 pendingNotificationRowClickFallback);
         pendingIndependentFocusBanner = state.getBoolean("m3.independentFocusBanner",
                 pendingIndependentFocusBanner);
+        // 旧 Bundle 没有新字段时保留刚加载的配置，避免旋转后清除用户选择。
+        pendingLongPressNotificationRowClick = state.getBoolean("m3.longPressNotificationRowClick",
+                pendingLongPressNotificationRowClick);
+        pendingLongPressSeconds = FocusRestoreSettings.normalizeLongPressSeconds(
+                state.getFloat("m3.longPressSeconds", pendingLongPressSeconds));
         pendingGeneralSeparator = state.getString("m3.general", pendingGeneralSeparator);
         pendingSideSeparator = state.getString("m3.side", pendingSideSeparator);
         ArrayList<String> packages = state.getStringArrayList("m3.packages");
@@ -910,6 +942,27 @@ public final class SettingsActivity extends Activity {
                 markPending();
             });
         }
+        if (longPressNotificationRowClickSwitch != null) {
+            longPressNotificationRowClickSwitch.setOnCheckedChangeListener((b, c) -> {
+                pendingLongPressNotificationRowClick = c;
+                updateExperimentalControls();
+                markPending();
+            });
+        }
+        if (longPressSecondsSeekBar != null) {
+            longPressSecondsSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                    // 只在用户拖动时改值，避免旧配置在页面重建时被静默舍入。
+                    if (!fromUser) return;
+                    pendingLongPressSeconds = (progress + 2) / 10f;
+                    longPressSecondsValue.setText(String.format(Locale.US,
+                            "%.1f 秒", pendingLongPressSeconds));
+                    markPending();
+                }
+                public void onStartTrackingTouch(SeekBar bar) { }
+                public void onStopTrackingTouch(SeekBar bar) { markPending(); }
+            });
+        }
         if (independentFocusBannerSwitch != null) {
             independentFocusBannerSwitch.setOnCheckedChangeListener((b, c) -> {
                 pendingIndependentFocusBanner = c;
@@ -1005,6 +1058,11 @@ public final class SettingsActivity extends Activity {
         setControlEnabled(mediaFocusCastPickerLabel, mediaSubEnabled);
         setControlEnabled(mediaFocusCastPickerField == null ? null
                 : mediaFocusCastPickerField.spinner, mediaSubEnabled);
+        // 长按开关始终可用，仅时长输入依赖它自身，不随短按开关清除或置灰。
+        setModeSpecificSwitchEnabled(longPressNotificationRowClickSwitch, true);
+        setControlEnabled(longPressSecondsLabel, pendingLongPressNotificationRowClick);
+        setControlEnabled(longPressSecondsSeekBar, pendingLongPressNotificationRowClick);
+        setControlEnabled(longPressSecondsValue, pendingLongPressNotificationRowClick);
         setModeSpecificSwitchEnabled(independentFocusBannerSwitch, true);
         setModeSpecificSwitchEnabled(allowFocusClickSwitch, !nativeBannerEnabled);
         setModeSpecificSwitchEnabled(notificationRowClickFallbackSwitch, !nativeBannerEnabled);
@@ -1387,6 +1445,8 @@ public final class SettingsActivity extends Activity {
         pendingUseSmallIconFallback = settings.useSmallIconFallback;
         pendingNotificationRowClickFallback = settings.notificationRowClickFallback;
         pendingIndependentFocusBanner = settings.independentFocusBanner;
+        pendingLongPressNotificationRowClick = settings.longPressNotificationRowClick;
+        pendingLongPressSeconds = settings.longPressSeconds;
         pendingGeneralSeparator = settings.islandGeneralSeparator;
         pendingSideSeparator = settings.islandSideSeparator;
         pendingForcePackages = new HashSet<>(settings.islandForcePackages);
@@ -1428,6 +1488,8 @@ public final class SettingsActivity extends Activity {
                 .useSmallIconFallback(pendingUseSmallIconFallback)
                 .notificationRowClickFallback(pendingNotificationRowClickFallback)
                 .independentFocusBanner(pendingIndependentFocusBanner)
+                .longPressNotificationRowClick(pendingLongPressNotificationRowClick)
+                .longPressSeconds(pendingLongPressSeconds)
                 .islandTextMode(pendingIslandTextMode)
                 .focusMaxDisplaySeconds(pendingFocusMaxDisplaySeconds)
                 .islandGeneralSeparator(pendingGeneralSeparator)

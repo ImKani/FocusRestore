@@ -40,7 +40,8 @@ public class SettingsContractTest {
                 "island_text_mode", "focus_max_display_seconds", "focus_timeout_exempt_packages",
                 "width_landscape_dp", "special_banner_normal_background", "notification_icon_hide_mode",
                 "island_custom_rules", "media_focus_enabled", "media_focus_native_banner",
-                "media_focus_cast_picker", "media_focus_cast_direct"
+                "media_focus_cast_picker", "media_focus_cast_direct",
+                "long_press_notification_row_click", "long_press_seconds"
         }, SettingsContract.COLUMNS);
         assertEquals(13, SettingsContract.HOOK_MODE);
         assertEquals(14, SettingsContract.HIDE_NOTIFICATION_ICONS);
@@ -62,6 +63,8 @@ public class SettingsContractTest {
         assertEquals(30, SettingsContract.MEDIA_FOCUS_NATIVE_BANNER);
         assertEquals(31, SettingsContract.MEDIA_FOCUS_CAST_PICKER);
         assertEquals(32, SettingsContract.MEDIA_FOCUS_CAST_DIRECT);
+        assertEquals(33, SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK);
+        assertEquals(34, SettingsContract.LONG_PRESS_SECONDS);
     }
 
     @Test

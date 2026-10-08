@@ -36,6 +36,7 @@ import android.widget.RemoteViews;
 import android.widget.TextView;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
@@ -179,6 +180,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     /** Keys observed as media notifications; bean callbacks can temporarily lose the media token. */
     private final Set<String> mediaNotificationKeys = Collections.synchronizedSet(new HashSet<>());
     private final Set<String> activeMediaNotificationKeys = Collections.synchronizedSet(new HashSet<>());
+    /** OS4 跟随原生 top 媒体及岛的首次播放/暂停保留规则，不由 Entry 更新复活。 */
+    private final MediaFocusLifecycleState mediaFocusLifecycle = new MediaFocusLifecycleState();
     /** Packages whose media notification the user dismissed from the shade (ROM lastDismissPkg). */
     private final Set<String> dismissedMediaPackages = Collections.synchronizedSet(new HashSet<>());
     /** Latest OS3 prompt controller, used to actively remove a dismissed media Focus bean. */
@@ -188,8 +191,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private volatile WeakReference<Object> mediaViewControllerRef = new WeakReference<>(null);
     /** Latest MiPlayPluginManager, owner of the MIUI 妙播 transfer panel plugin. */
     private volatile WeakReference<Object> miPlayPluginManagerRef = new WeakReference<>(null);
-    private volatile Object miPlayPanel;
-    private volatile View miPlayPanelHost;
     private final ThreadLocal<Boolean> replayingFocusEntry = new ThreadLocal<>();
     private final Map<String, WeakReference<Object>> notificationEntries =
             Collections.synchronizedMap(new LinkedHashMap<>());
@@ -365,6 +366,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         hookPromptViewSetData();
         hookPromptShouldShow();
         hookDisableConvertedFocusClick();
+        hookFocusLongPress();
         hookRemoteViewsErrors();
         log("installedMode=OS3");
     }
@@ -408,6 +410,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     @Override
                     public boolean clickNotificationRow(Object notificationEntry, String key) {
                         return performNotificationRowClick(notificationEntry, key, "OS4");
+                    }
+
+                    @Override
+                    public Runnable captureNotificationRowClick(Object notificationEntry, String key) {
+                        return captureLongPressRowClick(notificationEntry, key, "OS4");
                     }
 
                     @Override
@@ -640,8 +647,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * {@code mMiPlayPlugin}, and {@code MiPlayPluginImpl.showMiPlayDetailView} only calls
      * {@code QSControlMiPlayDetailContent.setDetailShowing} when the passed view is the plugin's own
      * panel from {@code createMiPlayDetailView()}; the ROM hosts that panel in
-     * {@code ModalQSControlDetail}. No external dialog entry exists, so FocusRestore probes the
-     * plugin before deciding whether a 妙播 entry can be offered alongside the native picker.
+     * {@code ModalQSControlDetail}. The production transfer entry is now independently verified
+     * and reused through {@link NativeMediaTransferEntry}; this probe remains diagnostic only.
      */
     private void hookMiPlayProbe() {
         try {
@@ -694,208 +701,37 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     /** Opens the configured cast UI for a media notification key without showing the banner. */
-    private boolean openMediaCast(String key) {
+    private boolean openMediaCast(String key, View anchor) {
         Object mediaData = MediaNotificationBannerSource.mediaDataFor(key);
         if (mediaData == null) {
             log("media cast direct rejected key=" + key + " reason=no-media-data");
             return false;
         }
-        return openMediaPicker(key, mediaData, null);
+        return openMediaPicker(key, mediaData, anchor);
     }
 
     /** Routes the seamless-transfer tap to the picker the user selected in settings. */
     private boolean openMediaPicker(String key, Object mediaData, View anchor) {
-        if (currentSettings != null
+        boolean opened = currentSettings != null
                 && currentSettings.mediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_MIPLAY
-                && showMiPlayPanel(key)) {
-            return true;
-        }
-        if (currentSettings != null
-                && currentSettings.mediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_MIPLAY) {
-            log("MiPlay panel unavailable key=" + key + " fallback=native");
-        }
-        return openMediaOutputPicker(key, mediaData, anchor);
-    }
-
-    /**
-     * Shows the MIUI 妙播 transfer panel in a FocusRestore-owned window.
-     *
-     * <p>The panel is created by the ROM's own plugin ({@code MiPlayPlugin
-     * .createMiPlayDetailView()}); FocusRestore only supplies the host window, scrim and dismissal,
-     * because the ROM's usual host ({@code ModalQSControlDetail}) is bound to the notification
-     * shade. Any failure hides the window again and the caller falls back to the Android picker.
-     */
-    private boolean showMiPlayPanel(String key) {
-        Object plugin = miPlayPlugin();
-        if (plugin == null || systemUiContext == null) return false;
-        hideMiPlayPanel();
-        try {
-            Object panelValue = XposedHelpers.callMethod(plugin, "createMiPlayDetailView");
-            if (!(panelValue instanceof View)) return false;
-            View panel = (View) panelValue;
-            applyMiPlayPanelBackground(panel);
-            FrameLayout scrim = new FrameLayout(systemUiContext);
-            scrim.setBackgroundColor(0x99000000);
-            scrim.setOnClickListener(view -> hideMiPlayPanel());
-            scrim.setFocusableInTouchMode(true);
-            scrim.setOnKeyListener((view, keyCode, event) -> {
-                if (keyCode != KeyEvent.KEYCODE_BACK || event.getAction() != KeyEvent.ACTION_UP) {
-                    return false;
-                }
-                hideMiPlayPanel();
-                return true;
-            });
-            FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
-                    miPlayPanelWidth(panel), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
-            scrim.addView(panel, panelParams);
-            WindowManager windowManager =
-                    (WindowManager) systemUiContext.getSystemService(Context.WINDOW_SERVICE);
-            if (windowManager == null) return false;
-            WindowManager.LayoutParams windowParams = new WindowManager.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                    android.graphics.PixelFormat.TRANSLUCENT);
-            windowManager.addView(scrim, windowParams);
-            XposedHelpers.callMethod(plugin, "showMiPlayDetailView", panel, "notification");
-            miPlayPanel = panel;
-            miPlayPanelHost = scrim;
-            animateMiPlayPanelIn(scrim, panel);
-            log("MiPlay panel shown key=" + key + " panel=" + panel.getClass().getName()
-                    + " width=" + panelParams.width);
-            return true;
-        } catch (Throwable throwable) {
-            error("showMiPlayPanel key=" + key, throwable);
-            hideMiPlayPanel();
-            return false;
-        }
-    }
-
-    /**
-     * Gives the panel the same background layer the ROM gives its 324dp column.
-     *
-     * <p>{@code ModalQSControlDetail.onFinishInflate} either enables blur with the
-     * {@code modal_miplay_container_blend_colors} blend array or paints
-     * {@code qs_control_detail_bg_color} ({@code #b21a1a1a}) when background blur is off. The panel
-     * clips itself to a rounded outline, so applying the layer to the panel keeps the native shape.
-     */
-    private void applyMiPlayPanelBackground(View panel) {
-        android.content.res.Resources resources = systemUiContext.getResources();
-        try {
-            Class<?> blur = FocusReflection.findClass("com.miui.systemui.util.MiBlurCompat",
-                    classLoader);
-            boolean blurEnabled = blur != null && Boolean.TRUE.equals(
-                    XposedHelpers.callStaticMethod(blur, "getBackgroundBlurOpened",
-                            resources.getConfiguration()));
-            if (blurEnabled) {
-                XposedHelpers.callStaticMethod(blur, "setMiViewBlurModeCompat", 1, panel);
-                int arrayId = resources.getIdentifier("modal_miplay_container_blend_colors",
-                        "array", "com.android.systemui");
-                if (arrayId != 0) {
-                    applyBlendColors(blur, panel, resources.getIntArray(arrayId));
-                }
-                return;
+                && NativeMediaTransferEntry.open(mediaViewControllerRef.get(), anchor,
+                        new NativeMediaTransferEntry.Logger() {
+                            @Override public void log(String message) { debug(message + " key=" + key); }
+                            @Override public void error(String stage, Throwable failure) {
+                                HyperOS3FocusRestoreHook.this.error(stage + " key=" + key, failure);
+                            }
+                        });
+        if (!opened) {
+            if (currentSettings != null
+                    && currentSettings.mediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_MIPLAY) {
+                log("MiPlay panel unavailable key=" + key + " fallback=native");
             }
-            if (blur != null) {
-                XposedHelpers.callStaticMethod(blur, "setMiViewBlurModeCompat", 0, panel);
-            }
-        } catch (Throwable throwable) {
-            error("applyMiPlayPanelBackground blur", throwable);
+            opened = openMediaOutputPicker(key, mediaData, anchor);
         }
-        int colorId = resources.getIdentifier("qs_control_detail_bg_color", "color",
-                "com.android.systemui");
-        panel.setBackgroundColor(colorId != 0
-                ? systemUiContext.getColor(colorId) : 0xB21A1A1A);
-    }
-
-    private void applyBlendColors(Class<?> blur, View panel, int[] colors) {
-        try {
-            XposedHelpers.callStaticMethod(blur, "setMiBackgroundBlendColorsNew", panel, colors);
-        } catch (Throwable named) {
-            XposedHelpers.callStaticMethod(blur, "setMiBackgroundBlendColorsNew$default", panel,
-                    colors);
-        }
-    }
-
-    /** The ROM hosts the 妙播 panel in a centred {@code qs_control_mi_play_detail_width} column. */
-    private int miPlayPanelWidth(View panel) {
-        try {
-            android.content.res.Resources resources = panel.getContext().getResources();
-            int id = resources.getIdentifier("qs_control_mi_play_detail_width", "dimen",
-                    "com.android.systemui");
-            if (id != 0) return resources.getDimensionPixelSize(id);
-        } catch (Throwable throwable) {
-            error("miPlayPanelWidth", throwable);
-        }
-        return dp(324);
-    }
-
-    /**
-     * Reveals the panel after a short delay.
-     *
-     * <p>The ROM panel writes its own height into its inner list ({@code updateHeight} assigns the
-     * RecyclerView height and calls {@code requestLayout}), so it is hosted with wrap_content and
-     * must never be given a fixed height. Before the device list arrives its list is match_parent,
-     * which would briefly make it very tall, so the reveal waits for that first sizing pass.
-     */
-    private void animateMiPlayPanelIn(View scrim, View panel) {
-        scrim.setAlpha(0f);
-        panel.setAlpha(0f);
-        panel.setScaleX(0.96f);
-        panel.setScaleY(0.96f);
-        scrim.animate().alpha(1f).setDuration(180L).start();
-        panel.postDelayed(() -> revealMiPlayPanel(panel), 300L);
-    }
-
-    private void revealMiPlayPanel(View panel) {
-        if (panel != miPlayPanel) return;
-        panel.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(200L)
-                .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
-        log("MiPlay panel revealed width=" + panel.getWidth() + " height=" + panel.getHeight());
-    }
-
-    /** Hides the 妙播 panel window with the reverse transition; safe to call when absent. */
-    private void hideMiPlayPanel() {
-        View host = miPlayPanelHost;
-        Object panel = miPlayPanel;
-        miPlayPanelHost = null;
-        miPlayPanel = null;
-        if (host == null) return;
-        Object plugin = miPlayPlugin();
-        if (plugin != null && panel != null) {
-            try {
-                XposedHelpers.callMethod(plugin, "hideMiPlayDetailView", panel);
-            } catch (Throwable throwable) {
-                error("hideMiPlayDetailView", throwable);
-            }
-        }
-        View panelView = panel instanceof View ? (View) panel : null;
-        if (panelView != null && host.isAttachedToWindow()) {
-            panelView.animate().alpha(0f).scaleX(0.94f).scaleY(0.94f).setDuration(180L).start();
-            host.animate().alpha(0f).setDuration(200L).withEndAction(
-                    () -> removeMiPlayPanelHost(host)).start();
-            return;
-        }
-        removeMiPlayPanelHost(host);
-    }
-
-    private void removeMiPlayPanelHost(View host) {
-        try {
-            WindowManager windowManager = systemUiContext == null ? null
-                    : (WindowManager) systemUiContext.getSystemService(Context.WINDOW_SERVICE);
-            if (windowManager != null) windowManager.removeViewImmediate(host);
-        } catch (Throwable throwable) {
-            error("hideMiPlayPanel removeView", throwable);
-        }
-    }
-
-    private int dp(int value) {
-        return Math.round(value * systemUiContext.getResources().getDisplayMetrics().density);
-    }
-
-    private Object miPlayPlugin() {
-        Object manager = miPlayPluginManagerRef.get();
-        return getField(manager, "mMiPlayPlugin");
+        // 保留失败时的横幅供重试；成功打开流转后只留下流转界面，避免两个窗口叠在一起。
+        FocusBannerController controller = bannerController;
+        if (opened && controller != null) controller.dismissForNotification(key, "media-output-opened");
+        return opened;
     }
 
     private static Object callQuietly(Object target, String method, Object... args) {
@@ -906,7 +742,81 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * 来源：用户 MT MCP 只读 SystemUI 17.03.260226.r / 202602260。
+     * MiuiMediaNotificationControllerImpl.access$setTopMediaData 与
+     * MiuiMediaDismissRepository.setLastDismissPkg；ROM 版权所有者/协议未确认。
+     * 仅依据接口事实独立同步媒体焦点，未复制 ROM 实现，不依赖被屏蔽的岛视图。
+     */
+    private void hookOS4MediaFocusSelection() {
+        if (installedHookMode != FocusRestoreSettings.HOOK_MODE_OS4) return;
+        try {
+            Class<?> controller = FocusReflection.findClass(
+                    "com.android.systemui.statusbar.notification.mediacontrol.MiuiMediaNotificationControllerImpl",
+                    classLoader);
+            XposedBridge.hookAllMethods(controller, "access$setTopMediaData", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.args == null || param.args.length < 2) return;
+                        Object data = param.args[1];
+                        String next = data == null ? null : stringValue(getField(data, "notificationKey"));
+                        Object repository = getField(param.args[0], "mediaDismissRepository");
+                        String dismissed = stringValue(getField(repository, "lastDismissPkg"));
+                        String pkg = data == null ? null : stringValue(getField(data, "packageName"));
+                        if (!TextUtils.isEmpty(dismissed) && dismissed.equals(pkg)) next = null;
+                        String previous = mediaFocusLifecycle.selectedKey();
+                        mediaFocusLifecycle.onTopChanged(next,
+                                data != null && Boolean.TRUE.equals(getField(data, "isPlaying")));
+                        String selected = mediaFocusLifecycle.selectedKey();
+                        debug("OS4 media top key=" + next + " selected=" + selected
+                                + " previous=" + previous);
+                        refreshOS4MediaFocus(previous);
+                        if (!TextUtils.equals(previous, selected)) refreshOS4MediaFocus(selected);
+                    } catch (Throwable throwable) {
+                        error("OS4 media top lifecycle", throwable);
+                    }
+                }
+            });
+            Class<?> repository = FocusReflection.findClass(
+                    "com.android.systemui.statusbar.notification.mediacontrol.MiuiMediaDismissRepository",
+                    classLoader);
+            XposedHelpers.findAndHookMethod(repository, "setLastDismissPkg", String.class,
+                    new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                String pkg = stringValue(param.args[0]);
+                                if (TextUtils.isEmpty(pkg)) return;
+                                // 5 秒仓库清理不代表卡片恢复；仅后续原生 top 回调能够重新选择。
+                                dismissedMediaPackages.add(pkg);
+                                String selected = mediaFocusLifecycle.selectedKey();
+                                if (pkg.equals(packageNameOfKey(selected))) {
+                                    mediaFocusLifecycle.onRemoved(selected);
+                                    refreshOS4MediaFocus(selected);
+                                }
+                                hideDismissedMediaFocus(pkg);
+                                debug("OS4 media dismissed pkg=" + pkg + " selected=" + selected);
+                            } catch (Throwable throwable) {
+                                error("OS4 media dismiss lifecycle", throwable);
+                            }
+                        }
+                    });
+        } catch (Throwable throwable) {
+            error("hookOS4MediaFocusSelection", throwable);
+        }
+    }
+
+    private void refreshOS4MediaFocus(String key) {
+        if (TextUtils.isEmpty(key)) return;
+        if (!mediaFocusLifecycle.isEligible(key)) {
+            activeMediaNotificationKeys.remove(key);
+            FocusBannerController banner = bannerController;
+            if (banner != null) banner.dismissForNotification(key, "media-card-ineligible");
+        }
+        if (os4Controller != null) os4Controller.refreshMediaEntry(key);
+    }
+
     private void hookMediaNotificationLifecycle() {
+        hookOS4MediaFocusSelection();
         try {            Class<?> listener = FocusReflection.findClass(
                     "com.android.systemui.statusbar.notification.mediacontrol.MiuiMediaNotificationControllerImpl$mediaDataListener$1",
                     classLoader);
@@ -932,7 +842,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             String lastDismissPkg = null;
                             try {
                                 Object controller = getField(param.thisObject, "this$0");
-                                lastDismissPkg = stringValue(getField(controller, "lastDismissPkg"));
+                                Object dismissOwner = installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4
+                                        ? getField(controller, "mediaDismissRepository") : controller;
+                                lastDismissPkg = stringValue(getField(dismissOwner, "lastDismissPkg"));
                             } catch (Throwable ignored) {
                                 lastDismissPkg = null;
                             }
@@ -972,9 +884,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                     ? null : stringValue(param.args[0]);
                             if (TextUtils.isEmpty(key)) return;
                             MediaNotificationBannerSource.detachMediaData(key);
-                            String packageName = packageNameOfKey(key);
-                            if (!TextUtils.isEmpty(packageName)) {
-                                dismissedMediaPackages.remove(packageName);
+                            if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4) {
+                                mediaFocusLifecycle.onRemoved(key);
+                                refreshOS4MediaFocus(key);
                             }
                             debug("media data dropped key=" + key);
                         }
@@ -1003,10 +915,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         mainHandler.post(new Runnable() {
             @Override public void run() {
                 try {
+                    if (!dismissedMediaPackages.contains(packageName)) return;
                     List<String> dismissedKeys = new ArrayList<>();
                     synchronized (mediaNotificationKeys) {
                         for (String key : mediaNotificationKeys) {
-                            if (packageName.equals(packageNameOfKey(key))) dismissedKeys.add(key);
+                            if (packageName.equals(packageNameOfKey(key))
+                                    && (installedHookMode != FocusRestoreSettings.HOOK_MODE_OS4
+                                    || !mediaFocusLifecycle.isEligible(key))) dismissedKeys.add(key);
                         }
                         for (String key : dismissedKeys) {
                             mediaNotificationKeys.remove(key);
@@ -1020,6 +935,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     Object controller = os3PromptControllerRef.get();
                     Class<?> controllerClass = os3PromptControllerClass;
                     for (String key : dismissedKeys) {
+                        if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4) {
+                            refreshOS4MediaFocus(key);
+                            continue;
+                        }
                         WeakReference<Object> reference = notificationEntries.get(key);
                         Object entry = reference == null ? null : reference.get();
                         if (controller == null || controllerClass == null || entry == null) continue;
@@ -1332,7 +1251,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         boolean mediaFocus = isMediaFocus(data) && currentSettings.mediaFocusEnabled;
         if (currentSettings.mediaFocusCastDirect && mediaFocus) {
             // 点击媒体焦点直接展开流转界面，替代媒体横幅。
-            return openMediaCast(data.key);
+            return openMediaCast(data.key, anchor);
         }
         // 媒体焦点始终可点击：未选“直接展开流转界面”时点击即展开媒体横幅，不再回退到
         // 普通通知的原生模板（媒体通知没有原生 V3 焦点参数，回退必然失败、表现为无反应）。
@@ -2620,6 +2539,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             Object bean = param.args[0];
+                            FocusLongPressGesture gesture = promptLongPressGesture(param.thisObject);
+                            if (gesture != null) {
+                                FocusData previous = inspectBean(getField(param.thisObject, "mData"));
+                                FocusData next = inspectBean(bean);
+                                if (previous == null || next == null
+                                        || !TextUtils.equals(previous.key, next.key)) gesture.invalidateTarget();
+                            }
                             patchBean(bean, "before setData");
                             // The application's own RemoteViews are hidden on this prompt view when
                             // this module writes its own text, and the ROM only ever puts them back
@@ -2715,9 +2641,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             synchronized (this) {
                 if (generation != settingsReadGeneration) return false;
                 currentSettings = next;
-                if (next.mediaFocusCastPicker != FocusRestoreSettings.CAST_PICKER_MIPLAY) {
-                    hideMiPlayPanel();
-                }
                 if (modeHooksInstalled && next.hookMode != installedHookMode) {
                     log("hook mode change saved configuredMode=OS" + next.hookMode
                             + " installedMode=OS" + installedHookMode
@@ -3416,6 +3339,103 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * 私有接口依据本项目既有 OS3/OS4 SystemUI 观察：NotificationEntry.row、
+     * ExpandableNotificationRow.getEntry()/mEntry；精确 ROM 版本、版权所有者与协议未确认。
+     * 独立实现长按身份复核，打开动作复用本项目横幅正文入口，未复制 ROM 实现。
+     */
+    private Runnable captureLongPressRowClick(Object directEntry, String key, String mode) {
+        if (TextUtils.isEmpty(key)) return null;
+        WeakReference<Object> reference = notificationEntries.get(key);
+        Object entry = directEntry != null ? directEntry : reference == null ? null : reference.get();
+        Object value = notificationEntrySbn(entry);
+        if (!(value instanceof StatusBarNotification) || !key.equals(((StatusBarNotification) value).getKey())) {
+            debug(mode + " long press unavailable key=" + key + " reason=entry");
+            return null;
+        }
+        StatusBarNotification expected = (StatusBarNotification) value;
+        return () -> {
+            try {
+                WeakReference<Object> liveReference = notificationEntries.get(key);
+                Object live = liveReference == null ? null : liveReference.get();
+                Object latest = notificationEntrySbn(live);
+                // 按下时保存代次，超时后重新查找；同 key 撤销重发或换绑不能打开新通知。
+                if (!currentSettings.longPressNotificationRowClick || live != entry
+                        || !(latest instanceof StatusBarNotification)
+                        || !key.equals(((StatusBarNotification) latest).getKey())
+                        || expected.getPostTime() != ((StatusBarNotification) latest).getPostTime()) {
+                    debug(mode + " long press rejected key=" + key + " reason=stale-or-removed");
+                    return;
+                }
+                // 媒体通知常作为媒体头显示而没有 row；复用横幅正文入口及其媒体会话打开链路。
+                // 上方先核验长按目标仍有效，避免横幅入口的媒体兜底绕过撤销/换绑保护。
+                boolean handled = openBannerNotification(key, (StatusBarNotification) latest);
+                debug(mode + " long press banner-body-open key=" + key + " handled=" + handled
+                        + "; dispatch is not proof of app launch");
+            } catch (Throwable throwable) {
+                error(mode + " long press banner-body-open key=" + key, throwable);
+            }
+        };
+    }
+
+    private FocusLongPressGesture promptLongPressGesture(Object prompt) {
+        // Xposed API 82 的 additionalFields 弱键表不能通过强 value 反向持有 View。
+        // 来源 rovo89/XposedBridge XposedHelpers.java（具体源码版本与许可证未确认），仅依据容器事实独立实现：
+        // https://github.com/rovo89/XposedBridge/blob/art/app/src/main/java/de/robv/android/xposed/XposedHelpers.java
+        Object value = XposedHelpers.getAdditionalInstanceField(prompt, "focusRestoreLongPress");
+        Object gesture = value instanceof WeakReference ? ((WeakReference<?>) value).get() : null;
+        return gesture instanceof FocusLongPressGesture ? (FocusLongPressGesture) gesture : null;
+    }
+
+    private void hookFocusLongPress() {
+        try {
+            Class<?> promptClass = FocusReflection.findClass(
+                    "com.android.systemui.statusbar.phone.FocusedNotifPromptView", classLoader);
+            // getMethod 可定位继承的 dispatchTouchEvent；只处理目标提示视图，避免干预其他通知视图。
+            Method dispatch = promptClass.getMethod("dispatchTouchEvent", MotionEvent.class);
+            XposedBridge.hookMethod(dispatch, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                    if (!promptClass.isInstance(param.thisObject)) return;
+                    View prompt = (View) param.thisObject;
+                    FocusLongPressGesture gesture = promptLongPressGesture(prompt);
+                    if (gesture == null) {
+                        if (!currentSettings.longPressNotificationRowClick) return;
+                        gesture = new FocusLongPressGesture(prompt, () -> {
+                            FocusData pressed = inspectBean(getField(prompt, "mData"));
+                            if (pressed == null) return null;
+                            String pressedKey = pressed.key;
+                            Runnable click = captureLongPressRowClick(null, pressedKey, "OS3");
+                            if (click == null) return null;
+                            return () -> {
+                                FocusData current = inspectBean(getField(prompt, "mData"));
+                                if (current != null && TextUtils.equals(pressedKey, current.key)) click.run();
+                                else debug("OS3 long press rejected key=" + pressedKey + " reason=focus-changed");
+                            };
+                        }, HyperOS3FocusRestoreHook::error);
+                        XposedHelpers.setAdditionalInstanceField(prompt, "focusRestoreLongPress",
+                                new WeakReference<>(gesture));
+                    }
+                    if (gesture.onEvent((MotionEvent) param.args[0],
+                            currentSettings.longPressNotificationRowClick,
+                            Math.round(currentSettings.longPressSeconds * 1000f))) param.setResult(true);
+                }
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (!promptClass.isInstance(param.thisObject)) return;
+                    FocusLongPressGesture gesture = promptLongPressGesture(param.thisObject);
+                    if (param.hasThrowable()) {
+                        if (gesture != null) gesture.invalidateTarget();
+                        error("OS3 focus touch dispatch", param.getThrowable());
+                        return;
+                    }
+                    // 原路径不消费 DOWN 时仍需保留后续手势，短按动作继续由 ROM 的正常分发决定。
+                    if (gesture != null && gesture.tracking()) param.setResult(true);
+                }
+            });
+        } catch (Throwable throwable) {
+            error("hookFocusLongPress", throwable);
+        }
+    }
+
     private void hookDisableConvertedFocusClick() {
         try {
             Class<?> promptView = FocusReflection.findClass(
@@ -3431,7 +3451,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 // 这里不再要求横幅总开关，否则媒体横幅选项会被静默失效。
                                 param.setResult(null);
                                 if (currentSettings.mediaFocusCastDirect) {
-                                    openMediaCast(data.key);
+                                    openMediaCast(data.key, param.thisObject instanceof View ? (View) param.thisObject : null);
                                 } else if (param.thisObject instanceof View) {
                                     showIndependentFocusBanner((View) param.thisObject,
                                             data, data.key, "OS3");
@@ -4904,6 +4924,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 + " nativeStatusBarContent=" + hasNativeStatusBarContent
                 + " forcePackage=" + currentSettings.islandForcePackages.contains(data.packageName));
         if (data.mediaContent != null) {
+            if (currentSettings.mediaFocusEnabled && !mediaFocusLifecycle.isEligible(data.key)) {
+                activeMediaNotificationKeys.remove(data.key);
+                debug("OS4 media candidate rejected key=" + data.key + " reason=native-media-selection");
+                return null;
+            }
             activeMediaNotificationKeys.add(data.key);
         } else {
             activeMediaNotificationKeys.remove(data.key);

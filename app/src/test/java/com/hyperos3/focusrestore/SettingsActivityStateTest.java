@@ -67,6 +67,20 @@ public class SettingsActivityStateTest {
         assertTrue("island conversion switch must be part of the pending fields",
                 fields.contains("pendingIslandCompat"));
         assertTrue("island conversion switch must survive a restart", written.contains("m3.island"));
+        assertTrue("long press switch must survive a restart",
+                written.contains("m3.longPressNotificationRowClick"));
+        assertTrue("long press duration must survive a restart",
+                written.contains("m3.longPressSeconds"));
+        assertTrue("long press switch must be saved to the snapshot", source.contains(
+                ".longPressNotificationRowClick(pendingLongPressNotificationRowClick)"));
+        assertTrue("long press duration must be saved to the snapshot", source.contains(
+                ".longPressSeconds(pendingLongPressSeconds)"));
+        // 长按开关不允许加入短按互斥链；时长只依赖长按自身。
+        assertTrue(source.contains("setModeSpecificSwitchEnabled(longPressNotificationRowClickSwitch, true)"));
+        assertTrue(source.contains("setControlEnabled(longPressSecondsSeekBar, pendingLongPressNotificationRowClick)"));
+        assertTrue(!source.contains("pendingLongPressNotificationRowClick = false"));
+        assertTrue(source.contains("长按焦点通知模拟通知列表点击（实验性）"));
+        assertTrue(source.contains("默认关闭；长按直接走通知列表点击"));
         assertTrue("focus text mode must survive a restart",
                 written.contains("m3.islandTextMode"));
     }

@@ -45,6 +45,9 @@ final class SettingsContract {
     static final int MEDIA_FOCUS_CAST_PICKER = 31;
     /** Replaces the media banner when on: clicking a media focus opens the cast UI directly. */
     static final int MEDIA_FOCUS_CAST_DIRECT = 32;
+    // 只能末尾追加，避免旧版 SystemUI 按位置读取时发生静默错位。
+    static final int LONG_PRESS_NOTIFICATION_ROW_CLICK = 33;
+    static final int LONG_PRESS_SECONDS = 34;
 
     static final String[] COLUMNS = {
             "limit_text_width", "text_width_dp", "marquee_delay_ms", "compat_retry",
@@ -57,7 +60,8 @@ final class SettingsContract {
             "island_text_mode", "focus_max_display_seconds", "focus_timeout_exempt_packages",
             "width_landscape_dp", "special_banner_normal_background", "notification_icon_hide_mode",
             "island_custom_rules", "media_focus_enabled", "media_focus_native_banner",
-            "media_focus_cast_picker", "media_focus_cast_direct"
+            "media_focus_cast_picker", "media_focus_cast_direct",
+            "long_press_notification_row_click", "long_press_seconds"
     };
 
     /** Encode the Provider wire format here so column names and values share one contract. */
@@ -86,7 +90,9 @@ final class SettingsContract {
                  settings.mediaFocusEnabled ? 1 : 0,
                   settings.mediaFocusNativeBanner ? 1 : 0,
                   settings.mediaFocusCastPicker,
-                  settings.mediaFocusCastDirect ? 1 : 0};
+                  settings.mediaFocusCastDirect ? 1 : 0,
+                  settings.longPressNotificationRowClick ? 1 : 0,
+                  settings.longPressSeconds};
     }
 
     private static String joinPackages(java.util.Set<String> packages) {

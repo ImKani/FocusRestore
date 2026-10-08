@@ -38,6 +38,8 @@ final class HookSettings {
     final boolean useSmallIconFallback;
     final boolean notificationRowClickFallback;
     final boolean independentFocusBanner;
+    final boolean longPressNotificationRowClick;
+    final float longPressSeconds;
     final int islandTextMode;
     final float focusMaxDisplaySeconds;
     final String generalSeparator;
@@ -55,6 +57,7 @@ final class HookSettings {
                          boolean showFocusDivider, boolean showIslandIcon,
                          boolean tintIslandIcon, boolean useSmallIconFallback,
                          boolean notificationRowClickFallback, boolean independentFocusBanner,
+                          boolean longPressNotificationRowClick, float longPressSeconds,
                          int islandTextMode, float focusMaxDisplaySeconds,
                          String generalSeparator,
                          String sideSeparator, Set<String> forcePackages,
@@ -85,6 +88,8 @@ final class HookSettings {
         this.useSmallIconFallback = useSmallIconFallback;
         this.notificationRowClickFallback = notificationRowClickFallback;
         this.independentFocusBanner = independentFocusBanner;
+        this.longPressNotificationRowClick = longPressNotificationRowClick;
+        this.longPressSeconds = FocusRestoreSettings.normalizeLongPressSeconds(longPressSeconds);
         this.islandTextMode = FocusRestoreSettings.normalizeIslandTextMode(islandTextMode);
         this.focusMaxDisplaySeconds =
                 FocusRestoreSettings.normalizeMaxDisplaySeconds(focusMaxDisplaySeconds);
@@ -115,6 +120,7 @@ final class HookSettings {
                 source.hideNotificationIcons, source.showFocusDivider, source.showIslandIcon,
                 source.tintIslandIcon, source.useSmallIconFallback,
                 source.notificationRowClickFallback, source.independentFocusBanner,
+                source.longPressNotificationRowClick, source.longPressSeconds,
                 source.islandTextMode, source.focusMaxDisplaySeconds,
                 source.islandGeneralSeparator, source.islandSideSeparator,
                 source.islandForcePackages, source.focusTimeoutExemptPackages);
@@ -226,6 +232,15 @@ final class HookSettings {
                 ? cursor.getInt(SettingsContract.INDEPENDENT_FOCUS_BANNER) != 0
                 : FocusRestoreSettings.DEFAULT_INDEPENDENT_FOCUS_BANNER;
 
+        // 旧 33 列或空值不能自动启用长按；时长缺失时保留默认手势阈值。
+        boolean longPressNotificationRowClick = hasValue(cursor, columnCount,
+                SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK)
+                && cursor.getInt(SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK) != 0;
+        float longPressSeconds = hasValue(cursor, columnCount, SettingsContract.LONG_PRESS_SECONDS)
+                ? FocusRestoreSettings.normalizeLongPressSeconds(
+                        cursor.getFloat(SettingsContract.LONG_PRESS_SECONDS))
+                : FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS;
+
         int hookMode = hasValue(cursor, columnCount, SettingsContract.HOOK_MODE)
                 ? cursor.getInt(SettingsContract.HOOK_MODE) : FocusRestoreSettings.DEFAULT_HOOK_MODE;
         return new HookSettings(hookMode, limitWidth, widthDp, widthLandscapeDp,
@@ -237,6 +252,7 @@ final class HookSettings {
                 allowFocusClick, hideNotificationIcons, showFocusDivider,
                 showIslandIcon, tintIslandIcon, useSmallIconFallback,
                 notificationRowClickFallback, independentFocusBanner,
+                longPressNotificationRowClick, longPressSeconds,
                 islandTextMode, focusMaxDisplaySeconds,
                 generalSeparator, sideSeparator, forcePackages, timeoutExemptPackages);
     }
@@ -257,6 +273,8 @@ final class HookSettings {
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
                 + " independentFocusBanner=" + independentFocusBanner
+                + " longPressNotificationRowClick=" + longPressNotificationRowClick
+                + " longPressSeconds=" + longPressSeconds
                 + " mediaFocusCastPicker=" + mediaFocusCastPicker
                 + " mediaFocusCastDirect=" + mediaFocusCastDirect
                 + " islandTextMode=" + islandTextMode

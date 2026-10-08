@@ -61,6 +61,7 @@ final class HyperOS4FocusController {
         void onDisplayed(Object notificationEntry);
         HookSettings settings();
         boolean clickNotificationRow(Object notificationEntry, String key);
+        Runnable captureNotificationRowClick(Object notificationEntry, String key);
         boolean showFocusBanner(View anchor, Object notificationEntry, String key);
         void onNotificationRemoved(Object notificationEntry, String key);
         void dismissFocusBanner(String reason);
@@ -269,6 +270,28 @@ final class HyperOS4FocusController {
             }
         }
         renderBest();
+    }
+
+    void refreshMediaEntry(String key) {
+        if (TextUtils.isEmpty(key)) return;
+        // 媒体卡片生命周期独立于通知集合；重算候选，不能伪造 EntryRemoved 清掉真实通知。
+        mainHandler.post(() -> {
+            Object owner = activePipeline;
+            if (owner == null) return;
+            try {
+                // 在执行时查真实集合，兼顾弱引用缓存容量上限和排队期间 Entry 移除/替换。
+                Object existing = XposedHelpers.callMethod(owner, "getAllNotifs");
+                if (!(existing instanceof Collection)) return;
+                for (Object candidate : new ArrayList<>((Collection<?>) existing)) {
+                    if (key.equals(entryKey(candidate))) {
+                        updateEntry(candidate, "media-lifecycle", owner);
+                        return;
+                    }
+                }
+            } catch (Throwable throwable) {
+                logger.error("OS4 refreshMediaEntry key=" + key, throwable);
+            }
+        });
     }
 
     private void removeEntry(Object entry, String stage, Object owner) {
@@ -778,6 +801,8 @@ final class HyperOS4FocusController {
         private float bannerDownY;
         private boolean bannerGestureCancelled;
         private boolean notificationRowClicks;
+        private boolean longPressClicks;
+        private final FocusLongPressGesture longPressGesture;
         private String currentItemKey;
         private Object currentNotificationEntry;
         private PendingIntent currentContentIntent;
@@ -787,6 +812,25 @@ final class HyperOS4FocusController {
             bannerTouchSlop = android.view.ViewConfiguration.get(context).getScaledTouchSlop();
             setClipChildren(true);
             setClipToPadding(true);
+            longPressGesture = new FocusLongPressGesture(this, () -> {
+                Object entry = currentNotificationEntry;
+                String key = currentItemKey;
+                Runnable click = itemFactory.captureNotificationRowClick(entry, key);
+                if (click == null) return null;
+                return () -> {
+                    if (itemFactory.settings().longPressNotificationRowClick
+                            && entry == currentNotificationEntry && TextUtils.equals(key, currentItemKey)) {
+                        synchronized (items) {
+                            DisplayItem live = items.get(key);
+                            if (live == null || live.notificationEntry != entry) return;
+                        }
+                        click.run();
+                    } else {
+                        if (BuildConfig.DEBUG) logger.log("DIAG OS4 long press rejected key=" + key
+                                + " reason=focus-changed");
+                    }
+                };
+            }, logger::error);
         }
 
         void showContent(View nextContent, DisplayItem item, HookSettings settings) {
@@ -794,10 +838,12 @@ final class HyperOS4FocusController {
             boolean bannerClickMode = settings.independentFocusBanner
                     || settings.mediaFocusNativeBanner
                     || settings.mediaFocusCastDirect;
-            boolean sameBannerTarget = bannerClicks && bannerClickMode
+            boolean sameBannerTarget = ((bannerClicks && bannerClickMode)
+                    || (longPressClicks && settings.longPressNotificationRowClick))
                     && currentNotificationEntry == item.notificationEntry
                     && TextUtils.equals(currentItemKey, item.key);
             clearContent(sameBannerTarget);
+            longPressClicks = settings.longPressNotificationRowClick;
             bannerClicks = bannerClickMode;
             blockClicks = !settings.allowFocusClick && !bannerClicks;
             notificationRowClicks = !bannerClicks && settings.allowFocusClick
@@ -900,6 +946,7 @@ final class HyperOS4FocusController {
 
         private void clearContent(boolean preserveBannerGesture) {
             if (!preserveBannerGesture) {
+                longPressGesture.invalidateTarget();
                 cancelPendingInputEvents();
                 setPressed(false);
                 bannerGestureCancelled = true;
@@ -924,6 +971,7 @@ final class HyperOS4FocusController {
             contentInsetPx = 0;
             bannerClicks = false;
             notificationRowClicks = false;
+            longPressClicks = false;
             currentItemKey = null;
             currentNotificationEntry = null;
             currentContentIntent = null;
@@ -1005,6 +1053,16 @@ final class HyperOS4FocusController {
         }
 
         @Override
+        public boolean dispatchTouchEvent(MotionEvent event) {
+            HookSettings settings = itemFactory.settings();
+            if (longPressGesture.onEvent(event, longPressClicks
+                    && settings.longPressNotificationRowClick,
+                    Math.round(settings.longPressSeconds * 1000f))) return true;
+            boolean handled = super.dispatchTouchEvent(event);
+            return handled || longPressGesture.tracking();
+        }
+
+        @Override
         public boolean onInterceptTouchEvent(MotionEvent event) {
             return blockClicks || bannerClicks || notificationRowClicks
                     || super.onInterceptTouchEvent(event);
@@ -1013,7 +1071,8 @@ final class HyperOS4FocusController {
         @Override
         public boolean onTouchEvent(MotionEvent event) {
             if (blockClicks) return true;
-            if (bannerClicks) {
+            // 两种短按入口共用系统点击状态，CANCEL 后不能再因 UP 打开换绑的新通知。
+            if (bannerClicks || notificationRowClicks) {
                 int action = event.getActionMasked();
                 if (action == MotionEvent.ACTION_DOWN) {
                     bannerDownX = event.getX();
@@ -1037,10 +1096,6 @@ final class HyperOS4FocusController {
                 }
                 // Let the host's normal click/accessibility path perform the request.
                 return super.onTouchEvent(event);
-            }
-            if (notificationRowClicks) {
-                if (event.getActionMasked() == MotionEvent.ACTION_UP) performClick();
-                return true;
             }
             return super.onTouchEvent(event);
         }

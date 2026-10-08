@@ -52,6 +52,8 @@ public final class FocusRestoreSettings {
     public static final String KEY_USE_SMALL_ICON_FALLBACK = "use_small_icon_fallback";
     public static final String KEY_NOTIFICATION_ROW_CLICK_FALLBACK = "notification_row_click_fallback";
     public static final String KEY_INDEPENDENT_FOCUS_BANNER = "independent_focus_banner";
+    public static final String KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK = "long_press_notification_row_click";
+    public static final String KEY_LONG_PRESS_SECONDS = "long_press_seconds";
     public static final String KEY_ISLAND_TEXT_MODE = "island_text_mode";
     public static final String KEY_FOCUS_MAX_DISPLAY_SECONDS = "focus_max_display_seconds";
     static final String KEY_HOOK_SETTINGS_READY = "hook_settings_ready";
@@ -90,6 +92,10 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_USE_SMALL_ICON_FALLBACK = false;
     public static final boolean DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK = false;
     public static final boolean DEFAULT_INDEPENDENT_FOCUS_BANNER = false;
+    public static final boolean DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK = false;
+    public static final float DEFAULT_LONG_PRESS_SECONDS = 0.5f;
+    public static final float MIN_LONG_PRESS_SECONDS = 0.2f;
+    public static final float MAX_LONG_PRESS_SECONDS = 10f;
     public static final String DEFAULT_ISLAND_SEPARATOR = "·";
     /** Seconds, so the settings input can accept two decimal places. Zero means unlimited. */
     public static final float DEFAULT_FOCUS_MAX_DISPLAY_SECONDS = 0f;
@@ -122,6 +128,8 @@ public final class FocusRestoreSettings {
     public final boolean useSmallIconFallback;
     public final boolean notificationRowClickFallback;
     public final boolean independentFocusBanner;
+    public final boolean longPressNotificationRowClick;
+    public final float longPressSeconds;
     public final int islandTextMode;
     public final float focusMaxDisplaySeconds;
     public final String islandGeneralSeparator;
@@ -155,6 +163,8 @@ public final class FocusRestoreSettings {
         this.useSmallIconFallback = editor.useSmallIconFallback;
         this.notificationRowClickFallback = editor.notificationRowClickFallback;
         this.independentFocusBanner = editor.independentFocusBanner;
+        this.longPressNotificationRowClick = editor.longPressNotificationRowClick;
+        this.longPressSeconds = normalizeLongPressSeconds(editor.longPressSeconds);
         this.islandTextMode = normalizeIslandTextMode(editor.islandTextMode);
         this.focusMaxDisplaySeconds = normalizeMaxDisplaySeconds(editor.focusMaxDisplaySeconds);
         this.islandGeneralSeparator = valueOrDefault(editor.islandGeneralSeparator);
@@ -194,6 +204,8 @@ public final class FocusRestoreSettings {
         private boolean useSmallIconFallback = DEFAULT_USE_SMALL_ICON_FALLBACK;
         private boolean notificationRowClickFallback = DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK;
         private boolean independentFocusBanner = DEFAULT_INDEPENDENT_FOCUS_BANNER;
+        private boolean longPressNotificationRowClick = DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK;
+        private float longPressSeconds = DEFAULT_LONG_PRESS_SECONDS;
         private int islandTextMode = DEFAULT_ISLAND_TEXT_MODE;
         private float focusMaxDisplaySeconds = DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
         private String islandGeneralSeparator = DEFAULT_ISLAND_SEPARATOR;
@@ -228,6 +240,8 @@ public final class FocusRestoreSettings {
             this.useSmallIconFallback = source.useSmallIconFallback;
             this.notificationRowClickFallback = source.notificationRowClickFallback;
             this.independentFocusBanner = source.independentFocusBanner;
+            this.longPressNotificationRowClick = source.longPressNotificationRowClick;
+            this.longPressSeconds = source.longPressSeconds;
             this.islandTextMode = source.islandTextMode;
             this.focusMaxDisplaySeconds = source.focusMaxDisplaySeconds;
             this.islandGeneralSeparator = source.islandGeneralSeparator;
@@ -271,6 +285,10 @@ public final class FocusRestoreSettings {
         public Editor independentFocusBanner(boolean value) {
             this.independentFocusBanner = value; return this;
         }
+        public Editor longPressNotificationRowClick(boolean value) {
+            this.longPressNotificationRowClick = value; return this;
+        }
+        public Editor longPressSeconds(float value) { this.longPressSeconds = value; return this; }
         public Editor islandTextMode(int value) { this.islandTextMode = value; return this; }
         public Editor focusMaxDisplaySeconds(float value) {
             this.focusMaxDisplaySeconds = value; return this;
@@ -363,6 +381,10 @@ public final class FocusRestoreSettings {
                         DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK))
                 .independentFocusBanner(preferences.getBoolean(KEY_INDEPENDENT_FOCUS_BANNER,
                         DEFAULT_INDEPENDENT_FOCUS_BANNER))
+                // 旧配置没有长按字段时保持关闭，不从短按或旧点击开关推导。
+                .longPressNotificationRowClick(preferences.getBoolean(
+                        KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK, DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK))
+                .longPressSeconds(readLongPressSeconds(preferences))
                 .islandTextMode(preferences.getInt(KEY_ISLAND_TEXT_MODE, DEFAULT_ISLAND_TEXT_MODE))
                 .focusMaxDisplaySeconds(readMaxDisplaySeconds(preferences))
                 .islandGeneralSeparator(preferences.getString(KEY_ISLAND_GENERAL_SEPARATOR, legacy))
@@ -391,6 +413,8 @@ public final class FocusRestoreSettings {
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
                 + " independentFocusBanner=" + independentFocusBanner
+                + " longPressNotificationRowClick=" + longPressNotificationRowClick
+                + " longPressSeconds=" + longPressSeconds
                 + " mediaFocusCastPicker=" + mediaFocusCastPicker
                 + " mediaFocusCastDirect=" + mediaFocusCastDirect
                 + " islandTextMode=" + islandTextMode
@@ -431,6 +455,8 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_USE_SMALL_ICON_FALLBACK, useSmallIconFallback)
                 .putBoolean(KEY_NOTIFICATION_ROW_CLICK_FALLBACK, notificationRowClickFallback)
                 .putBoolean(KEY_INDEPENDENT_FOCUS_BANNER, independentFocusBanner)
+                .putBoolean(KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK, longPressNotificationRowClick)
+                .putFloat(KEY_LONG_PRESS_SECONDS, longPressSeconds)
                 .putInt(KEY_ISLAND_TEXT_MODE, islandTextMode)
                 .putFloat(KEY_FOCUS_MAX_DISPLAY_SECONDS, focusMaxDisplaySeconds)
                 .putString(KEY_ISLAND_GENERAL_SEPARATOR, islandGeneralSeparator)
@@ -441,6 +467,29 @@ public final class FocusRestoreSettings {
                 .putLong(KEY_SETTINGS_GENERATION, Math.max(0L, generation))
                 .putBoolean(KEY_HOOK_SETTINGS_READY, true)
                 .commit();
+    }
+
+    // 非有限值不能进入手势计时；有限越界值夹紧，避免立即触发或永不触发。
+    static float normalizeLongPressSeconds(float seconds) {
+        if (Float.isNaN(seconds) || Float.isInfinite(seconds)) return DEFAULT_LONG_PRESS_SECONDS;
+        return Math.max(MIN_LONG_PRESS_SECONDS, Math.min(MAX_LONG_PRESS_SECONDS, seconds));
+    }
+
+    static float parseLongPressSeconds(String text) {
+        if (text == null) return DEFAULT_LONG_PRESS_SECONDS;
+        try {
+            return normalizeLongPressSeconds(Float.parseFloat(text.trim()));
+        } catch (NumberFormatException invalid) {
+            return DEFAULT_LONG_PRESS_SECONDS;
+        }
+    }
+
+    static float readLongPressSeconds(SharedPreferences preferences) {
+        // 用原始类型读取，兼容手动配置或旧存储中的整数和字符串，且不回写迁移。
+        Object raw = preferences.getAll().get(KEY_LONG_PRESS_SECONDS);
+        if (raw instanceof Number) return normalizeLongPressSeconds(((Number) raw).floatValue());
+        if (raw instanceof String) return parseLongPressSeconds((String) raw);
+        return DEFAULT_LONG_PRESS_SECONDS;
     }
 
     static int normalizeIslandTextMode(int value) {

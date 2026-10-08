@@ -25,6 +25,109 @@ import static org.junit.Assert.assertTrue;
 
 public class ExperimentalSettingsTest {
     @Test
+    public void longPressDefaultsAndLegacyColumnsStayOff() {
+        // 旧配置和旧 33 列不能继承短按开启状态，空列也必须安全关闭。
+        assertFalse(FocusRestoreSettings.defaults().longPressNotificationRowClick);
+        assertFalse(HookSettings.defaults().longPressNotificationRowClick);
+        assertEquals(0.5f, HookSettings.defaults().longPressSeconds, 0f);
+        FocusRestoreSettings legacy = FocusRestoreSettings.fromPreferences(
+                memoryPreferences(legacyPreferences()));
+        assertFalse(legacy.longPressNotificationRowClick);
+        assertEquals(0.5f, legacy.longPressSeconds, 0f);
+        Object[] row = SettingsContract.toRow(FocusRestoreSettings.edit()
+                .allowFocusClick(true).notificationRowClickFallback(true)
+                .independentFocusBanner(true).longPressNotificationRowClick(true)
+                .longPressSeconds(2.75f).build(), "legacy");
+        for (Object[] old : new Object[][]{Arrays.copyOf(row, 33), Arrays.copyOf(row, 35)}) {
+            if (old.length == 35) {
+                old[33] = null;
+                old[34] = null;
+            }
+            HookSettings hook = HookSettings.fromCursor(positionedCursor(old));
+            assertFalse(hook.longPressNotificationRowClick);
+            assertEquals(0.5f, hook.longPressSeconds, 0f);
+            assertTrue(hook.allowFocusClick);
+            assertTrue(hook.notificationRowClickFallback);
+            assertTrue(hook.independentFocusBanner);
+        }
+    }
+
+    @Test
+    public void longPressRoundTripsIndependentlyThroughBothStoresAndProvider() {
+        Map<String, Object> credentialValues = legacyPreferences();
+        Map<String, Object> deviceValues = legacyPreferences();
+        SharedPreferences credential = memoryPreferences(credentialValues);
+        SharedPreferences device = memoryPreferences(deviceValues);
+        // 开关组合包含短按全部关闭；长按开关和时长均不得被短按状态修改。
+        for (int mask = 0; mask < 16; mask++) {
+            boolean enabled = (mask & 8) != 0;
+            FocusRestoreSettings settings = FocusRestoreSettings.edit()
+                    .allowFocusClick((mask & 1) != 0)
+                    .notificationRowClickFallback((mask & 2) != 0)
+                    .independentFocusBanner((mask & 4) != 0)
+                    .longPressNotificationRowClick(enabled).longPressSeconds(2.75f).build();
+            FocusRestoreSettings copied = FocusRestoreSettings.edit(settings).build();
+            assertEquals(enabled, copied.longPressNotificationRowClick);
+            assertEquals(2.75f, copied.longPressSeconds, 0f);
+            assertTrue(copied.describe().contains("longPressNotificationRowClick=" + enabled));
+            for (SharedPreferences store : new SharedPreferences[]{credential, device}) {
+                assertTrue(copied.save(store, mask + 1L));
+                FocusRestoreSettings loaded = FocusRestoreSettings.fromPreferences(store);
+                assertEquals(enabled, loaded.longPressNotificationRowClick);
+                assertEquals(2.75f, loaded.longPressSeconds, 0f);
+                Object[] row = SettingsContract.toRow(loaded, "legacy");
+                assertEquals(35, row.length);
+                assertEquals(enabled ? 1 : 0, row[33]);
+                assertEquals(2.75f, (Float) row[34], 0f);
+                for (HookSettings hook : new HookSettings[]{HookSettings.fromSettings(loaded),
+                        HookSettings.fromCursor(positionedCursor(row))}) {
+                    assertEquals(enabled, hook.longPressNotificationRowClick);
+                    assertEquals(2.75f, hook.longPressSeconds, 0f);
+                    assertEquals((mask & 1) != 0, hook.allowFocusClick);
+                    assertEquals((mask & 2) != 0, hook.notificationRowClickFallback);
+                    assertEquals((mask & 4) != 0, hook.independentFocusBanner);
+                    assertTrue(hook.describe().contains("longPressSeconds=2.75"));
+                }
+            }
+        }
+        // 在同一存储关闭已开启选项，必须覆盖 true，同时保留用户时长。
+        assertTrue(FocusRestoreSettings.edit().longPressSeconds(2.75f).build().save(credential));
+        assertEquals(Boolean.FALSE, credentialValues.get("long_press_notification_row_click"));
+        assertEquals(2.75f, FocusRestoreSettings.fromPreferences(credential).longPressSeconds, 0f);
+    }
+
+    @Test
+    public void longPressDurationNormalizesBoundsAndCompatiblePreferenceTypes() {
+        assertEquals(0.2f, FocusRestoreSettings.normalizeLongPressSeconds(-1f), 0f);
+        assertEquals(0.2f, FocusRestoreSettings.normalizeLongPressSeconds(0.2f), 0f);
+        assertEquals(10f, FocusRestoreSettings.normalizeLongPressSeconds(10f), 0f);
+        assertEquals(10f, FocusRestoreSettings.normalizeLongPressSeconds(20f), 0f);
+        for (float invalid : new float[]{Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY}) {
+            assertEquals(0.5f, FocusRestoreSettings.normalizeLongPressSeconds(invalid), 0f);
+        }
+        for (String invalid : new String[]{null, "", "bad", "NaN", "Infinity"}) {
+            assertEquals(0.5f, FocusRestoreSettings.parseLongPressSeconds(invalid), 0f);
+        }
+        assertEquals(0.2f, FocusRestoreSettings.parseLongPressSeconds("0.1"), 0f);
+        assertEquals(10f, FocusRestoreSettings.parseLongPressSeconds("11"), 0f);
+        assertEquals(1.25f, FocusRestoreSettings.parseLongPressSeconds(" 1.25 "), 0f);
+        for (Object duration : new Object[]{2, 2f, "2"}) {
+            Map<String, Object> values = legacyPreferences();
+            values.put("long_press_seconds", duration);
+            Map<String, Object> before = new HashMap<>(values);
+            assertEquals(2f, FocusRestoreSettings.fromPreferences(memoryPreferences(values))
+                    .longPressSeconds, 0f);
+            assertEquals(before, values);
+        }
+        for (float seconds : new float[]{0.1f, 0.2f, 10f, 11f, Float.NaN, Float.POSITIVE_INFINITY}) {
+            Object[] row = SettingsContract.toRow(FocusRestoreSettings.defaults(), "legacy");
+            row[34] = seconds;
+            assertEquals(FocusRestoreSettings.normalizeLongPressSeconds(seconds),
+                    HookSettings.fromCursor(positionedCursor(row)).longPressSeconds, 0f);
+        }
+    }
+
+    @Test
     public void iconFallbackAndBannerDefaultsMatchStatusBarPolicy() {
         FocusRestoreSettings settings = FocusRestoreSettings.defaults();
         assertFalse(settings.showIslandIcon);

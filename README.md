@@ -20,12 +20,13 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-版本：`0.29.12`（versionCode 257）
+版本：`0.30.3`（versionCode 261）
 
-- 修复 OS3/OS4 旧协议进度通知（如外卖配送）点击无法展开横幅的问题。
-- 保留现有 V3、短信验证码和媒体通知横幅路径。
+- HyperOS 4 媒体焦点跟随超级岛的媒体选择时机，首次播放才显示、同一媒体暂停保留，划掉通知栏媒体卡片后隐藏。
+- 从媒体横幅进入无缝流转后自动收起横幅。
+- 小米妙播改用通知栏和超级岛共用的原生流转窗口，保留安卓原生入口选项。
 
-旧协议进度横幅使用 ROM 原生模板独立创建，不移动系统已有视图。
+长按优先交给系统通知行处理；媒体通知缺少通知行时沿用横幅的媒体会话打开入口。通知已移除或焦点已切换时不执行打开。
 
 
 ## 功能概述
@@ -72,6 +73,8 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ### 点击行为
 
+- **长按焦点通知模拟通知列表点击（实验性）**：默认关闭；在 HyperOS 3/4 上长按焦点通知时，复用横幅无控件区域的打开链路：优先通知行点击，媒体通知沿用媒体会话入口。
+- **长按时间**：滑动条支持 `0.2～10` 秒，步进 `0.1` 秒，默认 `0.5` 秒，实时显示当前值；滑动、多指触摸、取消或焦点切换会取消等待。
 - **点击焦点通知展开横幅（实验性）**：默认关闭。普通焦点通知使用通知横幅，媒体焦点使用媒体横幅；点击外侧可收起。
 - **通知横幅背景**：可选“统一使用纯色背景”或“使用普通通知背景”。
 - **点击媒体焦点通知**：可选“展开媒体横幅”或“直接展开流转界面”。
@@ -79,7 +82,11 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 - **旧版：打开通知内容（实验性）**：保留旧版打开通知内容行为。
 - **直接打开失败时模拟通知列表点击（实验性）**：作为旧版打开通知内容失败时的兜底行为。
 
-“点击媒体焦点通知”和“无缝流转入口”需要同时启用媒体焦点通知；点击行为相关子项在“点击焦点通知展开横幅”关闭时不可用。
+长按开关独立于短按横幅和旧版打开通知内容开关；长按成立后，松手不会再触发短按。媒体打开沿用横幅现有的媒体点击 intent 和应用入口兜底，不需要先展开横幅。
+
+“点击媒体焦点通知”和“无缝流转入口”需要同时启用媒体焦点通知；原有短按行为相关子项在“点击焦点通知展开横幅”关闭时不可用。
+
+HyperOS 4 媒体焦点使用原生媒体卡片选出的当前媒体：首次加入或切换媒体需处于播放中，同一媒体暂停保留；卡片被划掉或当前媒体移除后隐藏，恢复播放并被原生重新选中后恢复。通知 Entry 留存或更新不会单独恢复焦点。妙播复用 ROM 的原生流转入口及窗口，CTA、退出和动画交给系统；成功分发后收起对应媒体横幅，原生入口不可用则回退安卓输出面板。媒体横幅本身仍使用现有渲染方式。相关私有接口已核对 OS3/OS4 参考 ROM，最新修复仍需真机验证。
 
 ### 滚动与兼容
 
@@ -122,13 +129,13 @@ Debug 版本额外提供以下兼容选项，普通用户通常不需要修改�
 ```sh
 su
 /system/bin/logcat -c
-/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.29.12.log
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.30.3.log
 ```
 
 保持命令运行，然后通过设备上的方式手动重启系统界面。完成复现后回到 MT 终端，按 `Ctrl+C` 停止抓取。日志保存在：
 
 ```text
-/sdcard/focus-restore-0.29.12.log
+/sdcard/focus-restore-0.30.3.log
 ```
 
 ### 电脑端：ADB + PowerShell
@@ -203,13 +210,13 @@ gradle :app:clean :app:assembleDebug :app:assembleRelease
 安装前确认设备已解锁、已启用 ADB，并已备份相关配置。安装不会自动启用 LSPosed 模块，也不会自动将作用域加入 SystemUI。
 
 ```powershell
-adb install -r '.\FocusRestore-0.29.12-debug.apk'
+adb install -r '.\FocusRestore-0.30.3-debug.apk'
 ```
 
 或安装 Release：
 
 ```powershell
-adb install -r '.\FocusRestore-0.29.12-release.apk'
+adb install -r '.\FocusRestore-0.30.3-release.apk'
 ```
 
 安装后：

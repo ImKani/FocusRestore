@@ -389,6 +389,13 @@ public final class FocusBannerController {
         runMain("dismiss", () -> dismissMain(reason == null ? "requested" : reason));
     }
 
+    public void dismissForNotification(String key, String reason) {
+        // 流转打开后只收起发起它的横幅，避免延迟回调收掉已切换到其他通知的横幅。
+        runMain("dismiss-for-notification", () -> {
+            if (sameKey(key)) dismissMain(reason == null ? "requested" : reason);
+        });
+    }
+
     private void scheduleUpdate(long delay) {
         if (banner == null || removalPending || currentSbn == null || updateScheduled) return;
         // Once scheduled, subsequent notifications/source events only replace currentSbn.
