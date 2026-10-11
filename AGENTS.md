@@ -2,21 +2,6 @@
 
 本文件是 FocusRestore 对其他作者、贡献者和其他 AI 进行二次修改、二次创作或派生发布时的强制要求。除署名、许可证和来源条款外，以下代码设计规范也必须遵守；不符合要求的修改不得合并、发布或宣称为原创。
 
-## Windows 环境
-
-所有文件和命令输出使用 UTF-8。
-
-执行 PowerShell 命令前先设置 UTF-8 编码：
-
-```powershell
-chcp 65001
-[Console]::InputEncoding = [System.Text.UTF8Encoding]::new()
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
-$OutputEncoding = [System.Text.UTF8Encoding]::new()
-```
-
-遇到乱码时先检查退出码和文件实际编码，不得仅因显示异常就重复执行命令。
-
 ## 1. 强制署名与许可证
 
 任何其他作者或 AI 对本项目进行二改、二次创作、派生实现或重新发布，必须：
