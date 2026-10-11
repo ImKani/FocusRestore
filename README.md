@@ -20,11 +20,11 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-版本：`0.30.4`（versionCode 262）
+版本：`0.31.3`（versionCode 266）
 
-- 修复从媒体横幅进入小米妙播时，已同意隐私政策仍重复弹出确认页的问题。
-- 保留原生隐私确认：尚未同意时仍由系统提示，不修改用户同意状态。
-- 保留媒体焦点生命周期、流转后收起横幅及安卓原生入口选项。
+- 关于页新增配置文件导入、导出；导出内容记录软件版本，默认文件名使用软件名加日期时间。
+- 修复切换高级页、关于页或退出设置页时的闪退，完善导入覆盖确认和应用名单弹窗样式。
+- 配置按功能整理，保留0.30.4升级时的用户设置读取兼容。
 
 长按优先交给系统通知行处理；媒体通知缺少通知行时沿用横幅的媒体会话打开入口。通知已移除或焦点已切换时不执行打开。
 
@@ -99,6 +99,14 @@ HyperOS 4 媒体焦点使用原生媒体卡片选出的当前媒体：首次加�
 - **普通内容**：设置普通焦点内容的连接符，默认 `·`，允许留空。
 - **左右区域**：设置左右区域内容的连接符，默认 `·`，允许留空。
 
+### 配置导入与导出
+
+关于页提供“导出配置”和“导入配置”，通过系统文件选择器保存或选择 UTF-8 JSON 文件，不申请存储权限。默认导出文件名为 `FocusRestore-yyyy-MM-dd-HH_mm_ss.json`（设备本地时间，例如 `FocusRestore-2026-10-11-12_41_58.json`）。备份包含当前31个用户设置，按功能分组，应用名单按包名排序；不包含应用缓存、内部保存状态或废弃设置。
+
+导入先完整检查文件，再确认覆盖全部当前设置；文件中缺少的设置恢复兼容默认值，不与当前配置混合。旧横屏宽度缺失时继承所导入的竖屏宽度，旧连接符可作为两种连接符的回退。取消或文件校验失败不写设置；保存失败会提示，双存储写入不保证跨存储事务。恢复后仍需手动重启系统界面完整生效。
+
+配置文件带格式版本 `formatVersion` 和导出软件版本 `appVersion`（例如 `0.31.3(266)`），软件版本随实际导出构建自动填写，仅说明来源，不决定能否导入。手工编辑时 `appVersion` 必须保留为非空、最多64字符且不含控制符的文本；设置仍按字段类型、范围和结构校验。兼容基线为0.30.4的持久设置，不为0.31.0～0.31.3测试期间缺少软件版本字段的旧JSON增加迁移；旧版不保证能导入新增字段的新版备份。文件最多16 MiB，两份应用名单的包名文本合计最多64 Ki字符，避免页面状态保存超限；导入和导出使用相同限制。冲突的点击选项按设置界面现有优先级处理。文件包含应用名单等个人设置，请妥善保管。
+
 ### Debug 测试版内部兼容开关
 
 Debug 版本额外提供以下兼容选项，普通用户通常不需要修改：
@@ -129,13 +137,13 @@ Debug 版本额外提供以下兼容选项，普通用户通常不需要修改�
 ```sh
 su
 /system/bin/logcat -c
-/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.30.4.log
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.31.3.log
 ```
 
 保持命令运行，然后通过设备上的方式手动重启系统界面。完成复现后回到 MT 终端，按 `Ctrl+C` 停止抓取。日志保存在：
 
 ```text
-/sdcard/focus-restore-0.30.4.log
+/sdcard/focus-restore-0.31.3.log
 ```
 
 ### 电脑端：ADB + PowerShell
@@ -210,13 +218,13 @@ gradle :app:clean :app:assembleDebug :app:assembleRelease
 安装前确认设备已解锁、已启用 ADB，并已备份相关配置。安装不会自动启用 LSPosed 模块，也不会自动将作用域加入 SystemUI。
 
 ```powershell
-adb install -r '.\FocusRestore-0.30.4-debug.apk'
+adb install -r '.\FocusRestore-0.31.3-debug.apk'
 ```
 
 或安装 Release：
 
 ```powershell
-adb install -r '.\FocusRestore-0.30.4-release.apk'
+adb install -r '.\FocusRestore-0.31.3-release.apk'
 ```
 
 安装后：

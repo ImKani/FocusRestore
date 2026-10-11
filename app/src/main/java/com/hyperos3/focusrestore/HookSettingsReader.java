@@ -21,8 +21,8 @@ final class HookSettingsReader {
         Cursor cursor = null;
         try {
             ContentResolver resolver = context.getContentResolver();
-            cursor = resolver.query(SettingsProvider.URI, SettingsProvider.COLUMNS,
-                    null, null, null);
+            // 不指定列顺序：新版按功能分组，旧 Provider 仍可返回旧顺序，由字段名识别。
+            cursor = resolver.query(SettingsProvider.URI, null, null, null, null);
             if (cursor == null || !cursor.moveToFirst()) return null;
             return HookSettings.fromCursor(cursor);
         } catch (RuntimeException ignored) {

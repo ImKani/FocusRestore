@@ -54,8 +54,9 @@ public final class SettingsProvider extends ContentProvider {
                 + COLUMNS.length + " " + settings.describe());
         String legacySeparator = preferences.getString(FocusRestoreSettings.KEY_ISLAND_SEPARATOR,
                 FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR);
-        MatrixCursor cursor = new MatrixCursor(COLUMNS);
-        cursor.addRow(SettingsContract.toRow(settings, legacySeparator));
+        String[] columns = SettingsContract.columnsForProjection(projection);
+        MatrixCursor cursor = new MatrixCursor(columns);
+        cursor.addRow(SettingsContract.toRow(settings, legacySeparator, columns));
         return cursor;
     }
 

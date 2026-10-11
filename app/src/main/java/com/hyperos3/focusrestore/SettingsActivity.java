@@ -9,6 +9,7 @@ package com.hyperos3.focusrestore;
 
 import android.app.Activity;
 import android.app.Dialog;
+import android.content.ContentResolver;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -22,6 +23,14 @@ import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.CancellationSignal;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.ParcelFileDescriptor;
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -98,10 +107,38 @@ public final class SettingsActivity extends Activity {
     });
     private FocusRestoreSettings queuedSettings;
     private long queuedSettingsGeneration;
-    private long settingsGeneration;
+    private volatile long settingsGeneration;
     private boolean saveWorkerRunning;
     private Future<?> saveFuture;
     private volatile boolean destroyed;
+    private static final int REQUEST_IMPORT_SETTINGS = 4101;
+    private static final int REQUEST_EXPORT_SETTINGS = 4102;
+    private static final long BACKUP_IO_TIMEOUT_MS = 60_000L;
+    private final ExecutorService backupExecutor = Executors.newSingleThreadExecutor(command -> {
+        Thread thread = new Thread(command, TAG + "-backup");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final Handler backupHandler = new Handler(Looper.getMainLooper());
+    private final Object backupStreamLock = new Object();
+    private volatile long backupOperation;
+    private Future<?> backupFuture;
+    private CancellationSignal backupCancellation;
+    private Closeable backupStream;
+    private Runnable backupTimeout;
+    private boolean backupBusy;
+    private boolean backupImporting;
+    private boolean backupUiResumed;
+    private boolean rebuildingPage;
+    private int backupRequestCode;
+    private long importSaveGeneration = -1L;
+    private FocusRestoreSettings importCandidate;
+    private Dialog importDialog;
+    private Button importSettingsButton;
+    private Button exportSettingsButton;
+    private Button cancelBackupButton;
+    private TextView backupStatus;
+    private String backupStatusText = "仅备份用户设置；导入会覆盖当前配置。";
     private LinearLayout pageContainer;
     private LinearLayout bottomNav;
     private ImageButton[] navButtons;
@@ -177,6 +214,7 @@ public final class SettingsActivity extends Activity {
     private float pendingFocusMaxDisplaySeconds;
     private String pendingGeneralSeparator, pendingSideSeparator;
     private boolean focusMaxDisplaySyncing;
+    private final List<Runnable> pageListenerCleanup = new ArrayList<>();
     private Set<String> pendingForcePackages = new HashSet<>();
     private Set<String> pendingTimeoutExemptPackages = new HashSet<>();
     private Button forcePackagesButton;
@@ -209,9 +247,29 @@ public final class SettingsActivity extends Activity {
         reconcileSettingsStores();
         setContentView(createContent());
         loadSettings();
-        if (savedInstanceState != null) restorePendingState(savedInstanceState);
+        if (savedInstanceState != null) {
+            restorePendingState(savedInstanceState);
+            backupRequestCode = savedInstanceState.getInt("backup.request", 0);
+            backupBusy = backupRequestCode != 0;
+            if (savedInstanceState.getBoolean("backup.interrupted", false)) {
+                backupStatusText = "配置操作已因页面重建中断，请重新操作；导出文件可能不完整。";
+            }
+        }
         showPage(currentPage);
         if (savedInstanceState != null) resumeInterruptedSave(savedInstanceState);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        backupUiResumed = true;
+        if (importCandidate != null) confirmSettingsImport();
+    }
+
+    @Override
+    protected void onPause() {
+        backupUiResumed = false;
+        super.onPause();
     }
 
     @Override
@@ -238,7 +296,15 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onDestroy() {
         destroyed = true;
+        cancelBackupIo();
+        backupExecutor.shutdownNow();
+        if (importDialog != null) importDialog.dismiss();
+        importDialog = null;
+        importCandidate = null;
+        if (activeDialog != null) activeDialog.dismiss();
+        clearPageControls();
         if (feedbackToast != null) feedbackToast.cancel();
+        // 已确认的设置提交继续排空；文件 IO 的取消不撤销已经接受的设置保存。
         saveExecutor.shutdown();
         super.onDestroy();
     }
@@ -374,21 +440,97 @@ public final class SettingsActivity extends Activity {
     private void showPage(int page) {
         captureCurrentInputs();
         if (pageScroll != null) scrollPositions[currentPage] = pageScroll.getScrollY();
-        currentPage = page;
-        pageContainer.removeAllViews();
-        updateNavButtons(page);
-        ScrollView scroll = new ScrollView(this);
-        pageScroll = scroll;
-        scroll.setFillViewport(true);
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(16), dp(12), dp(16), dp(24));
-        if (page == 0) buildSettingsPage(content);
-        else if (page == 1) buildAdvancedPage(content);
-        else buildAboutSections(content);
-        scroll.addView(content);
-        pageContainer.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
-        scroll.post(() -> scroll.scrollTo(0, scrollPositions[page]));
+        clearPageControls();
+        rebuildingPage = true;
+        try {
+            currentPage = page;
+            pageContainer.removeAllViews();
+            updateNavButtons(page);
+            ScrollView scroll = new ScrollView(this);
+            pageScroll = scroll;
+            scroll.setFillViewport(true);
+            LinearLayout content = new LinearLayout(this);
+            content.setOrientation(LinearLayout.VERTICAL);
+            content.setPadding(dp(16), dp(12), dp(16), dp(24));
+            if (page == 0) buildSettingsPage(content);
+            else if (page == 1) buildAdvancedPage(content);
+            else buildAboutSections(content);
+            scroll.addView(content);
+            pageContainer.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
+            scroll.post(() -> {
+                if (!destroyed && pageScroll == scroll) scroll.scrollTo(0, scrollPositions[page]);
+            });
+        } finally {
+            rebuildingPage = false;
+        }
+    }
+
+    private void clearPageControls() {
+        // 切页前捕获输入，随后解除旧监听和引用；导入时不能再次捕获旧 EditText。
+        for (Runnable cleanup : pageListenerCleanup) cleanup.run();
+        pageListenerCleanup.clear();
+        if (pageContainer != null) detachPageListeners(pageContainer);
+        os3ModeButton = null;
+        os4ModeButton = null;
+        manualWidthSwitch = null;
+        widthSeekBar = null;
+        widthValue = null;
+        widthValueRow = null;
+        widthRangeRow = null;
+        delaySeekBar = null;
+        delayValue = null;
+        compatRetrySwitch = null;
+        marqueeBounceSwitch = null;
+        islandCompatSwitch = null;
+        islandTextModeField = null;
+        focusMaxDisplayInput = null;
+        disableIslandPropertySwitch = null;
+        disableIslandFeatureCacheSwitch = null;
+        allowFocusClickSwitch = null;
+        hideNotificationIconsSwitch = null;
+        showFocusDividerSwitch = null;
+        showIslandIconSwitch = null;
+        tintIslandIconSwitch = null;
+        useSmallIconFallbackSwitch = null;
+        notificationRowClickFallbackSwitch = null;
+        independentFocusBannerSwitch = null;
+        longPressNotificationRowClickSwitch = null;
+        longPressSecondsSeekBar = null;
+        longPressSecondsValue = null;
+        longPressSecondsLabel = null;
+        nativeBannerOptionsPanel = null;
+        generalSeparatorInput = null;
+        sideSeparatorInput = null;
+        mediaFocusSwitch = null;
+        mediaFocusClickField = null;
+        mediaFocusCastPickerField = null;
+        bannerBackgroundField = null;
+        bannerBackgroundLabel = null;
+        mediaFocusClickLabel = null;
+        mediaFocusCastPickerLabel = null;
+        forcePackagesButton = null;
+        timeoutExemptButton = null;
+        importSettingsButton = null;
+        exportSettingsButton = null;
+        cancelBackupButton = null;
+        backupStatus = null;
+    }
+
+    private void detachPageListeners(View view) {
+        // AdapterView（含 Spinner）禁止普通点击监听，即使传 null 也会抛异常。
+        if (view instanceof AdapterView) {
+            AdapterView<?> adapter = (AdapterView<?>) view;
+            adapter.setOnItemSelectedListener(null);
+        } else {
+            view.setOnClickListener(null);
+        }
+        view.setOnFocusChangeListener(null);
+        if (view instanceof Switch) ((Switch) view).setOnCheckedChangeListener(null);
+        if (view instanceof SeekBar) ((SeekBar) view).setOnSeekBarChangeListener(null);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int index = 0; index < group.getChildCount(); index++) detachPageListeners(group.getChildAt(index));
+        }
     }
 
     private LinearLayout panel() {
@@ -680,6 +822,28 @@ public final class SettingsActivity extends Activity {
         aboutPanel.addView(text("当前版本：v" + BuildConfig.VERSION_NAME, 14, COLOR_TEXT_SECONDARY), matchWrap(0));
         root.addView(aboutPanel, matchWrap(dp(12)));
 
+        root.addView(sectionHeader("配置文件"), matchWrap(dp(8)));
+        LinearLayout backupPanel = panel();
+        backupPanel.addView(text("导出用户设置为 JSON；导入前会确认覆盖，未包含的设置恢复默认值。",
+                14, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        exportSettingsButton = actionButton("导出配置文件", COLOR_PRIMARY, Color.WHITE);
+        exportSettingsButton.setOnClickListener(v -> chooseBackupDocument(false));
+        backupPanel.addView(exportSettingsButton, matchWrap(dp(8)));
+        importSettingsButton = actionButton("导入配置文件", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        importSettingsButton.setOnClickListener(v -> chooseBackupDocument(true));
+        backupPanel.addView(importSettingsButton, matchWrap(dp(8)));
+        backupStatus = text(backupStatusText, 13, COLOR_TEXT_SECONDARY);
+        backupPanel.addView(backupStatus, matchWrap(dp(8)));
+        cancelBackupButton = actionButton("取消文件操作", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        cancelBackupButton.setOnClickListener(v -> {
+            boolean importing = backupImporting;
+            cancelBackupIo();
+            finishBackup(importing ? "导入已取消，当前设置未修改。" : "导出已取消，文件可能不完整。", true);
+        });
+        backupPanel.addView(cancelBackupButton, matchWrap(0));
+        root.addView(backupPanel, matchWrap(dp(12)));
+        updateBackupControls();
+
         root.addView(sectionHeader("链接"), matchWrap(dp(8)));
         LinearLayout links = panel();
         Button github = actionButton("打开 GitHub", COLOR_PRIMARY, Color.WHITE);
@@ -694,6 +858,297 @@ public final class SettingsActivity extends Activity {
         LinearLayout license = panel();
         license.addView(text("GNU General Public License v3.0 only（GPL-3.0-only）", 15, COLOR_TEXT_SECONDARY), matchWrap(0));
         root.addView(license, matchWrap(dp(12)));
+    }
+
+    private void chooseBackupDocument(boolean importing) {
+        if (backupBusy || destroyed) return;
+        backupBusy = true;
+        backupImporting = importing;
+        backupRequestCode = importing ? REQUEST_IMPORT_SETTINGS : REQUEST_EXPORT_SETTINGS;
+        backupStatusText = importing ? "请选择要导入的配置文件。" : "请选择配置文件保存位置。";
+        updateBackupControls();
+        Intent intent = new Intent(importing ? Intent.ACTION_OPEN_DOCUMENT : Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        if (importing) {
+            // 文档提供方可能把 JSON 标为文本或二进制；格式由完整校验决定，不依赖 MIME。
+            intent.setType("*/*");
+        } else {
+            intent.setType("application/json");
+            intent.putExtra(Intent.EXTRA_TITLE, SettingsBackupCodec.defaultFileName(System.currentTimeMillis()));
+        }
+        try {
+            startActivityForResult(intent, backupRequestCode);
+        } catch (RuntimeException failure) {
+            android.util.Log.e(TAG, "backup document picker unavailable", failure);
+            finishBackup("无法打开系统文件选择器，请检查可用的文档应用。", true);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent result) {
+        super.onActivityResult(requestCode, resultCode, result);
+        if (requestCode != REQUEST_IMPORT_SETTINGS && requestCode != REQUEST_EXPORT_SETTINGS) return;
+        if (destroyed || requestCode != backupRequestCode) return;
+        backupRequestCode = 0;
+        if (resultCode != RESULT_OK) {
+            finishBackup("已取消文件选择，当前设置未修改。", false);
+            return;
+        }
+        Uri uri = result == null ? null : result.getData();
+        if (uri == null || !"content".equals(uri.getScheme())) {
+            finishBackup("文件选择器没有返回可用的文档。", true);
+            return;
+        }
+        backupImporting = requestCode == REQUEST_IMPORT_SETTINGS;
+        captureCurrentInputs();
+        // 主线程只固定不可变快照；编码、打开文档和读写都交给独立 IO 队列。
+        FocusRestoreSettings exported = backupImporting ? null : pendingSettings().build();
+        startBackupIo(uri, exported);
+    }
+
+    private void startBackupIo(Uri uri, FocusRestoreSettings exported) {
+        final long operation = ++backupOperation;
+        final boolean importing = backupImporting;
+        final CancellationSignal cancellation = new CancellationSignal();
+        backupCancellation = cancellation;
+        backupStatusText = importing ? "正在读取并校验配置文件…" : "正在导出配置文件…";
+        updateBackupControls();
+        backupTimeout = () -> {
+            if (!backupIsCurrent(operation)) return;
+            cancelBackupIo();
+            finishBackup(importing ? "读取配置超时，当前设置未修改。" : "导出配置超时，文件可能不完整。", true);
+        };
+        backupHandler.postDelayed(backupTimeout, BACKUP_IO_TIMEOUT_MS);
+        ContentResolver resolver = getApplicationContext().getContentResolver();
+        backupFuture = backupExecutor.submit(() -> {
+            try {
+                if (importing) {
+                    FocusRestoreSettings imported = readBackupDocument(resolver, uri, cancellation, operation);
+                    runOnUiThread(() -> {
+                        if (!backupIsCurrent(operation)) return;
+                        clearBackupTimeout();
+                        importCandidate = imported;
+                        backupStatusText = "配置校验通过，等待确认覆盖。";
+                        updateBackupControls();
+                        if (backupUiResumed) confirmSettingsImport();
+                    });
+                } else {
+                    byte[] encoded = SettingsBackupCodec.encode(exported);
+                    writeBackupDocument(resolver, uri, cancellation, operation, encoded);
+                    runOnUiThread(() -> {
+                        if (backupIsCurrent(operation)) finishBackup("配置文件已导出。", true);
+                    });
+                }
+            } catch (IOException | RuntimeException failure) {
+                if (Thread.currentThread().isInterrupted() || cancellation.isCanceled()) return;
+                android.util.Log.e(TAG, importing ? "backup import read/validate failed" : "backup export write failed", failure);
+                String reason = failure instanceof SettingsBackupCodec.InvalidBackupException
+                        ? failure.getMessage() : "无法访问文档或读写失败";
+                runOnUiThread(() -> {
+                    if (!backupIsCurrent(operation)) return;
+                    finishBackup(importing ? "导入失败：" + reason + "。当前设置未修改。"
+                            : "导出失败：" + reason + "，文件可能不完整。", true);
+                });
+            }
+        });
+    }
+
+    private FocusRestoreSettings readBackupDocument(ContentResolver resolver, Uri uri,
+            CancellationSignal cancellation, long operation) throws IOException {
+        ParcelFileDescriptor descriptor = resolver.openFileDescriptor(uri, "r", cancellation);
+        if (descriptor == null) throw new IOException("document provider returned no read descriptor");
+        InputStream input = new ParcelFileDescriptor.AutoCloseInputStream(descriptor);
+        try (InputStream owned = input) {
+            registerBackupStream(input, operation);
+            return SettingsBackupCodec.read(input);
+        } finally {
+            releaseBackupStream(input);
+        }
+    }
+
+    private void writeBackupDocument(ContentResolver resolver, Uri uri, CancellationSignal cancellation,
+            long operation, byte[] encoded) throws IOException {
+        ParcelFileDescriptor descriptor = resolver.openFileDescriptor(uri, "wt", cancellation);
+        if (descriptor == null) throw new IOException("document provider returned no write descriptor");
+        OutputStream output = new ParcelFileDescriptor.AutoCloseOutputStream(descriptor);
+        try (OutputStream owned = output) {
+            registerBackupStream(output, operation);
+            for (int offset = 0; offset < encoded.length; offset += 8192) {
+                if (Thread.currentThread().isInterrupted() || !backupIsCurrent(operation)) {
+                    throw new java.io.InterruptedIOException("backup export cancelled");
+                }
+                output.write(encoded, offset, Math.min(8192, encoded.length - offset));
+            }
+            output.flush();
+        } finally {
+            releaseBackupStream(output);
+        }
+    }
+
+    private void registerBackupStream(Closeable stream, long operation) throws IOException {
+        synchronized (backupStreamLock) {
+            if (destroyed || operation != backupOperation || Thread.currentThread().isInterrupted()) {
+                throw new java.io.InterruptedIOException("backup operation expired");
+            }
+            backupStream = stream;
+        }
+    }
+
+    private void releaseBackupStream(Closeable stream) {
+        synchronized (backupStreamLock) {
+            if (backupStream == stream) backupStream = null;
+        }
+    }
+
+    private boolean backupIsCurrent(long operation) {
+        return !destroyed && operation == backupOperation;
+    }
+
+    private void clearBackupTimeout() {
+        if (backupTimeout != null) backupHandler.removeCallbacks(backupTimeout);
+        backupTimeout = null;
+    }
+
+    private void cancelBackupIo() {
+        ++backupOperation;
+        clearBackupTimeout();
+        if (backupFuture != null) backupFuture.cancel(true);
+        backupFuture = null;
+        final CancellationSignal cancellation = backupCancellation;
+        backupCancellation = null;
+        final Closeable stream;
+        synchronized (backupStreamLock) {
+            stream = backupStream;
+            backupStream = null;
+        }
+        if (cancellation != null || stream != null) {
+            // 部分文档提供方的 close/cancel 也会阻塞，不能在主线程释放文件句柄。
+            Thread closer = new Thread(() -> {
+                if (cancellation != null) {
+                    try { cancellation.cancel(); }
+                    catch (RuntimeException failure) { android.util.Log.w(TAG, "backup provider cancellation failed", failure); }
+                }
+                if (stream != null) {
+                    try { stream.close(); }
+                    catch (IOException failure) { android.util.Log.w(TAG, "backup cancelled stream close failed", failure); }
+                }
+            }, TAG + "-backup-close");
+            closer.setDaemon(true);
+            closer.start();
+        }
+    }
+
+    private void confirmSettingsImport() {
+        if (destroyed || isFinishing() || !backupUiResumed || importCandidate == null || importDialog != null) return;
+        if (activeDialog != null) activeDialog.dismiss();
+        captureCurrentInputs();
+        final long confirmedGeneration = settingsGeneration;
+        final long confirmedPersistedGeneration = persistedGeneration();
+        final FocusRestoreSettings imported = importCandidate;
+        final Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setContentView(createImportConfirmDialogView(dialog, imported,
+                confirmedGeneration, confirmedPersistedGeneration));
+        importDialog = dialog;
+        dialog.setOnDismissListener(ignored -> {
+            if (importDialog == dialog) importDialog = null;
+            if (!destroyed && importCandidate == imported) {
+                importCandidate = null;
+                finishBackup("导入已取消，当前设置未修改。", false);
+            }
+        });
+        Window window = dialog.getWindow();
+        if (window != null) window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        dialog.show();
+        window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setLayout((int) (getResources().getDisplayMetrics().widthPixels * 0.86f),
+                    WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private View createImportConfirmDialogView(final Dialog dialog,
+            final FocusRestoreSettings imported, final long confirmedGeneration,
+            final long confirmedPersistedGeneration) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
+        if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
+        // 与应用名单按钮保持相同的右/下留白，避免文字按钮的透明内边距显得偏左。
+        root.setPadding(dp(20), dp(18), dp(16), dp(16));
+
+        TextView title = text("覆盖当前配置？", 18, COLOR_TEXT_PRIMARY);
+        title.setTypeface(title.getTypeface(), 1);
+        root.addView(title, matchWrap(dp(8)));
+        TextView message = text("此文件将替换全部当前用户设置，未包含的设置恢复默认值。导入后请重启系统界面生效。",
+                14, COLOR_TEXT_SECONDARY);
+        message.setLineSpacing(0f, 1.15f);
+        root.addView(message, matchWrap(dp(12)));
+
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button cancel = actionButton("取消", Color.TRANSPARENT, COLOR_TEXT_SECONDARY);
+        cancel.setOnClickListener(v -> {
+            importCandidate = null;
+            dialog.dismiss();
+            finishBackup("导入已取消，当前设置未修改。", false);
+        });
+        actions.addView(cancel, new LinearLayout.LayoutParams(-2, dp(40)));
+        Button confirm = actionButton("确认覆盖", COLOR_PRIMARY, Color.WHITE);
+        confirm.setOnClickListener(v -> {
+            if (destroyed || imported != importCandidate) return;
+            if (confirmedGeneration != settingsGeneration
+                    || confirmedPersistedGeneration != persistedGeneration()) {
+                importCandidate = null;
+                dialog.dismiss();
+                finishBackup("确认期间设置已改变，请重新导入并确认覆盖。", true);
+                return;
+            }
+            importCandidate = null;
+            dialog.dismiss();
+            // 不调用旧输入捕获；先解除页面监听，再赋导入快照和分配新的保存代次。
+            clearPageControls();
+            // 复用界面既有优先级；保存和待显示快照必须是同一份归一结果。
+            FocusRestoreSettings normalizedImport = imported.independentFocusBanner
+                    ? FocusRestoreSettings.edit(imported).allowFocusClick(false)
+                            .notificationRowClickFallback(false).build()
+                    : imported;
+            applySettingsSnapshot(normalizedImport);
+            importSaveGeneration = queueSettingsSave(normalizedImport);
+            backupStatusText = "正在保存导入配置…";
+            showPage(2);
+            for (ImageButton button : navButtons) button.setEnabled(false);
+            updateBackupControls();
+        });
+        LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(-2, dp(40));
+        confirmParams.leftMargin = dp(8);
+        actions.addView(confirm, confirmParams);
+        root.addView(actions, matchWrap(0));
+        return root;
+    }
+
+    private void finishBackup(String message, boolean feedback) {
+        ++backupOperation;
+        clearBackupTimeout();
+        backupBusy = false;
+        backupRequestCode = 0;
+        backupCancellation = null;
+        backupFuture = null;
+        importCandidate = null;
+        backupStatusText = message;
+        if (navButtons != null) for (ImageButton button : navButtons) button.setEnabled(true);
+        updateBackupControls();
+        if (feedback && !destroyed && !isFinishing()) showFeedback(message);
+    }
+
+    private void updateBackupControls() {
+        if (importSettingsButton != null) importSettingsButton.setEnabled(!backupBusy);
+        if (exportSettingsButton != null) exportSettingsButton.setEnabled(!backupBusy);
+        if (backupStatus != null) backupStatus.setText(backupStatusText);
+        if (cancelBackupButton != null) cancelBackupButton.setVisibility(
+                backupBusy && backupRequestCode == 0 && importCandidate == null && importSaveGeneration < 0L
+                        ? View.VISIBLE : View.GONE);
     }
 
     private Button actionButton(String label, int background, int foreground) {
@@ -753,11 +1208,13 @@ public final class SettingsActivity extends Activity {
         }
         // Lets a later restore detect that the store has moved on since this snapshot.
         outState.putLong("m3.generation", settingsGeneration);
+        outState.putInt("backup.request", backupRequestCode);
+        outState.putBoolean("backup.interrupted", backupBusy && backupRequestCode == 0);
         super.onSaveInstanceState(outState);
     }
 
     private void restorePendingState(Bundle state) {
-        currentPage = Math.max(0, Math.min(1, state.getInt("m3.page", 0)));
+        currentPage = Math.max(0, Math.min(2, state.getInt("m3.page", 0)));
         if (isSnapshottedAfterStore(state)) {
             // Keep the freshly loaded store: replaying this snapshot would resurrect values the
             // user already replaced and, via m3.savePending, write them back permanently.
@@ -881,17 +1338,16 @@ public final class SettingsActivity extends Activity {
             markPending();
         });
         if (generalSeparatorInput != null) {
-            generalSeparatorInput.addTextChangedListener(
-                    separatorWatcher(generalSeparatorInput, true));
+            addPageTextWatcher(generalSeparatorInput, separatorWatcher(generalSeparatorInput, true));
         }
         if (sideSeparatorInput != null) {
-            sideSeparatorInput.addTextChangedListener(separatorWatcher(sideSeparatorInput, false));
+            addPageTextWatcher(sideSeparatorInput, separatorWatcher(sideSeparatorInput, false));
         }
         if (focusMaxDisplayInput != null) {
             focusMaxDisplayInput.setOnFocusChangeListener((v, hasFocus) -> {
                 if (!hasFocus) syncFocusMaxDisplayInput();
             });
-            focusMaxDisplayInput.addTextChangedListener(new TextWatcher() {
+            addPageTextWatcher(focusMaxDisplayInput, new TextWatcher() {
                 public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
                 public void onTextChanged(CharSequence s, int start, int before, int count) {
                     if (focusMaxDisplaySyncing) return;
@@ -1138,7 +1594,7 @@ public final class SettingsActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
         if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
-        root.setPadding(dp(16), dp(16), dp(16), dp(8));
+        root.setPadding(dp(16), dp(16), dp(16), dp(16));
         TextView title = text(dialogEditsExempt ? "最大显示时间豁免应用" : "强制转换超级岛应用",
                 18, COLOR_TEXT_PRIMARY);
         title.setTypeface(title.getTypeface(), 1);
@@ -1404,6 +1860,11 @@ public final class SettingsActivity extends Activity {
         return e;
     }
 
+    private void addPageTextWatcher(EditText field, TextWatcher watcher) {
+        field.addTextChangedListener(watcher);
+        pageListenerCleanup.add(() -> field.removeTextChangedListener(watcher));
+    }
+
     /** Keeps a separator field's pending value in sync and saves while the user types. */
     private TextWatcher separatorWatcher(EditText field, boolean general) {
         return new TextWatcher() {
@@ -1420,6 +1881,11 @@ public final class SettingsActivity extends Activity {
     private void loadSettings() {
         settings = FocusRestoreSettings.fromPreferences(preferences);
         android.util.Log.i(TAG, "settings loaded " + settings.describe());
+        applySettingsSnapshot(settings);
+    }
+
+    private void applySettingsSnapshot(FocusRestoreSettings settings) {
+        this.settings = settings;
         pendingHookMode = settings.hookMode;
         pendingManual = settings.limitWidth;
         pendingWidthDp = settings.widthDp;
@@ -1499,28 +1965,34 @@ public final class SettingsActivity extends Activity {
     }
 
     private void saveSettings() {
+        if (destroyed || rebuildingPage || importSaveGeneration >= 0L) return;
         captureCurrentInputs();
         settings = pendingSettings().build();
         pendingForcePackages = new HashSet<>(settings.islandForcePackages);
         updateForcePackagesButton();
         pendingTimeoutExemptPackages = new HashSet<>(settings.focusTimeoutExemptPackages);
         updateTimeoutExemptButton();
+        queueSettingsSave(settings);
+    }
+
+    private long queueSettingsSave(FocusRestoreSettings snapshot) {
         long generation;
         synchronized (STORE_WRITE_LOCK) {
             generation = settingsGeneration = nextSettingsGenerationLocked();
         }
         synchronized (saveLock) {
-            queuedSettings = settings;
+            queuedSettings = snapshot;
             queuedSettingsGeneration = generation;
-            if (saveWorkerRunning) return;
+            if (saveWorkerRunning) return generation;
             saveWorkerRunning = true;
         }
         android.util.Log.i(TAG, "settings save queued generation=" + generation + " "
-                + settings.describe());
+                + snapshot.describe());
         Future<?> future = saveExecutor.submit(this::drainSettingsSaves);
         synchronized (saveLock) {
             saveFuture = future;
         }
+        return generation;
     }
 
     private void drainSettingsSaves() {
@@ -1547,30 +2019,48 @@ public final class SettingsActivity extends Activity {
                     credentialSaved = false;
                     hookSaved = false;
                 } else {
-                    credentialSaved = snapshot.save(preferences, generation);
-                    hookSaved = snapshot.save(hookPreferences, generation);
-                    if (!credentialSaved) {
-                        credentialSaved = snapshot.save(preferences, generation);
-                    }
-                    if (!hookSaved) hookSaved = snapshot.save(hookPreferences, generation);
+                    credentialSaved = saveSnapshotToStore(snapshot, preferences, generation, "credential");
+                    hookSaved = saveSnapshotToStore(snapshot, hookPreferences, generation, "deviceProtected");
                 }
             }
             android.util.Log.i(TAG, "settings saved generation=" + generation
                     + " stale=" + stale + " credential=" + credentialSaved
                     + " deviceProtected=" + hookSaved + " " + snapshot.describe());
-            boolean latest;
-            synchronized (saveLock) {
-                latest = generation == settingsGeneration && queuedSettings == null;
-            }
-            if (latest && !destroyed && !stale) {
-                final boolean success = credentialSaved && hookSaved;
-                runOnUiThread(() -> {
-                    if (!destroyed) showFeedback(success
-                            ? "设置已保存，请重启系统界面生效"
-                            : "设置保存失败，请检查存储状态后重试");
-                });
+            final boolean success = credentialSaved && hookSaved;
+            final boolean skipped = stale;
+            runOnUiThread(() -> {
+                if (destroyed) return;
+                // 排队到主线程后必须重查代次，旧保存结果不能盖掉导入结果。
+                if (generation == importSaveGeneration) {
+                    importSaveGeneration = -1L;
+                    if (skipped || generation != settingsGeneration || persistedGeneration() > generation) {
+                        finishBackup("导入配置已被更新的设置替代，请检查当前配置。", true);
+                    } else {
+                        finishBackup(success ? "配置已导入并保存，请重启系统界面生效。"
+                                : "配置保存失败，可能部分生效；请检查存储状态后重试。", true);
+                    }
+                    return;
+                }
+                synchronized (saveLock) {
+                    if (generation != settingsGeneration || queuedSettings != null) return;
+                }
+                if (!skipped) showFeedback(success ? "设置已保存，请重启系统界面生效"
+                        : "设置保存失败，请检查存储状态后重试");
+            });
+        }
+    }
+
+    private boolean saveSnapshotToStore(FocusRestoreSettings snapshot, SharedPreferences store,
+            long generation, String storage) {
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                if (snapshot.save(store, generation)) return true;
+            } catch (RuntimeException failure) {
+                android.util.Log.e(TAG, "settings commit failed storage=" + storage
+                        + " generation=" + generation + " attempt=" + attempt, failure);
             }
         }
+        return false;
     }
 
     private void markPending() {

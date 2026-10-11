@@ -34,7 +34,7 @@ public class ExperimentalSettingsTest {
                 memoryPreferences(legacyPreferences()));
         assertFalse(legacy.longPressNotificationRowClick);
         assertEquals(0.5f, legacy.longPressSeconds, 0f);
-        Object[] row = SettingsContract.toRow(FocusRestoreSettings.edit()
+        Object[] row = legacyProviderRow(FocusRestoreSettings.edit()
                 .allowFocusClick(true).notificationRowClickFallback(true)
                 .independentFocusBanner(true).longPressNotificationRowClick(true)
                 .longPressSeconds(2.75f).build(), "legacy");
@@ -75,7 +75,7 @@ public class ExperimentalSettingsTest {
                 FocusRestoreSettings loaded = FocusRestoreSettings.fromPreferences(store);
                 assertEquals(enabled, loaded.longPressNotificationRowClick);
                 assertEquals(2.75f, loaded.longPressSeconds, 0f);
-                Object[] row = SettingsContract.toRow(loaded, "legacy");
+                Object[] row = legacyProviderRow(loaded, "legacy");
                 assertEquals(35, row.length);
                 assertEquals(enabled ? 1 : 0, row[33]);
                 assertEquals(2.75f, (Float) row[34], 0f);
@@ -120,7 +120,7 @@ public class ExperimentalSettingsTest {
             assertEquals(before, values);
         }
         for (float seconds : new float[]{0.1f, 0.2f, 10f, 11f, Float.NaN, Float.POSITIVE_INFINITY}) {
-            Object[] row = SettingsContract.toRow(FocusRestoreSettings.defaults(), "legacy");
+            Object[] row = legacyProviderRow(FocusRestoreSettings.defaults(), "legacy");
             row[34] = seconds;
             assertEquals(FocusRestoreSettings.normalizeLongPressSeconds(seconds),
                     HookSettings.fromCursor(positionedCursor(row)).longPressSeconds, 0f);
@@ -165,7 +165,7 @@ public class ExperimentalSettingsTest {
             assertEquals(rowFallback, settings.notificationRowClickFallback);
             assertEquals(banner, settings.independentFocusBanner);
             HookSettings hook = HookSettings.fromCursor(positionedCursor(
-                    SettingsContract.toRow(settings, "·")));
+                    legacyProviderRow(settings, "·")));
             assertEquals(allowClick, hook.allowFocusClick);
             assertEquals(rowFallback, hook.notificationRowClickFallback);
             assertEquals(banner, hook.independentFocusBanner);
@@ -222,7 +222,7 @@ public class ExperimentalSettingsTest {
                 assertEquals(generation, FocusRestoreSettings.generation(store));
                 FocusRestoreSettings restored = FocusRestoreSettings.fromPreferences(store);
                 assertEquals(enabled, restored.independentFocusBanner);
-                Object[] providerRow = SettingsContract.toRow(restored,
+                Object[] providerRow = legacyProviderRow(restored,
                         store.getString("island_separator", null));
                 assertEquals(0, providerRow[18]);
                 assertEquals(enabled ? 1 : 0, providerRow[21]);
@@ -273,7 +273,7 @@ public class ExperimentalSettingsTest {
             values.put("independent_focus_banner", enabled);
             FocusRestoreSettings settings = FocusRestoreSettings.fromPreferences(
                     memoryPreferences(values));
-            Object[] row = SettingsContract.toRow(settings, "legacy");
+            Object[] row = legacyProviderRow(settings, "legacy");
             assertEquals(SettingsContract.COLUMNS.length, row.length);
             assertArrayEquals(legacyWireRow(), Arrays.copyOf(row, 21));
             assertEquals(enabled ? 1 : 0, row[21]);
@@ -303,7 +303,7 @@ public class ExperimentalSettingsTest {
         assertEquals(7.25f, reloaded.focusMaxDisplaySeconds, 0.0001f);
 
         // ...and reach SystemUI through the provider wire format.
-        Object[] row = SettingsContract.toRow(reloaded, "·");
+        Object[] row = legacyProviderRow(reloaded, "·");
         assertEquals(SettingsContract.COLUMNS.length, row.length);
         HookSettings hook = HookSettings.fromCursor(positionedCursor(row));
         assertEquals(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT, hook.islandTextMode);
@@ -404,7 +404,7 @@ public class ExperimentalSettingsTest {
 
         // SystemUI must see the very same values, including the fields added in 0.13.48.
         HookSettings hook = HookSettings.fromCursor(positionedCursor(
-                SettingsContract.toRow(all, "general")));
+                legacyProviderRow(all, "general")));
         assertTrue(hook.islandCompat);
         assertEquals(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT, hook.islandTextMode);
         assertEquals(12.5f, hook.focusMaxDisplaySeconds, 0.0001f);
@@ -458,19 +458,14 @@ public class ExperimentalSettingsTest {
         return values;
     }
 
-    /** Interface-only test doubles keep these tests runnable without an Android runtime. */
+    private static Object[] legacyProviderRow(FocusRestoreSettings settings, String separator) {
+        return SettingsContract.toRow(settings, separator, SettingsContractTest.LEGACY_COLUMNS);
+    }
+
+    /** Historical fixtures keep their original column names even when the current schema moves. */
     private static Cursor positionedCursor(Object[] row) {
-        return (Cursor) Proxy.newProxyInstance(Cursor.class.getClassLoader(),
-                new Class<?>[]{Cursor.class}, (proxy, method, args) -> {
-                    switch (method.getName()) {
-                        case "getColumnCount": return row.length;
-                        case "isNull": return row[(Integer) args[0]] == null;
-                        case "getInt": return ((Number) row[(Integer) args[0]]).intValue();
-                        case "getFloat": return ((Number) row[(Integer) args[0]]).floatValue();
-                        case "getString": return (String) row[(Integer) args[0]];
-                        default: throw new AssertionError("Unexpected Cursor call: " + method.getName());
-                    }
-                });
+        return SettingsContractTest.namedCursor(
+                Arrays.copyOf(SettingsContractTest.LEGACY_COLUMNS, row.length), row);
     }
 
     private static SharedPreferences memoryPreferences(Map<String, Object> values) {

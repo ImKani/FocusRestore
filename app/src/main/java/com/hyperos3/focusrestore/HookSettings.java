@@ -127,134 +127,69 @@ final class HookSettings {
     }
 
     static HookSettings fromCursor(Cursor cursor) {
-        if (cursor == null || cursor.getColumnCount() <= SettingsContract.MARQUEE_DELAY_MS) {
-            throw new IllegalArgumentException("settings cursor requires at least 3 columns");
-        }
-        if (cursor.isNull(SettingsContract.LIMIT_TEXT_WIDTH)
-                || cursor.isNull(SettingsContract.TEXT_WIDTH_DP)
-                || cursor.isNull(SettingsContract.MARQUEE_DELAY_MS)) {
-            throw new IllegalArgumentException("required settings column is null");
-        }
-
-        int columnCount = cursor.getColumnCount();
-        boolean limitWidth = cursor.getInt(SettingsContract.LIMIT_TEXT_WIDTH) != 0;
-        int widthDp = cursor.getInt(SettingsContract.TEXT_WIDTH_DP);
-        int marqueeDelayMs = cursor.getInt(SettingsContract.MARQUEE_DELAY_MS);
-        boolean compatRetry = hasValue(cursor, columnCount, SettingsContract.COMPAT_RETRY)
-                && cursor.getInt(SettingsContract.COMPAT_RETRY) != 0;
-        boolean marqueeBounce = hasValue(cursor, columnCount, SettingsContract.MARQUEE_BOUNCE)
-                ? cursor.getInt(SettingsContract.MARQUEE_BOUNCE) != 0
-                : FocusRestoreSettings.DEFAULT_MARQUEE_BOUNCE;
-        boolean islandCompat = hasValue(cursor, columnCount, SettingsContract.ISLAND_COMPAT)
-                && cursor.getInt(SettingsContract.ISLAND_COMPAT) != 0;
-        boolean disableIslandProperty = hasValue(cursor, columnCount,
-                SettingsContract.DISABLE_ISLAND_PROPERTY)
-                ? cursor.getInt(SettingsContract.DISABLE_ISLAND_PROPERTY) != 0
-                : FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_PROPERTY;
-        boolean disableIslandFeatureCache = hasValue(cursor, columnCount,
-                SettingsContract.DISABLE_ISLAND_FEATURE_CACHE)
-                ? cursor.getInt(SettingsContract.DISABLE_ISLAND_FEATURE_CACHE) != 0
-                : FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_FEATURE_CACHE;
-        String legacySeparator = hasValue(cursor, columnCount,
-                SettingsContract.LEGACY_ISLAND_SEPARATOR)
-                ? cursor.getString(SettingsContract.LEGACY_ISLAND_SEPARATOR)
-                : FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR;
-        boolean allowFocusClick = hasValue(cursor, columnCount,
-                SettingsContract.ALLOW_FOCUS_CLICK)
-                && cursor.getInt(SettingsContract.ALLOW_FOCUS_CLICK) != 0;
-        String generalSeparator = hasValue(cursor, columnCount,
-                SettingsContract.ISLAND_GENERAL_SEPARATOR)
-                ? cursor.getString(SettingsContract.ISLAND_GENERAL_SEPARATOR) : legacySeparator;
-        String sideSeparator = hasValue(cursor, columnCount,
-                SettingsContract.ISLAND_SIDE_SEPARATOR)
-                ? cursor.getString(SettingsContract.ISLAND_SIDE_SEPARATOR) : legacySeparator;
-        Set<String> forcePackages = hasValue(cursor, columnCount,
-                SettingsContract.ISLAND_FORCE_PACKAGES)
-                ? splitPackages(cursor.getString(SettingsContract.ISLAND_FORCE_PACKAGES))
-                : Collections.<String>emptySet();
-        Set<String> timeoutExemptPackages = hasValue(cursor, columnCount,
-                SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES)
-                ? splitPackages(cursor.getString(SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES))
-                : Collections.<String>emptySet();
-
-        int islandTextMode = hasValue(cursor, columnCount, SettingsContract.ISLAND_TEXT_MODE)
-                ? cursor.getInt(SettingsContract.ISLAND_TEXT_MODE)
-                : FocusRestoreSettings.DEFAULT_ISLAND_TEXT_MODE;
-        float focusMaxDisplaySeconds = hasValue(cursor, columnCount,
-                SettingsContract.FOCUS_MAX_DISPLAY_SECONDS)
-                ? maxDisplaySeconds(cursor, SettingsContract.FOCUS_MAX_DISPLAY_SECONDS)
+        if (cursor == null) throw new IllegalArgumentException("settings cursor is null");
+        // 旧、新 Provider 的列顺序不同；只用名称定位，缺少必需字段时拒绝整个快照。
+        int limitWidthIndex = requiredColumn(cursor, SettingsContract.LIMIT_TEXT_WIDTH);
+        int widthIndex = requiredColumn(cursor, SettingsContract.TEXT_WIDTH_DP);
+        int delayIndex = requiredColumn(cursor, SettingsContract.MARQUEE_DELAY_MS);
+        boolean limitWidth = cursor.getInt(limitWidthIndex) != 0;
+        int widthDp = cursor.getInt(widthIndex);
+        int marqueeDelayMs = cursor.getInt(delayIndex);
+        String legacySeparator = readString(cursor, SettingsContract.LEGACY_ISLAND_SEPARATOR,
+                FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR);
+        int maxDisplayIndex = valueColumn(cursor, SettingsContract.FOCUS_MAX_DISPLAY_SECONDS);
+        float focusMaxDisplaySeconds = maxDisplayIndex >= 0
+                ? maxDisplaySeconds(cursor, maxDisplayIndex)
                 : FocusRestoreSettings.DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
-        int widthLandscapeDp = hasValue(cursor, columnCount, SettingsContract.WIDTH_LANDSCAPE_DP)
-                ? cursor.getInt(SettingsContract.WIDTH_LANDSCAPE_DP) : widthDp;
-        boolean specialBannerNormalBackground = hasValue(cursor, columnCount,
-                SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND)
-                && cursor.getInt(SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND) != 0;
-        boolean mediaFocusEnabled = hasValue(cursor, columnCount, SettingsContract.MEDIA_FOCUS_ENABLED)
-                && cursor.getInt(SettingsContract.MEDIA_FOCUS_ENABLED) != 0;
-        boolean mediaFocusNativeBanner = hasValue(cursor, columnCount,
-                SettingsContract.MEDIA_FOCUS_NATIVE_BANNER)
-                ? cursor.getInt(SettingsContract.MEDIA_FOCUS_NATIVE_BANNER) != 0
-                : FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_NATIVE_BANNER;
-        int mediaFocusCastPicker = hasValue(cursor, columnCount,
-                SettingsContract.MEDIA_FOCUS_CAST_PICKER)
-                ? cursor.getInt(SettingsContract.MEDIA_FOCUS_CAST_PICKER)
-                : FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_PICKER;
-        boolean mediaFocusCastDirect = hasValue(cursor, columnCount,
-                SettingsContract.MEDIA_FOCUS_CAST_DIRECT)
-                ? cursor.getInt(SettingsContract.MEDIA_FOCUS_CAST_DIRECT) != 0
-                : FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_DIRECT;
-        boolean hideNotificationIcons = hasValue(cursor, columnCount,
-                SettingsContract.HIDE_NOTIFICATION_ICONS)
-                ? cursor.getInt(SettingsContract.HIDE_NOTIFICATION_ICONS) != 0
-                : FocusRestoreSettings.DEFAULT_HIDE_NOTIFICATION_ICONS;
-        boolean showFocusDivider = hasValue(cursor, columnCount,
-                SettingsContract.SHOW_FOCUS_DIVIDER)
-                ? cursor.getInt(SettingsContract.SHOW_FOCUS_DIVIDER) != 0
-                : FocusRestoreSettings.DEFAULT_SHOW_FOCUS_DIVIDER;
-        boolean showIslandIcon = hasValue(cursor, columnCount,
-                SettingsContract.SHOW_ISLAND_ICON)
-                ? cursor.getInt(SettingsContract.SHOW_ISLAND_ICON) != 0
-                : FocusRestoreSettings.DEFAULT_SHOW_ISLAND_ICON;
-        boolean tintIslandIcon = hasValue(cursor, columnCount,
-                SettingsContract.TINT_ISLAND_ICON)
-                ? cursor.getInt(SettingsContract.TINT_ISLAND_ICON) != 0
-                : FocusRestoreSettings.DEFAULT_TINT_ISLAND_ICON;
-        boolean useSmallIconFallback = hasValue(cursor, columnCount,
-                SettingsContract.USE_SMALL_ICON_FALLBACK)
-                ? cursor.getInt(SettingsContract.USE_SMALL_ICON_FALLBACK) != 0
-                : FocusRestoreSettings.DEFAULT_USE_SMALL_ICON_FALLBACK;
-        boolean notificationRowClickFallback = hasValue(cursor, columnCount,
-                SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK)
-                ? cursor.getInt(SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK) != 0
-                : FocusRestoreSettings.DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK;
-        boolean independentFocusBanner = hasValue(cursor, columnCount,
-                SettingsContract.INDEPENDENT_FOCUS_BANNER)
-                ? cursor.getInt(SettingsContract.INDEPENDENT_FOCUS_BANNER) != 0
-                : FocusRestoreSettings.DEFAULT_INDEPENDENT_FOCUS_BANNER;
 
-        // 旧 33 列或空值不能自动启用长按；时长缺失时保留默认手势阈值。
-        boolean longPressNotificationRowClick = hasValue(cursor, columnCount,
-                SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK)
-                && cursor.getInt(SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK) != 0;
-        float longPressSeconds = hasValue(cursor, columnCount, SettingsContract.LONG_PRESS_SECONDS)
-                ? FocusRestoreSettings.normalizeLongPressSeconds(
-                        cursor.getFloat(SettingsContract.LONG_PRESS_SECONDS))
-                : FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS;
-
-        int hookMode = hasValue(cursor, columnCount, SettingsContract.HOOK_MODE)
-                ? cursor.getInt(SettingsContract.HOOK_MODE) : FocusRestoreSettings.DEFAULT_HOOK_MODE;
-        return new HookSettings(hookMode, limitWidth, widthDp, widthLandscapeDp,
-                specialBannerNormalBackground,
-                mediaFocusEnabled, mediaFocusNativeBanner, mediaFocusCastPicker,
-                mediaFocusCastDirect, marqueeDelayMs,
-                compatRetry, marqueeBounce,
-                islandCompat, disableIslandProperty, disableIslandFeatureCache,
-                allowFocusClick, hideNotificationIcons, showFocusDivider,
-                showIslandIcon, tintIslandIcon, useSmallIconFallback,
-                notificationRowClickFallback, independentFocusBanner,
-                longPressNotificationRowClick, longPressSeconds,
-                islandTextMode, focusMaxDisplaySeconds,
-                generalSeparator, sideSeparator, forcePackages, timeoutExemptPackages);
+        return new HookSettings(
+                readInt(cursor, SettingsContract.HOOK_MODE, FocusRestoreSettings.DEFAULT_HOOK_MODE),
+                limitWidth, widthDp,
+                // 旧配置没有横屏列时沿用竖屏宽度，而非重置为新版默认宽度。
+                readInt(cursor, SettingsContract.WIDTH_LANDSCAPE_DP, widthDp),
+                readBoolean(cursor, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND, false),
+                readBoolean(cursor, SettingsContract.MEDIA_FOCUS_ENABLED, false),
+                readBoolean(cursor, SettingsContract.MEDIA_FOCUS_NATIVE_BANNER,
+                        FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_NATIVE_BANNER),
+                readInt(cursor, SettingsContract.MEDIA_FOCUS_CAST_PICKER,
+                        FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_PICKER),
+                readBoolean(cursor, SettingsContract.MEDIA_FOCUS_CAST_DIRECT,
+                        FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_DIRECT),
+                marqueeDelayMs,
+                readBoolean(cursor, SettingsContract.COMPAT_RETRY, false),
+                readBoolean(cursor, SettingsContract.MARQUEE_BOUNCE,
+                        FocusRestoreSettings.DEFAULT_MARQUEE_BOUNCE),
+                readBoolean(cursor, SettingsContract.ISLAND_COMPAT, false),
+                readBoolean(cursor, SettingsContract.DISABLE_ISLAND_PROPERTY,
+                        FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_PROPERTY),
+                readBoolean(cursor, SettingsContract.DISABLE_ISLAND_FEATURE_CACHE,
+                        FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_FEATURE_CACHE),
+                readBoolean(cursor, SettingsContract.ALLOW_FOCUS_CLICK, false),
+                readBoolean(cursor, SettingsContract.HIDE_NOTIFICATION_ICONS,
+                        FocusRestoreSettings.DEFAULT_HIDE_NOTIFICATION_ICONS),
+                readBoolean(cursor, SettingsContract.SHOW_FOCUS_DIVIDER,
+                        FocusRestoreSettings.DEFAULT_SHOW_FOCUS_DIVIDER),
+                readBoolean(cursor, SettingsContract.SHOW_ISLAND_ICON,
+                        FocusRestoreSettings.DEFAULT_SHOW_ISLAND_ICON),
+                readBoolean(cursor, SettingsContract.TINT_ISLAND_ICON,
+                        FocusRestoreSettings.DEFAULT_TINT_ISLAND_ICON),
+                readBoolean(cursor, SettingsContract.USE_SMALL_ICON_FALLBACK,
+                        FocusRestoreSettings.DEFAULT_USE_SMALL_ICON_FALLBACK),
+                readBoolean(cursor, SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK,
+                        FocusRestoreSettings.DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK),
+                readBoolean(cursor, SettingsContract.INDEPENDENT_FOCUS_BANNER,
+                        FocusRestoreSettings.DEFAULT_INDEPENDENT_FOCUS_BANNER),
+                // 旧版缺长按字段时保持关闭，不能从短按开关推导开启。
+                readBoolean(cursor, SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK, false),
+                readFloat(cursor, SettingsContract.LONG_PRESS_SECONDS,
+                        FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS),
+                readInt(cursor, SettingsContract.ISLAND_TEXT_MODE,
+                        FocusRestoreSettings.DEFAULT_ISLAND_TEXT_MODE),
+                focusMaxDisplaySeconds,
+                readString(cursor, SettingsContract.ISLAND_GENERAL_SEPARATOR, legacySeparator),
+                readString(cursor, SettingsContract.ISLAND_SIDE_SEPARATOR, legacySeparator),
+                splitPackages(readString(cursor, SettingsContract.ISLAND_FORCE_PACKAGES, "")),
+                splitPackages(readString(cursor, SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES, "")));
     }
 
     String describe() {
@@ -305,8 +240,38 @@ final class HookSettings {
         }
     }
 
-    private static boolean hasValue(Cursor cursor, int columnCount, int index) {
-        return columnCount > index && !cursor.isNull(index);
+    private static int valueColumn(Cursor cursor, int field) {
+        int index = cursor.getColumnIndex(SettingsContract.COLUMNS[field]);
+        return index >= 0 && !cursor.isNull(index) ? index : -1;
+    }
+
+    private static int requiredColumn(Cursor cursor, int field) {
+        int index = valueColumn(cursor, field);
+        if (index < 0) {
+            throw new IllegalArgumentException("required settings column missing or null: "
+                    + SettingsContract.COLUMNS[field]);
+        }
+        return index;
+    }
+
+    private static boolean readBoolean(Cursor cursor, int field, boolean fallback) {
+        int index = valueColumn(cursor, field);
+        return index >= 0 ? cursor.getInt(index) != 0 : fallback;
+    }
+
+    private static int readInt(Cursor cursor, int field, int fallback) {
+        int index = valueColumn(cursor, field);
+        return index >= 0 ? cursor.getInt(index) : fallback;
+    }
+
+    private static float readFloat(Cursor cursor, int field, float fallback) {
+        int index = valueColumn(cursor, field);
+        return index >= 0 ? cursor.getFloat(index) : fallback;
+    }
+
+    private static String readString(Cursor cursor, int field, String fallback) {
+        int index = valueColumn(cursor, field);
+        return index >= 0 ? cursor.getString(index) : fallback;
     }
 
     private static Set<String> splitPackages(String value) {

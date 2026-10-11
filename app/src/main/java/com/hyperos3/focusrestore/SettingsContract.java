@@ -7,92 +7,143 @@
 
 package com.hyperos3.focusrestore;
 
-/** Append-only Provider schema shared by producer, consumer and tests. */
+/** Named Provider fields, grouped by function; indices only address the current encoded row. */
 final class SettingsContract {
-    static final int LIMIT_TEXT_WIDTH = 0;
-    static final int TEXT_WIDTH_DP = 1;
-    static final int MARQUEE_DELAY_MS = 2;
-    static final int COMPAT_RETRY = 3;
-    static final int ISLAND_COMPAT = 4;
-    static final int LEGACY_ISLAND_SEPARATOR = 5;
-    static final int ALLOW_FOCUS_CLICK = 6;
-    static final int ISLAND_GENERAL_SEPARATOR = 7;
-    static final int ISLAND_SIDE_SEPARATOR = 8;
-    static final int ISLAND_FORCE_PACKAGES = 9;
-    static final int DISABLE_ISLAND_PROPERTY = 10;
-    static final int DISABLE_ISLAND_FEATURE_CACHE = 11;
-    static final int MARQUEE_BOUNCE = 12;
-    static final int HOOK_MODE = 13;
+    // 模式与 ROM 兼容。
+    static final int HOOK_MODE = 0;
+    static final int COMPAT_RETRY = 1;
+    static final int DISABLE_ISLAND_PROPERTY = 2;
+    static final int DISABLE_ISLAND_FEATURE_CACHE = 3;
+
+    // 文本宽度与滚动。
+    static final int LIMIT_TEXT_WIDTH = 4;
+    static final int TEXT_WIDTH_DP = 5;
+    static final int WIDTH_LANDSCAPE_DP = 6;
+    static final int MARQUEE_DELAY_MS = 7;
+    static final int MARQUEE_BOUNCE = 8;
+
+    // 岛内容转换与分隔符。
+    static final int ISLAND_COMPAT = 9;
+    static final int ISLAND_TEXT_MODE = 10;
+    static final int ISLAND_GENERAL_SEPARATOR = 11;
+    static final int ISLAND_SIDE_SEPARATOR = 12;
+    static final int ISLAND_FORCE_PACKAGES = 13;
+
+    // 图标与分隔线。
     static final int HIDE_NOTIFICATION_ICONS = 14;
     static final int SHOW_FOCUS_DIVIDER = 15;
     static final int SHOW_ISLAND_ICON = 16;
     static final int TINT_ISLAND_ICON = 17;
-    static final int EXPAND_ISLAND_ON_CLICK = 18;
-    static final int USE_SMALL_ICON_FALLBACK = 19;
-    static final int NOTIFICATION_ROW_CLICK_FALLBACK = 20;
-    static final int INDEPENDENT_FOCUS_BANNER = 21;
-    static final int ISLAND_TEXT_MODE = 22;
-    static final int FOCUS_MAX_DISPLAY_SECONDS = 23;
-    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 24;
-    static final int WIDTH_LANDSCAPE_DP = 25;
-    static final int SPECIAL_BANNER_NORMAL_BACKGROUND = 26;
-    static final int NOTIFICATION_ICON_HIDE_MODE = 27;
-    /** Historical slot retained; it is no longer read or written by current code. */
-    static final int ISLAND_CUSTOM_RULES = 28;
-    static final int MEDIA_FOCUS_ENABLED = 29;
-    static final int MEDIA_FOCUS_NATIVE_BANNER = 30;
-    /** Cast picker choice: 1 Android native, 2 MIUI MiPlay. */
-    static final int MEDIA_FOCUS_CAST_PICKER = 31;
-    /** Replaces the media banner when on: clicking a media focus opens the cast UI directly. */
-    static final int MEDIA_FOCUS_CAST_DIRECT = 32;
-    // 只能末尾追加，避免旧版 SystemUI 按位置读取时发生静默错位。
-    static final int LONG_PRESS_NOTIFICATION_ROW_CLICK = 33;
-    static final int LONG_PRESS_SECONDS = 34;
+    static final int USE_SMALL_ICON_FALLBACK = 18;
+
+    // 横幅与点击手势。
+    static final int INDEPENDENT_FOCUS_BANNER = 19;
+    static final int SPECIAL_BANNER_NORMAL_BACKGROUND = 20;
+    static final int ALLOW_FOCUS_CLICK = 21;
+    static final int NOTIFICATION_ROW_CLICK_FALLBACK = 22;
+    static final int LONG_PRESS_NOTIFICATION_ROW_CLICK = 23;
+    static final int LONG_PRESS_SECONDS = 24;
+
+    // 最大显示时间与独立豁免名单。
+    static final int FOCUS_MAX_DISPLAY_SECONDS = 25;
+    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 26;
+
+    // 媒体焦点与流转。
+    static final int MEDIA_FOCUS_ENABLED = 27;
+    static final int MEDIA_FOCUS_NATIVE_BANNER = 28;
+    static final int MEDIA_FOCUS_CAST_PICKER = 29;
+    static final int MEDIA_FOCUS_CAST_DIRECT = 30;
+
+    // 历史字段仍响应旧 projection；废弃功能不恢复，旧分隔符只供缺列回退。
+    static final int LEGACY_ISLAND_SEPARATOR = 31;
+    static final int EXPAND_ISLAND_ON_CLICK = 32;
+    static final int NOTIFICATION_ICON_HIDE_MODE = 33;
+    static final int ISLAND_CUSTOM_RULES = 34;
 
     static final String[] COLUMNS = {
-            "limit_text_width", "text_width_dp", "marquee_delay_ms", "compat_retry",
-            "island_compat", "island_separator", "allow_focus_click",
-            "island_general_separator", "island_side_separator", "island_force_packages",
-            "disable_island_property", "disable_island_feature_cache", "marquee_bounce",
-            "hook_mode", "hide_notification_icons", "show_focus_divider",
-            "show_island_icon", "tint_island_icon", "expand_island_on_click",
-            "use_small_icon_fallback", "notification_row_click_fallback", "independent_focus_banner",
-            "island_text_mode", "focus_max_display_seconds", "focus_timeout_exempt_packages",
-            "width_landscape_dp", "special_banner_normal_background", "notification_icon_hide_mode",
-            "island_custom_rules", "media_focus_enabled", "media_focus_native_banner",
-            "media_focus_cast_picker", "media_focus_cast_direct",
-            "long_press_notification_row_click", "long_press_seconds"
+            "hook_mode", "compat_retry", "disable_island_property", "disable_island_feature_cache",
+            "limit_text_width", "text_width_dp", "width_landscape_dp", "marquee_delay_ms", "marquee_bounce",
+            "island_compat", "island_text_mode", "island_general_separator", "island_side_separator",
+            "island_force_packages",
+            "hide_notification_icons", "show_focus_divider", "show_island_icon", "tint_island_icon",
+            "use_small_icon_fallback",
+            "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
+            "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
+            "focus_max_display_seconds", "focus_timeout_exempt_packages",
+            "media_focus_enabled", "media_focus_native_banner", "media_focus_cast_picker", "media_focus_cast_direct",
+            "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules"
     };
 
-    /** Encode the Provider wire format here so column names and values share one contract. */
+    /** Null requests the grouped schema; explicit projections retain their requested order. */
+    static String[] columnsForProjection(String[] projection) {
+        String[] columns = (projection == null ? COLUMNS : projection).clone();
+        for (String column : columns) columnIndex(column);
+        return columns;
+    }
+
+    private static int columnIndex(String column) {
+        for (int index = 0; index < COLUMNS.length; index++) {
+            if (COLUMNS[index].equals(column)) return index;
+        }
+        throw new IllegalArgumentException("unknown settings column: " + column);
+    }
+
+    /** Encode the current grouped row; booleans and package sets retain their historical wire format. */
     static Object[] toRow(FocusRestoreSettings settings, String legacySeparator) {
-        return new Object[]{settings.limitWidth ? 1 : 0, settings.widthDp,
-                settings.marqueeDelayMs, settings.compatRetry ? 1 : 0,
-                settings.islandCompat ? 1 : 0, legacySeparator,
-                settings.allowFocusClick ? 1 : 0, settings.islandGeneralSeparator,
-                settings.islandSideSeparator, joinPackages(settings.islandForcePackages),
-                settings.disableIslandProperty ? 1 : 0,
-                settings.disableIslandFeatureCache ? 1 : 0,
-                settings.marqueeBounce ? 1 : 0, settings.hookMode,
-                settings.hideNotificationIcons ? 1 : 0,
-                settings.showFocusDivider ? 1 : 0,
-                settings.showIslandIcon ? 1 : 0,
-                settings.tintIslandIcon ? 1 : 0,
-                0, // Retired expand_island_on_click column remains permanently disabled.
-                settings.useSmallIconFallback ? 1 : 0,
-                settings.notificationRowClickFallback ? 1 : 0,
-                settings.independentFocusBanner ? 1 : 0,
-                settings.islandTextMode, settings.focusMaxDisplaySeconds,
-                joinPackages(settings.focusTimeoutExemptPackages), settings.widthLandscapeDp,
-                 settings.specialBannerNormalBackground ? 1 : 0,
-                 0, // Retired selective icon-hide mode column remains for wire compatibility.
-                 "",
-                 settings.mediaFocusEnabled ? 1 : 0,
-                  settings.mediaFocusNativeBanner ? 1 : 0,
-                  settings.mediaFocusCastPicker,
-                  settings.mediaFocusCastDirect ? 1 : 0,
-                  settings.longPressNotificationRowClick ? 1 : 0,
-                  settings.longPressSeconds};
+        Object[] row = new Object[COLUMNS.length];
+        row[HOOK_MODE] = settings.hookMode;
+        row[COMPAT_RETRY] = settings.compatRetry ? 1 : 0;
+        row[DISABLE_ISLAND_PROPERTY] = settings.disableIslandProperty ? 1 : 0;
+        row[DISABLE_ISLAND_FEATURE_CACHE] = settings.disableIslandFeatureCache ? 1 : 0;
+
+        row[LIMIT_TEXT_WIDTH] = settings.limitWidth ? 1 : 0;
+        row[TEXT_WIDTH_DP] = settings.widthDp;
+        row[WIDTH_LANDSCAPE_DP] = settings.widthLandscapeDp;
+        row[MARQUEE_DELAY_MS] = settings.marqueeDelayMs;
+        row[MARQUEE_BOUNCE] = settings.marqueeBounce ? 1 : 0;
+
+        row[ISLAND_COMPAT] = settings.islandCompat ? 1 : 0;
+        row[ISLAND_TEXT_MODE] = settings.islandTextMode;
+        row[ISLAND_GENERAL_SEPARATOR] = settings.islandGeneralSeparator;
+        row[ISLAND_SIDE_SEPARATOR] = settings.islandSideSeparator;
+        row[ISLAND_FORCE_PACKAGES] = joinPackages(settings.islandForcePackages);
+
+        row[HIDE_NOTIFICATION_ICONS] = settings.hideNotificationIcons ? 1 : 0;
+        row[SHOW_FOCUS_DIVIDER] = settings.showFocusDivider ? 1 : 0;
+        row[SHOW_ISLAND_ICON] = settings.showIslandIcon ? 1 : 0;
+        row[TINT_ISLAND_ICON] = settings.tintIslandIcon ? 1 : 0;
+        row[USE_SMALL_ICON_FALLBACK] = settings.useSmallIconFallback ? 1 : 0;
+
+        row[INDEPENDENT_FOCUS_BANNER] = settings.independentFocusBanner ? 1 : 0;
+        row[SPECIAL_BANNER_NORMAL_BACKGROUND] = settings.specialBannerNormalBackground ? 1 : 0;
+        row[ALLOW_FOCUS_CLICK] = settings.allowFocusClick ? 1 : 0;
+        row[NOTIFICATION_ROW_CLICK_FALLBACK] = settings.notificationRowClickFallback ? 1 : 0;
+        row[LONG_PRESS_NOTIFICATION_ROW_CLICK] = settings.longPressNotificationRowClick ? 1 : 0;
+        row[LONG_PRESS_SECONDS] = settings.longPressSeconds;
+
+        row[FOCUS_MAX_DISPLAY_SECONDS] = settings.focusMaxDisplaySeconds;
+        row[FOCUS_TIMEOUT_EXEMPT_PACKAGES] = joinPackages(settings.focusTimeoutExemptPackages);
+
+        row[MEDIA_FOCUS_ENABLED] = settings.mediaFocusEnabled ? 1 : 0;
+        row[MEDIA_FOCUS_NATIVE_BANNER] = settings.mediaFocusNativeBanner ? 1 : 0;
+        row[MEDIA_FOCUS_CAST_PICKER] = settings.mediaFocusCastPicker;
+        row[MEDIA_FOCUS_CAST_DIRECT] = settings.mediaFocusCastDirect ? 1 : 0;
+
+        row[LEGACY_ISLAND_SEPARATOR] = legacySeparator;
+        row[EXPAND_ISLAND_ON_CLICK] = 0;
+        row[NOTIFICATION_ICON_HIDE_MODE] = 0;
+        row[ISLAND_CUSTOM_RULES] = "";
+        return row;
+    }
+
+    static Object[] toRow(FocusRestoreSettings settings, String legacySeparator, String[] columns) {
+        Object[] currentRow = toRow(settings, legacySeparator);
+        Object[] projectedRow = new Object[columns.length];
+        // 覆盖升级后旧 Hook 仍按位置读取；按它发来的列名顺序返回，不能强塞新顺序。
+        for (int index = 0; index < columns.length; index++) {
+            projectedRow[index] = currentRow[columnIndex(columns[index])];
+        }
+        return projectedRow;
     }
 
     private static String joinPackages(java.util.Set<String> packages) {

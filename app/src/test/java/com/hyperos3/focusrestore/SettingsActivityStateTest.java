@@ -85,6 +85,34 @@ public class SettingsActivityStateTest {
                 written.contains("m3.islandTextMode"));
     }
 
+    @Test
+    public void adapterViewsUseItemListenersDuringPageCleanup() throws Exception {
+        String source = readSettingsActivitySource();
+        int start = source.indexOf("private void detachPageListeners(View view)");
+        int end = source.indexOf("private LinearLayout panel()", start);
+        assertTrue("page cleanup method must exist", start >= 0 && end > start);
+        String cleanup = source.substring(start, end);
+        // 源码守卫只防本次接口误用，不能代替 Android Spinner 切页/销毁实测。
+        assertTrue("ordinary click cleanup must exclude AdapterView", cleanup.contains(
+                "} else {\n            view.setOnClickListener(null);\n        }"));
+        assertTrue(cleanup.contains("if (view instanceof AdapterView)"));
+        assertTrue(cleanup.contains("adapter.setOnItemSelectedListener(null)"));
+        assertTrue("Spinner also prohibits item click listeners", !cleanup.contains("setOnItemClickListener"));
+        assertTrue(cleanup.contains("detachPageListeners(group.getChildAt(index))"));
+    }
+
+    @Test
+    public void importConfirmationUsesSettingsDialogStyle() throws Exception {
+        String source = readSettingsActivitySource();
+        int start = source.indexOf("private View createImportConfirmDialogView");
+        int end = source.indexOf("private void finishBackup", start);
+        assertTrue("custom import confirmation dialog must exist", start >= 0 && end > start);
+        String dialog = source.substring(start, end);
+        assertTrue(dialog.contains("roundedBg(COLOR_SURFACE_HIGH, 12)"));
+        assertTrue(dialog.contains("actionButton(\"取消\", Color.TRANSPARENT, COLOR_TEXT_SECONDARY)"));
+        assertTrue(dialog.contains("actionButton(\"确认覆盖\", COLOR_PRIMARY, Color.WHITE)"));
+    }
+
     private static Set<String> keys(Pattern pattern, String source) {
         Set<String> result = new LinkedHashSet<>();
         Matcher matcher = pattern.matcher(source);
