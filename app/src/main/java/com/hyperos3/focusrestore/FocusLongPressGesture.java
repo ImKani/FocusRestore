@@ -62,6 +62,7 @@ final class FocusLongPressGesture implements View.OnAttachStateChangeListener {
     }
 
     boolean tracking() { return state.pending() || state.consumed(); }
+    boolean consumed() { return state.consumed(); }
 
     private void fire() {
         Runnable captured = action;

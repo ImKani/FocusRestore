@@ -13,9 +13,11 @@ import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.drawable.Icon;
 import android.os.Handler;
 import android.os.Looper;
+import android.service.notification.StatusBarNotification;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -122,6 +124,7 @@ final class HyperOS4FocusController {
     private final ItemFactory itemFactory;
     private final Logger logger;
     private final Map<String, DisplayItem> items = new LinkedHashMap<>();
+    private final FocusSwipeSelection swipeSelection = new FocusSwipeSelection();
     private final Set<Object> registeredPipelines = Collections.newSetFromMap(
             new WeakHashMap<Object, Boolean>());
     private volatile Object activePipeline;
@@ -205,6 +208,7 @@ final class HyperOS4FocusController {
         synchronized (items) {
             activePipeline = pipeline;
             items.clear();
+            swipeSelection.clear();
         }
         itemFactory.dismissFocusBanner("pipeline-replaced");
         logger.log("OS4 notifPipelineListener=registered activeOwner="
@@ -303,6 +307,7 @@ final class HyperOS4FocusController {
             DisplayItem current = items.get(key);
             if (current != null && current.notificationEntry != entry) return;
             items.remove(key);
+            swipeSelection.remove(key);
         }
         itemFactory.onNotificationRemoved(entry, key);
         logger.log("OS4 candidate " + stage + " key=" + key);
@@ -477,16 +482,20 @@ final class HyperOS4FocusController {
         }
         final DisplayItem best;
         synchronized (items) {
-            DisplayItem selected = null;
+            ArrayList<DisplayItem> eligible = new ArrayList<>();
             for (DisplayItem candidate : items.values()) {
                 if (itemFactory.isExpired(candidate.notificationEntry)) continue;
-                if (selected == null || OS4FocusPriorityPolicy.compare(
-                        candidate.priority, candidate.updateSequence,
-                        selected.priority, selected.updateSequence) > 0) {
-                    selected = candidate;
-                }
+                eligible.add(candidate);
             }
-            best = selected;
+            eligible.sort((first, second) -> -OS4FocusPriorityPolicy.compare(
+                    first.priority, first.updateSequence, second.priority, second.updateSequence));
+            ArrayList<String> keys = new ArrayList<>();
+            for (DisplayItem candidate : eligible) keys.add(candidate.key);
+            String automatic = keys.isEmpty() ? null : keys.get(0);
+            String selected;
+            if (itemFactory.settings().focusSwipeEnabled) selected = swipeSelection.reconcile(keys, automatic);
+            else { swipeSelection.clear(); selected = automatic; }
+            best = selected == null ? null : items.get(selected);
         }
         if (BuildConfig.DEBUG) logger.log("DIAG device stage=os4-select key="
                 + (best == null ? "none" : best.key) + " candidates=" + items.size()
@@ -631,22 +640,35 @@ final class HyperOS4FocusController {
                     "com.android.systemui.plugins.DarkIconDispatcher$DarkReceiver");
             Class<?> dependencyClass = FocusReflection.findClass(classLoader,
                     "com.android.systemui.Dependency");
-            darkDispatcher = XposedHelpers.callStaticMethod(
-                    dependencyClass, "get", darkDispatcherClass);
+            // 小米 SystemUI 17.03.260226.r 移除了静态 get(Class)，改用相同缓存的实例入口。
+            // 用户只读 APK MCP http://192.168.31.21:8787/mcp：Dependency.sDependency /
+            // getDependencyInner(Object)，私有接口许可未确认；仅依据接口事实独立适配。
+            if (FocusReflection.hasMethod(dependencyClass, "get", Class.class)) {
+                Method getter = dependencyClass.getDeclaredMethod("get", Class.class);
+                getter.setAccessible(true);
+                darkDispatcher = getter.invoke(null, darkDispatcherClass);
+            } else {
+                Object dependency = XposedHelpers.getStaticObjectField(dependencyClass, "sDependency");
+                if (dependency == null) throw new IllegalStateException("Dependency.sDependency unavailable");
+                Method getter = dependencyClass.getDeclaredMethod("getDependencyInner", Object.class);
+                getter.setAccessible(true);
+                darkDispatcher = getter.invoke(dependency, darkDispatcherClass);
+            }
+            if (!darkDispatcherClass.isInstance(darkDispatcher)) {
+                throw new IllegalStateException("DarkIconDispatcher dependency type mismatch");
+            }
             final long ownerGeneration = statusBarGeneration;
             darkReceiver = Proxy.newProxyInstance(classLoader,
                     new Class<?>[]{receiverClass}, new InvocationHandler() {
                         @Override
                         public Object invoke(Object proxy, Method method, Object[] args) {
                             String name = method.getName();
-                            if (("onDarkChanged".equals(name)
-                                    || "onDarkChangedWithContrast".equals(name))
-                                    && args != null && args.length >= 3
-                                    && args[2] instanceof Integer) {
+                            Integer normalTint = OS4DarkTintCallback.normalTint(name, args);
+                            if (normalTint != null) {
                                 if (proxy != darkReceiver || ownerGeneration != statusBarGeneration) {
                                     return null;
                                 }
-                                int tint = resolveTint(args[0], (Integer) args[2]);
+                                int tint = resolveTint(args[0], normalTint);
                                 updateTint(tint, "DarkIconDispatcher." + name);
                             } else if ("hashCode".equals(name)) {
                                 return System.identityHashCode(proxy);
@@ -782,6 +804,57 @@ final class HyperOS4FocusController {
                 && FocusScrollToTopGuard.containsVisible(host, x, y, displayId);
     }
 
+    FocusSwipeTouchHandler.Target captureSwipe(View root, Rect bounds) {
+        if (!itemFactory.settings().focusSwipeEnabled) return null;
+        FocusHostView host = focusHost;
+        if (host == null || !isDescendantOf(host, (ViewGroup) root)
+                || !swipeSelection.hasCandidates()) return null;
+        final String key = host.currentItemKey;
+        final Object entry = host.currentNotificationEntry;
+        final long stamp = notificationStamp(entry);
+        final long revision = swipeSelection.revision();
+        final long barGeneration = statusBarGeneration;
+        if (key != null) {
+            if (!host.getGlobalVisibleRect(bounds) || host.longPressGesture.consumed()
+                    || stamp < 0 || !TextUtils.equals(key, swipeSelection.selected())) return null;
+        } else if (!swipeSelection.manual() || swipeSelection.selected() != null) return null;
+        return new FocusSwipeTouchHandler.Target() {
+            @Override public boolean current() {
+                if (!itemFactory.settings().focusSwipeEnabled || host != focusHost
+                        || barGeneration != statusBarGeneration
+                        || revision != swipeSelection.revision() || !host.isAttachedToWindow()
+                        || host.longPressGesture.consumed()) return false;
+                if (key == null) return swipeSelection.selected() == null;
+                synchronized (items) {
+                    DisplayItem live = items.get(key);
+                    return live != null && live.notificationEntry == entry
+                            && entry == host.currentNotificationEntry
+                            && TextUtils.equals(key, host.currentItemKey)
+                            && stamp == notificationStamp(entry) && !itemFactory.isExpired(entry);
+                }
+            }
+            @Override public void swipe(boolean towardsEnd) {
+                if (!current() || !swipeSelection.swipe(towardsEnd, revision)) return;
+                itemFactory.dismissFocusBanner("focus-swiped");
+                logger.log("OS4 focus swipe direction=" + (towardsEnd ? "right" : "left")
+                        + " from=" + key + " to=" + swipeSelection.selected()
+                        + " notificationRetained=true");
+                renderBest();
+            }
+        };
+    }
+
+    private long notificationStamp(Object entry) {
+        Object sbn = field(entry, "mSbn");
+        if (sbn == null) sbn = field(entry, "sbn");
+        return sbn instanceof StatusBarNotification ? ((StatusBarNotification) sbn).getPostTime() : -1L;
+    }
+
+    void onSwipeSettingChanged() {
+        swipeSelection.clear();
+        renderBest();
+    }
+
     private final class FocusHostView extends FrameLayout {
         private ValueAnimator animator;
         private Runnable pendingAnimation;
@@ -794,12 +867,15 @@ final class HyperOS4FocusController {
         private int currentIconSizeDp;
         private int contentInsetPx;
         private int maxWidthPx = Integer.MAX_VALUE;
+        private int touchWidthPx;
+        private int displayWidthPx;
         private boolean blockClicks = true;
         private boolean bannerClicks;
         private final int bannerTouchSlop;
         private float bannerDownX;
         private float bannerDownY;
         private boolean bannerGestureCancelled;
+        private boolean expandedBlankGesture;
         private boolean notificationRowClicks;
         private boolean longPressClicks;
         private final FocusLongPressGesture longPressGesture;
@@ -851,14 +927,16 @@ final class HyperOS4FocusController {
             currentItemKey = item.key;
             currentNotificationEntry = item.notificationEntry;
             currentContentIntent = item.contentIntent;
-            setClickable(bannerClicks || notificationRowClicks);
-            setFocusable(bannerClicks || notificationRowClicks);
+            setClickable(bannerClicks || settings.allowFocusClick);
+            setFocusable(bannerClicks || settings.allowFocusClick);
             setContentDescription(bannerClicks ? "展开焦点通知："
                     + (TextUtils.isEmpty(item.text) ? item.packageName : item.text) : null);
             float density = getResources().getDisplayMetrics().density;
             boolean landscape = getResources().getConfiguration().orientation
                     == Configuration.ORIENTATION_LANDSCAPE;
             int configuredWidthDp = landscape ? settings.widthLandscapeDp : settings.widthDp;
+            touchWidthPx = Math.round(FocusTouchWidth.dp(settings.customTouchWidth,
+                    landscape, settings.touchWidthDp, settings.touchWidthLandscapeDp) * density);
             maxWidthPx = settings.limitWidth
                     ? Math.max(1, Math.round(configuredWidthDp * density)) : Integer.MAX_VALUE;
             logger.log("OS4 focus width select orientation=" + (landscape ? "landscape" : "portrait")
@@ -984,7 +1062,7 @@ final class HyperOS4FocusController {
             pendingAnimation = null;
             View child = content;
             if (child == null || getVisibility() != View.VISIBLE) return;
-            int availableWidth = Math.max(1, getWidth() - contentInsetPx);
+            int availableWidth = Math.max(1, displayWidthPx - contentInsetPx);
             int distance = child.getMeasuredWidth() - availableWidth;
             if (distance <= 0 && child instanceof TextView) {
                 TextView text = (TextView) child;
@@ -1054,17 +1132,28 @@ final class HyperOS4FocusController {
 
         @Override
         public boolean dispatchTouchEvent(MotionEvent event) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                float x = event.getX();
+                expandedBlankGesture = getLayoutDirection() == View.LAYOUT_DIRECTION_RTL
+                        ? x < getWidth() - displayWidthPx : x >= displayWidthPx;
+            }
             HookSettings settings = itemFactory.settings();
-            if (longPressGesture.onEvent(event, longPressClicks
-                    && settings.longPressNotificationRowClick,
-                    Math.round(settings.longPressSeconds * 1000f))) return true;
-            boolean handled = super.dispatchTouchEvent(event);
-            return handled || longPressGesture.tracking();
+            try {
+                if (longPressGesture.onEvent(event, longPressClicks
+                        && settings.longPressNotificationRowClick,
+                        Math.round(settings.longPressSeconds * 1000f))) return true;
+                boolean handled = super.dispatchTouchEvent(event);
+                return handled || longPressGesture.tracking();
+            } finally {
+                if (event.getActionMasked() == MotionEvent.ACTION_UP
+                        || event.getActionMasked() == MotionEvent.ACTION_CANCEL) expandedBlankGesture = false;
+            }
         }
 
         @Override
         public boolean onInterceptTouchEvent(MotionEvent event) {
-            return blockClicks || bannerClicks || notificationRowClicks
+            // 扩展空白交给宿主正文点击，避免误点已被显示宽度裁掉的RemoteViews按钮。
+            return blockClicks || bannerClicks || notificationRowClicks || expandedBlankGesture
                     || super.onInterceptTouchEvent(event);
         }
 
@@ -1128,6 +1217,12 @@ final class HyperOS4FocusController {
                 }
                 return true;
             }
+            // 旧版直接打开也覆盖容器空白区域；沿用同一条 intent，不复制子控件逻辑。
+            if (!blockClicks && currentContentIntent != null) {
+                super.performClick();
+                send(currentContentIntent, currentItemKey);
+                return true;
+            }
             return super.performClick();
         }
 
@@ -1141,13 +1236,33 @@ final class HyperOS4FocusController {
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             int unlimitedWidth = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
             super.onMeasure(unlimitedWidth, heightMeasureSpec);
-            int width = getMeasuredWidth();
+            int availableWidth = Integer.MAX_VALUE;
             int mode = MeasureSpec.getMode(widthMeasureSpec);
             if (mode != MeasureSpec.UNSPECIFIED) {
-                width = Math.min(width, MeasureSpec.getSize(widthMeasureSpec));
+                availableWidth = MeasureSpec.getSize(widthMeasureSpec);
             }
-            width = Math.min(width, maxWidthPx);
-            setMeasuredDimension(Math.max(1, width), getMeasuredHeight());
+            // 默认按原有显示宽度布局；自定义触控只补空白，不扩大正文或滚动视口。
+            displayWidthPx = FocusTouchWidth.measured(getMeasuredWidth(), 0,
+                    maxWidthPx, availableWidth);
+            int width = FocusTouchWidth.measured(getMeasuredWidth(), touchWidthPx,
+                    maxWidthPx, availableWidth);
+            setMeasuredDimension(width, getMeasuredHeight());
+        }
+
+        @Override
+        protected void dispatchDraw(Canvas canvas) {
+            int save = canvas.save();
+            try {
+                int width = Math.min(getWidth(), displayWidthPx);
+                if (getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
+                    canvas.clipRect(getWidth() - width, 0, getWidth(), getHeight());
+                } else {
+                    canvas.clipRect(0, 0, width, getHeight());
+                }
+                super.dispatchDraw(canvas);
+            } finally {
+                canvas.restoreToCount(save);
+            }
         }
     }
 

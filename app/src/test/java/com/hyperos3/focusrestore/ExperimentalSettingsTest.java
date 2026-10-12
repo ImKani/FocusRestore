@@ -25,6 +25,102 @@ import static org.junit.Assert.assertTrue;
 
 public class ExperimentalSettingsTest {
     @Test
+    public void customTouchWidthIsOptionalAndIndependentAcrossStoresProviderAndBackup() throws Exception {
+        FocusRestoreSettings defaults = FocusRestoreSettings.defaults();
+        assertFalse(defaults.customTouchWidth);
+        assertFalse(HookSettings.defaults().customTouchWidth);
+        assertEquals(160, defaults.touchWidthDp);
+        assertEquals(160, defaults.touchWidthLandscapeDp);
+        FocusRestoreSettings legacy = FocusRestoreSettings.fromPreferences(memoryPreferences(legacyPreferences()));
+        assertFalse(legacy.customTouchWidth);
+        assertEquals(160, legacy.touchWidthDp);
+        assertEquals(160, legacy.touchWidthLandscapeDp);
+        Map<String, Object> first = new HashMap<>();
+        Map<String, Object> second = new HashMap<>();
+        for (boolean enabled : new boolean[]{true, false}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit().limitWidth(false)
+                    .widthDp(244).widthLandscapeDp(1200).customTouchWidth(enabled)
+                    .touchWidthDp(100).touchWidthLandscapeDp(720).build();
+            assertTouchWidths(FocusRestoreSettings.edit(settings).build(), enabled);
+            assertTouchWidths(SettingsBackupCodec.decode(SettingsBackupCodec.encode(settings)), enabled);
+            for (Map<String, Object> values : new Map[]{first, second}) {
+                SharedPreferences store = memoryPreferences(values);
+                assertTrue(settings.save(store));
+                FocusRestoreSettings loaded = FocusRestoreSettings.fromPreferences(store);
+                assertTouchWidths(loaded, enabled);
+                for (HookSettings hook : new HookSettings[]{HookSettings.fromSettings(loaded),
+                        HookSettings.fromCursor(SettingsContractTest.namedCursor(SettingsContract.COLUMNS,
+                                SettingsContract.toRow(loaded, "legacy")))}) {
+                    assertEquals(enabled, hook.customTouchWidth);
+                    assertEquals(100, hook.touchWidthDp);
+                    assertEquals(720, hook.touchWidthLandscapeDp);
+                    assertFalse(hook.limitWidth);
+                    assertEquals(244, hook.widthDp);
+                    assertEquals(1200, hook.widthLandscapeDp);
+                }
+            }
+            HookSettings old = HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                    SettingsContractTest.LEGACY_COLUMNS, SettingsContract.toRow(settings, "legacy",
+                    SettingsContractTest.LEGACY_COLUMNS)));
+            assertFalse(old.customTouchWidth);
+            assertEquals(160, old.touchWidthDp);
+            assertEquals(160, old.touchWidthLandscapeDp);
+        }
+    }
+
+    @Test
+    public void touchWidthBoundsDoNotChangeDisplayWidthOrEnableTheFeature() {
+        FocusRestoreSettings settings = FocusRestoreSettings.edit().widthDp(244).widthLandscapeDp(1200)
+                .touchWidthDp(-1).touchWidthLandscapeDp(Integer.MAX_VALUE).build();
+        assertFalse(settings.customTouchWidth);
+        assertEquals(80, settings.touchWidthDp);
+        assertEquals(1600, settings.touchWidthLandscapeDp);
+        assertEquals(244, settings.widthDp);
+        assertEquals(1200, settings.widthLandscapeDp);
+        FocusRestoreSettings reverse = FocusRestoreSettings.edit().touchWidthDp(Integer.MAX_VALUE)
+                .touchWidthLandscapeDp(-1).build();
+        assertEquals(400, reverse.touchWidthDp);
+        assertEquals(80, reverse.touchWidthLandscapeDp);
+    }
+
+    private static void assertTouchWidths(FocusRestoreSettings settings, boolean enabled) {
+        assertEquals(enabled, settings.customTouchWidth);
+        assertEquals(100, settings.touchWidthDp);
+        assertEquals(720, settings.touchWidthLandscapeDp);
+        assertFalse(settings.limitWidth);
+        assertEquals(244, settings.widthDp);
+        assertEquals(1200, settings.widthLandscapeDp);
+    }
+
+    @Test
+    public void swipeIsOptionalAndRoundTripsThroughBothStoresAndNamedProvider() throws Exception {
+        assertFalse(FocusRestoreSettings.defaults().focusSwipeEnabled);
+        assertFalse(HookSettings.defaults().focusSwipeEnabled);
+        assertFalse(FocusRestoreSettings.fromPreferences(memoryPreferences(legacyPreferences())).focusSwipeEnabled);
+        Map<String, Object> first = new HashMap<>();
+        Map<String, Object> second = new HashMap<>();
+        for (boolean enabled : new boolean[]{true, false}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit().focusSwipeEnabled(enabled).build();
+            assertEquals(enabled, FocusRestoreSettings.edit(settings).build().focusSwipeEnabled);
+            assertEquals(enabled, HookSettings.fromSettings(settings).focusSwipeEnabled);
+            for (Map<String, Object> values : new Map[]{first, second}) {
+                SharedPreferences store = memoryPreferences(values);
+                assertTrue(settings.save(store));
+                FocusRestoreSettings loaded = FocusRestoreSettings.fromPreferences(store);
+                assertEquals(enabled, loaded.focusSwipeEnabled);
+                assertEquals(enabled, HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                        SettingsContract.COLUMNS, SettingsContract.toRow(loaded, "legacy"))).focusSwipeEnabled);
+            }
+            assertEquals(enabled, SettingsBackupCodec.decode(SettingsBackupCodec.encode(settings)).focusSwipeEnabled);
+            assertFalse(HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                    SettingsContractTest.LEGACY_COLUMNS, SettingsContract.toRow(settings, "legacy",
+                    SettingsContractTest.LEGACY_COLUMNS))).focusSwipeEnabled);
+        }
+        assertFalse(SettingsBackupCodec.decode(SettingsBackupCodec.encode(FocusRestoreSettings.defaults()))
+                .focusSwipeEnabled);
+    }
+
+    @Test
     public void longPressDefaultsAndLegacyColumnsStayOff() {
         // 旧配置和旧 33 列不能继承短按开启状态，空列也必须安全关闭。
         assertFalse(FocusRestoreSettings.defaults().longPressNotificationRowClick);
@@ -274,7 +370,7 @@ public class ExperimentalSettingsTest {
             FocusRestoreSettings settings = FocusRestoreSettings.fromPreferences(
                     memoryPreferences(values));
             Object[] row = legacyProviderRow(settings, "legacy");
-            assertEquals(SettingsContract.COLUMNS.length, row.length);
+            assertEquals(SettingsContractTest.LEGACY_COLUMNS.length, row.length);
             assertArrayEquals(legacyWireRow(), Arrays.copyOf(row, 21));
             assertEquals(enabled ? 1 : 0, row[21]);
         }
@@ -304,7 +400,7 @@ public class ExperimentalSettingsTest {
 
         // ...and reach SystemUI through the provider wire format.
         Object[] row = legacyProviderRow(reloaded, "·");
-        assertEquals(SettingsContract.COLUMNS.length, row.length);
+        assertEquals(SettingsContractTest.LEGACY_COLUMNS.length, row.length);
         HookSettings hook = HookSettings.fromCursor(positionedCursor(row));
         assertEquals(FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT, hook.islandTextMode);
         assertEquals(7.25f, hook.focusMaxDisplaySeconds, 0.0001f);

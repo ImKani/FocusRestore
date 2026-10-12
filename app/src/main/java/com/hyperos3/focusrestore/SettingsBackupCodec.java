@@ -49,7 +49,7 @@ final class SettingsBackupCodec {
             "[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?");
     private static final Set<String> INTEGER_FIELDS = new HashSet<>(Arrays.asList("formatVersion",
             "hook_mode", "island_text_mode", "text_width_dp", "text_width_landscape_dp",
-            "marquee_delay_ms", "media_focus_cast_picker"));
+            "marquee_delay_ms", "media_focus_cast_picker", "touch_width_dp", "touch_width_landscape_dp"));
 
     private SettingsBackupCodec() { }
 
@@ -110,7 +110,8 @@ final class SettingsBackupCodec {
             JSONObject interaction = group(groups, "interaction", "independent_focus_banner",
                     "special_banner_normal_background", "allow_focus_click",
                     "notification_row_click_fallback", "long_press_notification_row_click",
-                    "long_press_seconds");
+                    "long_press_seconds", "focus_swipe_enabled",
+                    "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp");
             JSONObject icons = group(groups, "icons", "show_island_icon", "tint_island_icon",
                     "use_small_icon_fallback");
             JSONObject marquee = group(groups, "marquee", "marquee_bounce", "marquee_delay_ms");
@@ -158,6 +159,10 @@ final class SettingsBackupCodec {
                     .notificationRowClickFallback(bool(interaction, "notification_row_click_fallback", defaults.notificationRowClickFallback))
                     .longPressNotificationRowClick(bool(interaction, "long_press_notification_row_click", defaults.longPressNotificationRowClick))
                     .longPressSeconds(seconds(interaction, "long_press_seconds", defaults.longPressSeconds))
+                    .focusSwipeEnabled(bool(interaction, "focus_swipe_enabled", defaults.focusSwipeEnabled))
+                    .customTouchWidth(bool(interaction, "custom_touch_width", defaults.customTouchWidth))
+                    .touchWidthDp(integer(interaction, "touch_width_dp", defaults.touchWidthDp))
+                    .touchWidthLandscapeDp(integer(interaction, "touch_width_landscape_dp", defaults.touchWidthLandscapeDp))
                     .showIslandIcon(bool(icons, "show_island_icon", defaults.showIslandIcon))
                     .tintIslandIcon(bool(icons, "tint_island_icon", defaults.tintIslandIcon))
                     .useSmallIconFallback(bool(icons, "use_small_icon_fallback", defaults.useSmallIconFallback))
@@ -194,7 +199,11 @@ final class SettingsBackupCodec {
                         "allow_focus_click", settings.allowFocusClick,
                         "notification_row_click_fallback", settings.notificationRowClickFallback,
                         "long_press_notification_row_click", settings.longPressNotificationRowClick,
-                        "long_press_seconds", settings.longPressSeconds),
+                        "long_press_seconds", settings.longPressSeconds,
+                        "focus_swipe_enabled", settings.focusSwipeEnabled,
+                        "custom_touch_width", settings.customTouchWidth,
+                        "touch_width_dp", settings.touchWidthDp,
+                        "touch_width_landscape_dp", settings.touchWidthLandscapeDp),
                 "icons", entries("show_island_icon", settings.showIslandIcon,
                         "tint_island_icon", settings.tintIslandIcon,
                         "use_small_icon_fallback", settings.useSmallIconFallback),

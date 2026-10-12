@@ -50,6 +50,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -187,6 +188,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     /** Latest OS3 prompt controller, used to actively remove a dismissed media Focus bean. */
     private volatile WeakReference<Object> os3PromptControllerRef = new WeakReference<>(null);
     private volatile Class<?> os3PromptControllerClass;
+    private final FocusSwipeSelection os3SwipeSelection = new FocusSwipeSelection();
+    private final ThreadLocal<OS3SwipeScope> os3SwipeScope = new ThreadLocal<>();
+    private WeakReference<Object> os3SwipeOwner = new WeakReference<>(null);
+    private int os3SwipeUser = Integer.MIN_VALUE;
     /** Latest OS3 media view controller, owner of the ROM's media output (cast) picker. */
     private volatile WeakReference<Object> mediaViewControllerRef = new WeakReference<>(null);
     /** Latest MiPlayPluginManager, owner of the MIUI 妙播 transfer panel plugin. */
@@ -325,6 +330,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         } else {
             installOS3Hooks();
         }
+        FocusSwipeTouchHandler.install(classLoader, (root, bounds) ->
+                installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4
+                        ? (os4Controller == null ? null : os4Controller.captureSwipe(root, bounds))
+                        : captureOS3Swipe(root, bounds), this::focusTouchWidthPx, new FocusSwipeTouchHandler.Logger() {
+            @Override public void log(String message) { HyperOS3FocusRestoreHook.this.log(message); }
+            @Override public void error(String stage, Throwable failure) {
+                HyperOS3FocusRestoreHook.this.error(stage, failure);
+            }
+        });
         new FocusScrollToTopGuard(this::isVisibleFocusRegion, new FocusScrollToTopGuard.Logger() {
             @Override public void log(String message) { HyperOS3FocusRestoreHook.this.log(message); }
             @Override public void error(String stage, Throwable error) {
@@ -356,6 +370,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         hookOS3NotificationRemoval();
         hookShowOnStatusBar();
         hookMediaFocusedBeanRemoval();
+        hookOS3SwipeSelection();
         hookMediaFocusYield();
         hookMediaNotificationLifecycle();
         hookMediaHeadsUpSuppression();
@@ -1054,6 +1069,191 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * OS3 接口来源：用户 APK MCP，SystemUI 16.03.251211.r，
+     * FocusedNotifPromptController.update/getBeanMap/shouldShow；版权所有者小米，私有协议许可未确认。
+     * update 从 getBeanMap 的快照选择候选；独立提供仅本轮选择用的副本，原始通知和 bean 表保留。
+     */
+    private void hookOS3SwipeSelection() {
+        try {
+            Class<?> controller = FocusReflection.findClass(classLoader,
+                    "com.android.systemui.statusbar.phone.FocusedNotifPromptController");
+            XposedHelpers.findAndHookMethod(controller, "getBeanMap", int.class, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    OS3SwipeScope scope = os3SwipeScope.get();
+                    if (scope != null && scope.owner == param.thisObject
+                            && scope.user == (Integer) param.args[0] && scope.selection != null) {
+                        param.setResult(scope.selection);
+                    }
+                }
+            });
+            // 先于媒体让位取得完整候选，after 最后释放，避免临时表泄漏到下一轮 ROM 更新。
+            XposedBridge.hookAllMethods(controller, "update", new XC_MethodHook(1000) {
+                @Override protected void beforeHookedMethod(MethodHookParam param) {
+                    OS3SwipeScope previous = os3SwipeScope.get();
+                    param.setObjectExtra("focusRestoreSwipePrevious", previous);
+                    os3SwipeScope.remove();
+                    try {
+                        if (!currentSettings.focusSwipeEnabled) {
+                            os3SwipeSelection.clear();
+                            return;
+                        }
+                        Object user = getField(param.thisObject, "mCurrentUserId");
+                        int userId = user instanceof Integer ? (Integer) user : 0;
+                        if (os3SwipeOwner.get() != param.thisObject || os3SwipeUser != userId) {
+                            os3SwipeSelection.clear();
+                            os3SwipeOwner = new WeakReference<>(param.thisObject);
+                            os3SwipeUser = userId;
+                        }
+                        Object raw = currentPromptBeanMap(param.thisObject);
+                        if (!(raw instanceof Map)) return;
+                        Map<?, ?> map = (Map<?, ?>) raw;
+                        syncOS3SwipeSelection(map, param.thisObject);
+                        HashMap<Object, Object> selected = null;
+                        if (os3SwipeSelection.manual()) {
+                            selected = new HashMap<>();
+                            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                                FocusData data = inspectBean(entry.getValue());
+                                if (data != null && os3SwipeSelection.allows(data.key)
+                                        && !isFocusDisplayExpired(data)) {
+                                    selected.put(entry.getKey(), entry.getValue());
+                                } else {
+                                    // ROM 原 update 会清全表的 prompting 标记；隐藏候选留在真实表中，
+                                    // 因此副本筛选时也清它的旧标记，避免通知图标仍认为旧焦点在显示。
+                                    Object expanded = getField(entry.getValue(), "sbn");
+                                    if (expanded != null) XposedHelpers.setBooleanField(expanded, "statusBarPrompting", false);
+                                }
+                            }
+                        }
+                        os3SwipeScope.set(new OS3SwipeScope(param.thisObject, userId, selected));
+                    } catch (Throwable failure) {
+                        os3SwipeSelection.clear();
+                        error("OS3 swipe selection snapshot; using ROM candidates", failure);
+                    }
+                }
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    os3SwipeScope.remove();
+                    try {
+                        if (currentSettings.focusSwipeEnabled && !param.hasThrowable()
+                                && !os3SwipeSelection.manual()) {
+                            Object map = currentPromptBeanMap(param.thisObject);
+                            if (map instanceof Map) syncOS3SwipeSelection((Map<?, ?>) map, param.thisObject);
+                        }
+                    } catch (Throwable failure) {
+                        os3SwipeSelection.clear();
+                        error("OS3 swipe selection completion", failure);
+                    } finally {
+                        OS3SwipeScope previous = (OS3SwipeScope) param.getObjectExtra("focusRestoreSwipePrevious");
+                        if (previous != null) os3SwipeScope.set(previous);
+                    }
+                }
+            });
+            log("OS3 focus swipe selection=hooked notificationMapRetained=true");
+        } catch (Throwable failure) { error("hookOS3SwipeSelection", failure); }
+    }
+
+    private void syncOS3SwipeSelection(Map<?, ?> map, Object controller) {
+        ArrayList<String> keys = new ArrayList<>();
+        for (Object bean : map.values()) {
+            FocusData data = inspectBean(bean);
+            if (data == null || TextUtils.isEmpty(data.key) || isFocusDisplayExpired(data)) continue;
+            if (data.mediaContent != null && !activeMediaNotificationKeys.contains(data.key)) continue;
+            keys.add(data.key);
+        }
+        // 当前项仍由 ROM 自动选；其他项固定排序，内容更新不重排手动隐藏队列。
+        Collections.sort(keys);
+        FocusData current = inspectBean(getField(controller, "mCurrentNotifBean"));
+        String automatic = current != null && keys.contains(current.key) ? current.key
+                : keys.isEmpty() ? null : keys.get(0);
+        os3SwipeSelection.reconcile(keys, automatic);
+    }
+
+    private static final class OS3SwipeScope {
+        final Object owner;
+        final int user;
+        final HashMap<Object, Object> selection;
+        OS3SwipeScope(Object owner, int user, HashMap<Object, Object> selection) {
+            this.owner = owner;
+            this.user = user;
+            this.selection = selection;
+        }
+    }
+
+    private FocusSwipeTouchHandler.Target captureOS3Swipe(View root, Rect bounds) {
+        if (!currentSettings.focusSwipeEnabled) return null;
+        Object controller = os3SwipeOwner.get();
+        if (controller == null || !os3SwipeSelection.hasCandidates()
+                || getBooleanField(controller, "mNotificationPanelExpand", false)
+                || getBooleanField(controller, "mControlPanelExpand", false)) return null;
+        View prompt = null;
+        for (View candidate : promptViewsSnapshot()) {
+            View ancestor = candidate;
+            while (ancestor != null && ancestor != root) {
+                Object parent = ancestor.getParent();
+                ancestor = parent instanceof View ? (View) parent : null;
+            }
+            if (ancestor == root) { prompt = candidate; break; }
+        }
+        if (prompt == null) return null;
+        final View pressedPrompt = prompt;
+        final long revision = os3SwipeSelection.revision();
+        final String key;
+        final Object entry;
+        final long stamp;
+        if (os3SwipeSelection.manual() && os3SwipeSelection.selected() == null) {
+            key = null; entry = null; stamp = -1L;
+        } else {
+            FocusData data = inspectBean(getField(prompt, "mData"));
+            if (data == null || !TextUtils.equals(data.key, os3SwipeSelection.selected())) return null;
+            key = data.key;
+            WeakReference<Object> reference = notificationEntries.get(key);
+            entry = reference == null ? null : reference.get();
+            Object sbn = notificationEntrySbn(entry);
+            if (!(sbn instanceof StatusBarNotification)) return null;
+            stamp = ((StatusBarNotification) sbn).getPostTime();
+            Rect contentBounds = new Rect();
+            Object content = getField(prompt, "mContent");
+            Object icon = getField(prompt, "mIcon");
+            if (content instanceof View) ((View) content).getGlobalVisibleRect(contentBounds);
+            Rect iconBounds = new Rect();
+            if (icon instanceof View && ((View) icon).getGlobalVisibleRect(iconBounds)) contentBounds.union(iconBounds);
+            if (contentBounds.isEmpty()) return null;
+            bounds.set(contentBounds);
+        }
+        return new FocusSwipeTouchHandler.Target() {
+            @Override public boolean current() {
+                if (!currentSettings.focusSwipeEnabled || os3SwipeOwner.get() != controller
+                        || revision != os3SwipeSelection.revision()
+                        || !pressedPrompt.isAttachedToWindow()) return false;
+                FocusLongPressGesture longPress = promptLongPressGesture(pressedPrompt);
+                if (longPress != null && longPress.consumed()) return false;
+                if (key == null) return os3SwipeSelection.selected() == null;
+                FocusData current = inspectBean(getField(pressedPrompt, "mData"));
+                WeakReference<Object> reference = notificationEntries.get(key);
+                Object sbn = notificationEntrySbn(entry);
+                return reference != null && reference.get() == entry && current != null
+                        && TextUtils.equals(key, current.key) && !isFocusDisplayExpired(current)
+                        && sbn instanceof StatusBarNotification
+                        && ((StatusBarNotification) sbn).getPostTime() == stamp;
+            }
+            @Override public void swipe(boolean towardsEnd) {
+                if (!current() || !os3SwipeSelection.swipe(towardsEnd, revision)) return;
+                FocusBannerController banner = bannerController;
+                if (banner != null) banner.dismiss("focus-swiped");
+                log("OS3 focus swipe direction=" + (towardsEnd ? "right" : "left")
+                        + " from=" + key + " to=" + os3SwipeSelection.selected()
+                        + " notificationRetained=true");
+                try { XposedHelpers.callMethod(controller, "update", 0); }
+                catch (Throwable failure) {
+                    os3SwipeSelection.clear();
+                    error("OS3 focus swipe update; restoring ROM selection", failure);
+                    try { XposedHelpers.callMethod(controller, "update", 0); }
+                    catch (Throwable restoreFailure) { error("OS3 focus swipe restore", restoreFailure); }
+                }
+            }
+        };
+    }
+
     private Object currentPromptBeanMap(Object promptController) {
         if (promptController == null) return null;
         try {
@@ -1222,6 +1422,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private void removeBannerNotification(String key) {
         if (TextUtils.isEmpty(key)) return;
         notificationEntries.remove(key);
+        os3SwipeSelection.remove(key);
         mediaNotificationKeys.remove(key);
         activeMediaNotificationKeys.remove(key);
         FocusBannerController controller = bannerController;
@@ -2215,7 +2416,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     "com.android.systemui.statusbar.notification.utils.FocusUtils");
             if (utils == null) return text.append(" focusUtils=missing").toString();
             Object showOnStatusBar = XposedHelpers.callStaticMethod(utils, "showOnStatusBar", sbn);
-            Object ticker = XposedHelpers.callStaticMethod(utils, "getStatusBarTicker", sbn);
+            // OS4 FocusUtils 已无 getStatusBarTicker；诊断读取已构造的协议字段，不调用缺失接口。
+            // 来源：小米 SystemUI 17.03.260226.r / FocusUtils，用户只读 APK MCP；私有许可未确认。
+            Object ticker = installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4
+                    ? sbn.getNotification().extras.getCharSequence("miui.focus.ticker", "")
+                    : XposedHelpers.callStaticMethod(utils, "getStatusBarTicker", sbn);
             // OS4 FocusUtils 已无 getStatusBarTickerIcon；直接按 extras 二级键读取，不猜 ROM 方法。
             SelectedFocusIcon tickerIcon = selectFocusIcon(sbn.getNotification(), null,
                     sbn.getPackageName(), false, true);
@@ -2638,14 +2843,32 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 logProviderSettingsState(false, "provider query returned no settings");
                 return false;
             }
+            boolean swipeChanged;
             synchronized (this) {
                 if (generation != settingsReadGeneration) return false;
+                swipeChanged = currentSettings.focusSwipeEnabled != next.focusSwipeEnabled;
                 currentSettings = next;
                 if (modeHooksInstalled && next.hookMode != installedHookMode) {
                     log("hook mode change saved configuredMode=OS" + next.hookMode
                             + " installedMode=OS" + installedHookMode
                             + "; restart SystemUI or device to apply");
                 }
+            }
+            if (swipeChanged && modeHooksInstalled && mainHandler != null) {
+                mainHandler.post(() -> {
+                    // 配置读取在后台；只让最新设置在主线程清手动状态并恢复当前模式的选择。
+                    if (currentSettings.focusSwipeEnabled != next.focusSwipeEnabled) return;
+                    if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4) {
+                        if (os4Controller != null) os4Controller.onSwipeSettingChanged();
+                    } else {
+                        os3SwipeSelection.clear();
+                        Object owner = os3SwipeOwner.get();
+                        if (owner != null) {
+                            try { XposedHelpers.callMethod(owner, "update", 0); }
+                            catch (Throwable failure) { error("OS3 swipe setting refresh", failure); }
+                        }
+                    }
+                });
             }
             if (!next.independentFocusBanner) {
                 FocusBannerController controller = bannerController;
@@ -2676,6 +2899,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     // Restored 0.7 behavior: constrain the text and its content slot, not the outer prompt.
     private void applyTextWidth(Object promptView) {
+        if (promptView instanceof View) applyFocusTouchWidth((View) promptView);
         try {
             Object value = XposedHelpers.getObjectField(promptView, "mContentText");
             if (!(value instanceof TextView)) return;
@@ -2733,6 +2957,79 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             error("applyTextWidth", t);
         }
+    }
+
+    private int focusTouchWidthPx(View view) {
+        boolean landscape = view.getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        int dp = FocusTouchWidth.dp(currentSettings.customTouchWidth, landscape,
+                currentSettings.touchWidthDp, currentSettings.touchWidthLandscapeDp);
+        return Math.round(dp * view.getResources().getDisplayMetrics().density);
+    }
+
+    private static final class OriginalFocusTouchWidth {
+        final int minimumWidth;
+        final boolean clickable;
+        boolean clickInstalled;
+
+        OriginalFocusTouchWidth(View content) {
+            minimumWidth = content.getMinimumWidth();
+            clickable = content.isClickable();
+        }
+    }
+
+    private void applyFocusTouchWidth(View prompt) {
+        try {
+            Object contentValue = getField(prompt, "mContent");
+            if (!(contentValue instanceof View)) return;
+            View content = (View) contentValue;
+            String stateKey = "focusRestoreOriginalTouchWidth";
+            Object saved = XposedHelpers.getAdditionalInstanceField(content, stateKey);
+            OriginalFocusTouchWidth original = saved instanceof OriginalFocusTouchWidth
+                    ? (OriginalFocusTouchWidth) saved : null;
+            if (!currentSettings.customTouchWidth) {
+                // 默认模式不接管容器；关闭已开启功能时撤销模块的最小宽度和空白点击。
+                if (original != null) {
+                    content.setMinimumWidth(original.minimumWidth);
+                    if (original.clickInstalled) {
+                        content.setOnClickListener(null);
+                        content.setClickable(original.clickable);
+                    }
+                    XposedHelpers.removeAdditionalInstanceField(content, stateKey);
+                }
+                return;
+            }
+            if (original == null) {
+                original = new OriginalFocusTouchWidth(content);
+                XposedHelpers.setAdditionalInstanceField(content, stateKey, original);
+            }
+            View icon = getField(prompt, "mIcon") instanceof View ? (View) getField(prompt, "mIcon") : null;
+            int decoration = prompt.getPaddingLeft() + prompt.getPaddingRight();
+            if (icon != null && icon.getVisibility() != View.GONE) {
+                decoration += Math.max(icon.getMeasuredWidth(), icon.getMinimumWidth());
+                if (icon.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+                    ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) icon.getLayoutParams();
+                    decoration += margins.leftMargin + margins.rightMargin;
+                }
+            }
+            int width = Math.max(original.minimumWidth, focusTouchWidthPx(prompt) - decoration);
+            if (content.getMinimumWidth() != width) content.setMinimumWidth(width);
+            // OS3 的点击监听原本只在文字/RemoteViews 层，扩容后空白由内容容器走同一入口。
+            // 小米 SystemUI 16.03.251211.r：FocusedNotifPromptView.updateContentViewClickable /
+            // onFocusNotifPromptClicked；用户只读 APK MCP，私有许可未确认，未复制 ROM 实现。
+            if (getField(prompt, "mData") != null
+                    && (!content.hasOnClickListeners() || original.clickInstalled)) {
+                content.setOnClickListener(clicked -> {
+                    if (!prompt.isShown() || getField(prompt, "mData") == null) return;
+                    try { XposedHelpers.callMethod(prompt, "onFocusNotifPromptClicked"); }
+                    catch (Throwable failure) { error("OS3 expanded focus click", failure); }
+                });
+                original.clickInstalled = true;
+            } else if (getField(prompt, "mData") == null && original.clickInstalled) {
+                content.setOnClickListener(null);
+                content.setClickable(false);
+            }
+        } catch (Throwable failure) { error("OS3 apply focus touch width", failure); }
     }
 
     private int focusWidthDp(android.content.res.Configuration configuration) {
@@ -3227,6 +3524,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private boolean hasHigherPriorityFocus(Object promptController, String mediaKey) {
         try {
+            // 用户主动切到媒体时，上一帧普通焦点尚未换绑，不能再按上一帧把媒体压回去。
+            if (currentSettings.focusSwipeEnabled && os3SwipeSelection.manual()
+                    && TextUtils.equals(mediaKey, os3SwipeSelection.selected())) return false;
             FocusData current = inspectBean(getField(promptController, "mCurrentNotifBean"));
             if (current == null || TextUtils.equals(mediaKey, current.key)) return false;
             if (current.isFocus && current.mediaContent == null) {
@@ -3259,6 +3559,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         protected void afterHookedMethod(MethodHookParam param) {
                             Object value = param.args[0];
                             FocusData data = inspectBean(value);
+                            if (currentSettings.focusSwipeEnabled && os3SwipeSelection.manual()
+                                    && (data == null || !os3SwipeSelection.allows(data.key))) {
+                                param.setResult(false);
+                                return;
+                            }
                             boolean result = Boolean.TRUE.equals(param.getResult());
                             log("shouldShow=" + result + (data == null ? " bean=null" : " " + data.summary()));
                             if (data == null) return;
@@ -3322,7 +3627,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 return;
                             }
                             if (whitelisted && hasConvertibleIslandContent(data)
-                                    && markForcedShouldShow(data.key, data.sbn)) {
+                                    && ((currentSettings.focusSwipeEnabled && os3SwipeSelection.manual())
+                                    || markForcedShouldShow(data.key, data.sbn))) {
                                 param.setResult(true);
                                 log("shouldShow forced=true key=" + data.key
                                         + " package=" + data.packageName);
@@ -3392,6 +3698,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> promptClass = FocusReflection.findClass(
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptView", classLoader);
             // getMethod 可定位继承的 dispatchTouchEvent；只处理目标提示视图，避免干预其他通知视图。
+            XposedHelpers.findAndHookMethod(promptClass, "onConfigurationChanged",
+                    android.content.res.Configuration.class, new XC_MethodHook() {
+                        @Override protected void afterHookedMethod(MethodHookParam param) {
+                            // 旋转不一定触发 setData，横竖屏触控宽度须随配置更新。
+                            if (!param.hasThrowable()) applyTextWidth(param.thisObject);
+                        }
+                    });
             Method dispatch = promptClass.getMethod("dispatchTouchEvent", MotionEvent.class);
             XposedBridge.hookMethod(dispatch, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {

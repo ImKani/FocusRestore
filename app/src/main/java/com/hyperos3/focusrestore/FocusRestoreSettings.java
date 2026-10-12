@@ -54,6 +54,10 @@ public final class FocusRestoreSettings {
     public static final String KEY_INDEPENDENT_FOCUS_BANNER = "independent_focus_banner";
     public static final String KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK = "long_press_notification_row_click";
     public static final String KEY_LONG_PRESS_SECONDS = "long_press_seconds";
+    public static final String KEY_FOCUS_SWIPE_ENABLED = "focus_swipe_enabled";
+    public static final String KEY_CUSTOM_TOUCH_WIDTH = "custom_touch_width";
+    public static final String KEY_TOUCH_WIDTH_DP = "touch_width_dp";
+    public static final String KEY_TOUCH_WIDTH_LANDSCAPE_DP = "touch_width_landscape_dp";
     public static final String KEY_ISLAND_TEXT_MODE = "island_text_mode";
     public static final String KEY_FOCUS_MAX_DISPLAY_SECONDS = "focus_max_display_seconds";
     static final String KEY_HOOK_SETTINGS_READY = "hook_settings_ready";
@@ -93,6 +97,10 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK = false;
     public static final boolean DEFAULT_INDEPENDENT_FOCUS_BANNER = false;
     public static final boolean DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK = false;
+    public static final boolean DEFAULT_FOCUS_SWIPE_ENABLED = false;
+    public static final boolean DEFAULT_CUSTOM_TOUCH_WIDTH = false;
+    public static final int DEFAULT_TOUCH_WIDTH_DP = 160;
+    public static final int DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP = 160;
     public static final float DEFAULT_LONG_PRESS_SECONDS = 0.5f;
     public static final float MIN_LONG_PRESS_SECONDS = 0.2f;
     public static final float MAX_LONG_PRESS_SECONDS = 10f;
@@ -130,6 +138,10 @@ public final class FocusRestoreSettings {
     public final boolean independentFocusBanner;
     public final boolean longPressNotificationRowClick;
     public final float longPressSeconds;
+    public final boolean focusSwipeEnabled;
+    public final boolean customTouchWidth;
+    public final int touchWidthDp;
+    public final int touchWidthLandscapeDp;
     public final int islandTextMode;
     public final float focusMaxDisplaySeconds;
     public final String islandGeneralSeparator;
@@ -165,6 +177,11 @@ public final class FocusRestoreSettings {
         this.independentFocusBanner = editor.independentFocusBanner;
         this.longPressNotificationRowClick = editor.longPressNotificationRowClick;
         this.longPressSeconds = normalizeLongPressSeconds(editor.longPressSeconds);
+        this.focusSwipeEnabled = editor.focusSwipeEnabled;
+        this.customTouchWidth = editor.customTouchWidth;
+        this.touchWidthDp = clamp(editor.touchWidthDp, MIN_WIDTH_DP, MAX_WIDTH_DP);
+        this.touchWidthLandscapeDp = clamp(editor.touchWidthLandscapeDp, MIN_WIDTH_DP,
+                MAX_LANDSCAPE_WIDTH_DP);
         this.islandTextMode = normalizeIslandTextMode(editor.islandTextMode);
         this.focusMaxDisplaySeconds = normalizeMaxDisplaySeconds(editor.focusMaxDisplaySeconds);
         this.islandGeneralSeparator = valueOrDefault(editor.islandGeneralSeparator);
@@ -206,6 +223,10 @@ public final class FocusRestoreSettings {
         private boolean independentFocusBanner = DEFAULT_INDEPENDENT_FOCUS_BANNER;
         private boolean longPressNotificationRowClick = DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK;
         private float longPressSeconds = DEFAULT_LONG_PRESS_SECONDS;
+        private boolean focusSwipeEnabled = DEFAULT_FOCUS_SWIPE_ENABLED;
+        private boolean customTouchWidth = DEFAULT_CUSTOM_TOUCH_WIDTH;
+        private int touchWidthDp = DEFAULT_TOUCH_WIDTH_DP;
+        private int touchWidthLandscapeDp = DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP;
         private int islandTextMode = DEFAULT_ISLAND_TEXT_MODE;
         private float focusMaxDisplaySeconds = DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
         private String islandGeneralSeparator = DEFAULT_ISLAND_SEPARATOR;
@@ -242,6 +263,10 @@ public final class FocusRestoreSettings {
             this.independentFocusBanner = source.independentFocusBanner;
             this.longPressNotificationRowClick = source.longPressNotificationRowClick;
             this.longPressSeconds = source.longPressSeconds;
+            this.focusSwipeEnabled = source.focusSwipeEnabled;
+            this.customTouchWidth = source.customTouchWidth;
+            this.touchWidthDp = source.touchWidthDp;
+            this.touchWidthLandscapeDp = source.touchWidthLandscapeDp;
             this.islandTextMode = source.islandTextMode;
             this.focusMaxDisplaySeconds = source.focusMaxDisplaySeconds;
             this.islandGeneralSeparator = source.islandGeneralSeparator;
@@ -289,6 +314,10 @@ public final class FocusRestoreSettings {
             this.longPressNotificationRowClick = value; return this;
         }
         public Editor longPressSeconds(float value) { this.longPressSeconds = value; return this; }
+        public Editor focusSwipeEnabled(boolean value) { this.focusSwipeEnabled = value; return this; }
+        public Editor customTouchWidth(boolean value) { this.customTouchWidth = value; return this; }
+        public Editor touchWidthDp(int value) { this.touchWidthDp = value; return this; }
+        public Editor touchWidthLandscapeDp(int value) { this.touchWidthLandscapeDp = value; return this; }
         public Editor islandTextMode(int value) { this.islandTextMode = value; return this; }
         public Editor focusMaxDisplaySeconds(float value) {
             this.focusMaxDisplaySeconds = value; return this;
@@ -385,6 +414,12 @@ public final class FocusRestoreSettings {
                 .longPressNotificationRowClick(preferences.getBoolean(
                         KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK, DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK))
                 .longPressSeconds(readLongPressSeconds(preferences))
+                .focusSwipeEnabled(preferences.getBoolean(KEY_FOCUS_SWIPE_ENABLED, DEFAULT_FOCUS_SWIPE_ENABLED))
+                // 旧配置未存储独立触控设置，保持实际显示区域模式，不继承显示宽度。
+                .customTouchWidth(preferences.getBoolean(KEY_CUSTOM_TOUCH_WIDTH, DEFAULT_CUSTOM_TOUCH_WIDTH))
+                .touchWidthDp(preferences.getInt(KEY_TOUCH_WIDTH_DP, DEFAULT_TOUCH_WIDTH_DP))
+                .touchWidthLandscapeDp(preferences.getInt(KEY_TOUCH_WIDTH_LANDSCAPE_DP,
+                        DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP))
                 .islandTextMode(preferences.getInt(KEY_ISLAND_TEXT_MODE, DEFAULT_ISLAND_TEXT_MODE))
                 .focusMaxDisplaySeconds(readMaxDisplaySeconds(preferences))
                 .islandGeneralSeparator(preferences.getString(KEY_ISLAND_GENERAL_SEPARATOR, legacy))
@@ -415,6 +450,9 @@ public final class FocusRestoreSettings {
                 + " independentFocusBanner=" + independentFocusBanner
                 + " longPressNotificationRowClick=" + longPressNotificationRowClick
                 + " longPressSeconds=" + longPressSeconds
+                + " focusSwipeEnabled=" + focusSwipeEnabled
+                + " customTouchWidth=" + customTouchWidth
+                + " touchWidthDp=" + touchWidthDp + " touchWidthLandscapeDp=" + touchWidthLandscapeDp
                 + " mediaFocusCastPicker=" + mediaFocusCastPicker
                 + " mediaFocusCastDirect=" + mediaFocusCastDirect
                 + " islandTextMode=" + islandTextMode
@@ -457,6 +495,10 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_INDEPENDENT_FOCUS_BANNER, independentFocusBanner)
                 .putBoolean(KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK, longPressNotificationRowClick)
                 .putFloat(KEY_LONG_PRESS_SECONDS, longPressSeconds)
+                .putBoolean(KEY_FOCUS_SWIPE_ENABLED, focusSwipeEnabled)
+                .putBoolean(KEY_CUSTOM_TOUCH_WIDTH, customTouchWidth)
+                .putInt(KEY_TOUCH_WIDTH_DP, touchWidthDp)
+                .putInt(KEY_TOUCH_WIDTH_LANDSCAPE_DP, touchWidthLandscapeDp)
                 .putInt(KEY_ISLAND_TEXT_MODE, islandTextMode)
                 .putFloat(KEY_FOCUS_MAX_DISPLAY_SECONDS, focusMaxDisplaySeconds)
                 .putString(KEY_ISLAND_GENERAL_SEPARATOR, islandGeneralSeparator)

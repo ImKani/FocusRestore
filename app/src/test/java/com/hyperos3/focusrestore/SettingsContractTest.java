@@ -50,6 +50,8 @@ public class SettingsContractTest {
                 "use_small_icon_fallback",
                 "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
                 "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
+                "focus_swipe_enabled",
+                "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
                 "focus_max_display_seconds", "focus_timeout_exempt_packages",
                 "media_focus_enabled", "media_focus_native_banner", "media_focus_cast_picker", "media_focus_cast_direct",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules"
@@ -67,6 +69,9 @@ public class SettingsContractTest {
                 SettingsContract.INDEPENDENT_FOCUS_BANNER, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND,
                 SettingsContract.ALLOW_FOCUS_CLICK, SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK,
                 SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK, SettingsContract.LONG_PRESS_SECONDS,
+                SettingsContract.FOCUS_SWIPE_ENABLED,
+                SettingsContract.CUSTOM_TOUCH_WIDTH, SettingsContract.TOUCH_WIDTH_DP,
+                SettingsContract.TOUCH_WIDTH_LANDSCAPE_DP,
                 SettingsContract.FOCUS_MAX_DISPLAY_SECONDS, SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES,
                 SettingsContract.MEDIA_FOCUS_ENABLED, SettingsContract.MEDIA_FOCUS_NATIVE_BANNER,
                 SettingsContract.MEDIA_FOCUS_CAST_PICKER, SettingsContract.MEDIA_FOCUS_CAST_DIRECT,

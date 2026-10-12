@@ -67,7 +67,7 @@ public class SettingsBackupCodecTest {
         int fields = 0;
         JSONObject groups = root.getJSONObject("settings");
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
-        assertEquals(31, fields);
+        assertEquals(35, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules"}) {
             assertFalse(excluded, text.contains("\"" + excluded + "\""));
@@ -149,6 +149,47 @@ public class SettingsBackupCodecTest {
                 .widthLandscapeDp);
         assertEquals(400, decodeGroups("{\"focus\":{\"text_width_dp\":900}}") .widthDp);
         assertEquals(900, decodeGroups("{\"focus\":{\"text_width_dp\":900}}") .widthLandscapeDp);
+    }
+
+    @Test
+    public void swipeBackupMissingFieldStaysOffAndNonBooleanIsRejected() throws Exception {
+        assertFalse(decodeGroups("{\"interaction\":{\"independent_focus_banner\":true}}").focusSwipeEnabled);
+        assertTrue(decodeGroups("{\"interaction\":{\"focus_swipe_enabled\":true}}").focusSwipeEnabled);
+        for (String value : new String[]{"1", "\"true\"", "null", "[]"}) {
+            try {
+                decodeGroups("{\"interaction\":{\"focus_swipe_enabled\":" + value + "}}");
+                fail("non-boolean swipe setting must be rejected: " + value);
+            } catch (IOException expected) { }
+        }
+    }
+
+    @Test
+    public void customTouchBackupDefaultsDoNotInheritDisplayWidthOrPortraitWidth() throws Exception {
+        FocusRestoreSettings old = decodeGroups("{\"focus\":{\"text_width_dp\":244,\"text_width_landscape_dp\":1200}}");
+        assertFalse(old.customTouchWidth);
+        assertEquals(160, old.touchWidthDp);
+        assertEquals(160, old.touchWidthLandscapeDp);
+        FocusRestoreSettings portraitOnly = decodeGroups("{\"interaction\":{\"custom_touch_width\":true,\"touch_width_dp\":240}}");
+        assertTrue(portraitOnly.customTouchWidth);
+        assertEquals(240, portraitOnly.touchWidthDp);
+        assertEquals(160, portraitOnly.touchWidthLandscapeDp);
+        assertEquals(160, portraitOnly.widthDp);
+        FocusRestoreSettings bounded = decodeGroups("{\"interaction\":{\"touch_width_dp\":900,\"touch_width_landscape_dp\":2000}}");
+        assertFalse(bounded.customTouchWidth);
+        assertEquals(400, bounded.touchWidthDp);
+        assertEquals(1600, bounded.touchWidthLandscapeDp);
+    }
+
+    @Test
+    public void customTouchBackupRejectsWrongBooleanAndWidthTypes() throws Exception {
+        for (String value : new String[]{"1", "\"true\"", "null", "[]"}) {
+            rejectGroups("{\"interaction\":{\"custom_touch_width\":" + value + "}}");
+        }
+        for (String key : new String[]{"touch_width_dp", "touch_width_landscape_dp"}) {
+            for (String value : new String[]{"1.5", "\"160\"", "true", "null", "2147483648"}) {
+                rejectGroups("{\"interaction\":{\"" + key + "\":" + value + "}}");
+            }
+        }
     }
 
     @Test
@@ -403,7 +444,8 @@ public class SettingsBackupCodecTest {
                 .disableIslandProperty(false).disableIslandFeatureCache(false).allowFocusClick(true)
                 .hideNotificationIcons(false).showFocusDivider(false).showIslandIcon(true).tintIslandIcon(false)
                 .useSmallIconFallback(true).notificationRowClickFallback(true).independentFocusBanner(true)
-                .longPressNotificationRowClick(true).longPressSeconds(2.75f).islandTextMode(1)
+                .longPressNotificationRowClick(true).longPressSeconds(2.75f).focusSwipeEnabled(true).islandTextMode(1)
+                .customTouchWidth(true).touchWidthDp(100).touchWidthLandscapeDp(720)
                 .focusMaxDisplaySeconds(12.34f).islandGeneralSeparator("general").islandSideSeparator("side")
                 .islandForcePackages(new HashSet<>(Arrays.asList("com.example.z", "com.example.a")))
                 .focusTimeoutExemptPackages(Collections.singleton("com.example.travel")).build();
@@ -418,7 +460,7 @@ public class SettingsBackupCodecTest {
             assertEquals(field.getName(), field.get(expected), field.get(actual));
             count++;
         }
-        assertEquals("current user snapshot field count", 31, count);
+        assertEquals("current user snapshot field count", 35, count);
     }
 
     private static FocusRestoreSettings decodeGroups(String groups) throws IOException {

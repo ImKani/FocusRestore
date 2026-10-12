@@ -163,8 +163,10 @@ public final class SettingsActivity extends Activity {
     private Button os4ModeButton;
     private Switch manualWidthSwitch;
     private SeekBar widthSeekBar;
+    private SeekBar landscapeWidthSeekBar;
     private TextView widthValue;
     private View widthValueRow;
+    private View landscapeWidthValueRow;
     private View widthRangeRow;
     private SeekBar delaySeekBar;
     private TextView delayValue;
@@ -184,6 +186,13 @@ public final class SettingsActivity extends Activity {
     private Switch notificationRowClickFallbackSwitch;
     private Switch independentFocusBannerSwitch;
     private Switch longPressNotificationRowClickSwitch;
+    private Switch focusSwipeEnabledSwitch;
+    private Switch customTouchWidthSwitch;
+    private LinearLayout touchWidthOptionsPanel;
+    private SeekBar touchWidthSeekBar;
+    private SeekBar touchWidthLandscapeSeekBar;
+    private TextView touchWidthValue;
+    private TextView touchWidthLandscapeValue;
     private SeekBar longPressSecondsSeekBar;
     private TextView longPressSecondsValue;
     private TextView longPressSecondsLabel;
@@ -208,7 +217,8 @@ public final class SettingsActivity extends Activity {
             pendingHideNotificationIcons, pendingShowFocusDivider, pendingShowIslandIcon,
             pendingTintIslandIcon, pendingUseSmallIconFallback,
             pendingNotificationRowClickFallback, pendingIndependentFocusBanner,
-            pendingLongPressNotificationRowClick;
+            pendingLongPressNotificationRowClick, pendingFocusSwipeEnabled, pendingCustomTouchWidth;
+    private int pendingTouchWidthDp, pendingTouchWidthLandscapeDp;
     private float pendingLongPressSeconds;
     private int pendingHookMode, pendingWidthDp, pendingDelayMs, pendingIslandTextMode;
     private float pendingFocusMaxDisplaySeconds;
@@ -474,8 +484,10 @@ public final class SettingsActivity extends Activity {
         os4ModeButton = null;
         manualWidthSwitch = null;
         widthSeekBar = null;
+        landscapeWidthSeekBar = null;
         widthValue = null;
         widthValueRow = null;
+        landscapeWidthValueRow = null;
         widthRangeRow = null;
         delaySeekBar = null;
         delayValue = null;
@@ -495,6 +507,13 @@ public final class SettingsActivity extends Activity {
         notificationRowClickFallbackSwitch = null;
         independentFocusBannerSwitch = null;
         longPressNotificationRowClickSwitch = null;
+        focusSwipeEnabledSwitch = null;
+        customTouchWidthSwitch = null;
+        touchWidthOptionsPanel = null;
+        touchWidthSeekBar = null;
+        touchWidthLandscapeSeekBar = null;
+        touchWidthValue = null;
+        touchWidthLandscapeValue = null;
         longPressSecondsSeekBar = null;
         longPressSecondsValue = null;
         longPressSecondsLabel = null;
@@ -610,8 +629,9 @@ public final class SettingsActivity extends Activity {
         widthSeekBar.setMax(MAX_WIDTH_DP - MIN_WIDTH_DP);
         focusPanel.addView(widthSeekBar, matchWrap(dp(2)));
         LinearLayout landscapeWidthRow = valueRow("横屏最大宽度", pendingWidthLandscapeDp + " dp");
+        landscapeWidthValueRow = landscapeWidthRow;
         focusPanel.addView(landscapeWidthRow, matchWrap(dp(2)));
-        SeekBar landscapeWidthSeekBar = new SeekBar(this);
+        landscapeWidthSeekBar = new SeekBar(this);
         styleSeekBar(landscapeWidthSeekBar);
         landscapeWidthSeekBar.setMax(MAX_LANDSCAPE_WIDTH_DP - MIN_WIDTH_DP);
         landscapeWidthSeekBar.setProgress(pendingWidthLandscapeDp - MIN_WIDTH_DP);
@@ -748,12 +768,51 @@ public final class SettingsActivity extends Activity {
         longPressSecondsSeekBar.setProgress(Math.round(pendingLongPressSeconds * 10f) - 2);
         interactionPanel.addView(longPressSecondsSeekBar, matchWrap(dp(2)));
         interactionPanel.addView(rangeRow("最小 0.2 秒", "最大 10 秒"), matchWrap(dp(8)));
+        focusSwipeEnabledSwitch = createSwitch("左右滑动切换和收起焦点通知（实验性）");
+        interactionPanel.addView(focusSwipeEnabledSwitch, matchWrap(dp(4)));
+        interactionPanel.addView(text(
+                "默认关闭；左滑切换下一条，右滑反向恢复；滑到空白位置收起全部焦点，通知仍保留在通知栏。"
+                        + "收起后在原焦点位置继续左右滑动可恢复，独立于短按与长按。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         allowFocusClickSwitch = createSwitch("旧版：打开通知内容（实验性）");
         notificationRowClickFallbackSwitch = createSwitch(
                 "直接打开失败时模拟通知列表点击（实验性）");
         interactionPanel.addView(allowFocusClickSwitch, matchWrap(dp(4)));
         interactionPanel.addView(notificationRowClickFallbackSwitch, matchWrap(0));
         root.addView(interactionPanel, matchWrap(dp(12)));
+
+        root.addView(sectionHeader("触控范围"), matchWrap(dp(8)));
+        LinearLayout touchPanel = panel();
+        customTouchWidthSwitch = createSwitch("自定义焦点触控范围");
+        touchPanel.addView(customTouchWidthSwitch, matchWrap(dp(4)));
+        touchPanel.addView(text("默认关闭，仅操作焦点实际显示区域。开启后分别设置横竖屏触控宽度，"
+                + "用于短按、长按、左右滑动及收起后的滑动恢复；独立于显示宽度。"
+                + "焦点实际区域更宽时保留完整区域，触控范围受状态栏可用空间限制。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        touchWidthOptionsPanel = new LinearLayout(this);
+        touchWidthOptionsPanel.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout touchPortraitRow = valueRow("竖屏触控宽度", pendingTouchWidthDp + " dp");
+        touchWidthValue = (TextView) touchPortraitRow.getChildAt(1);
+        touchWidthOptionsPanel.addView(touchPortraitRow, matchWrap(0));
+        touchWidthSeekBar = new SeekBar(this);
+        styleSeekBar(touchWidthSeekBar);
+        touchWidthSeekBar.setMax(MAX_WIDTH_DP - MIN_WIDTH_DP);
+        touchWidthSeekBar.setProgress(pendingTouchWidthDp - MIN_WIDTH_DP);
+        touchWidthOptionsPanel.addView(touchWidthSeekBar, matchWrap(dp(2)));
+        touchWidthOptionsPanel.addView(rangeRow("80 dp", "400 dp"), matchWrap(dp(8)));
+        LinearLayout touchLandscapeRow = valueRow("横屏触控宽度", pendingTouchWidthLandscapeDp + " dp");
+        touchWidthLandscapeValue = (TextView) touchLandscapeRow.getChildAt(1);
+        touchWidthOptionsPanel.addView(touchLandscapeRow, matchWrap(0));
+        touchWidthLandscapeSeekBar = new SeekBar(this);
+        styleSeekBar(touchWidthLandscapeSeekBar);
+        touchWidthLandscapeSeekBar.setMax(MAX_LANDSCAPE_WIDTH_DP - MIN_WIDTH_DP);
+        touchWidthLandscapeSeekBar.setProgress(pendingTouchWidthLandscapeDp - MIN_WIDTH_DP);
+        touchWidthOptionsPanel.addView(touchWidthLandscapeSeekBar, matchWrap(dp(2)));
+        touchWidthOptionsPanel.addView(rangeRow("80 dp", "1600 dp"), matchWrap(0));
+        touchPanel.addView(touchWidthOptionsPanel, matchWrap(0));
+        root.addView(touchPanel, matchWrap(dp(12)));
+        customTouchWidthSwitch.setChecked(pendingCustomTouchWidth);
+        updateTouchWidthControls();
 
         root.addView(sectionHeader("滚动与兼容"), matchWrap(dp(8)));
         LinearLayout delayPanel = panel();
@@ -790,6 +849,7 @@ public final class SettingsActivity extends Activity {
         notificationRowClickFallbackSwitch.setChecked(pendingNotificationRowClickFallback);
         independentFocusBannerSwitch.setChecked(pendingIndependentFocusBanner);
         longPressNotificationRowClickSwitch.setChecked(pendingLongPressNotificationRowClick);
+        focusSwipeEnabledSwitch.setChecked(pendingFocusSwipeEnabled);
         syncBannerBackgroundField();
         syncMediaFocusClickField();
         syncMediaFocusCastPickerField();
@@ -1198,6 +1258,10 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.independentFocusBanner", pendingIndependentFocusBanner);
         outState.putBoolean("m3.longPressNotificationRowClick", pendingLongPressNotificationRowClick);
         outState.putFloat("m3.longPressSeconds", pendingLongPressSeconds);
+        outState.putBoolean("m3.focusSwipeEnabled", pendingFocusSwipeEnabled);
+        outState.putBoolean("m3.customTouchWidth", pendingCustomTouchWidth);
+        outState.putInt("m3.touchWidth", pendingTouchWidthDp);
+        outState.putInt("m3.touchWidthLandscape", pendingTouchWidthLandscapeDp);
         outState.putString("m3.general", pendingGeneralSeparator);
         outState.putString("m3.side", pendingSideSeparator);
         outState.putStringArrayList("m3.packages", new ArrayList<>(pendingForcePackages));
@@ -1261,6 +1325,10 @@ public final class SettingsActivity extends Activity {
                 pendingLongPressNotificationRowClick);
         pendingLongPressSeconds = FocusRestoreSettings.normalizeLongPressSeconds(
                 state.getFloat("m3.longPressSeconds", pendingLongPressSeconds));
+        pendingFocusSwipeEnabled = state.getBoolean("m3.focusSwipeEnabled", pendingFocusSwipeEnabled);
+        pendingCustomTouchWidth = state.getBoolean("m3.customTouchWidth", pendingCustomTouchWidth);
+        pendingTouchWidthDp = state.getInt("m3.touchWidth", pendingTouchWidthDp);
+        pendingTouchWidthLandscapeDp = state.getInt("m3.touchWidthLandscape", pendingTouchWidthLandscapeDp);
         pendingGeneralSeparator = state.getString("m3.general", pendingGeneralSeparator);
         pendingSideSeparator = state.getString("m3.side", pendingSideSeparator);
         ArrayList<String> packages = state.getStringArrayList("m3.packages");
@@ -1308,6 +1376,15 @@ public final class SettingsActivity extends Activity {
     }
 
     private void installSettingsListeners() {
+        if (customTouchWidthSwitch != null) {
+            customTouchWidthSwitch.setOnCheckedChangeListener((button, checked) -> {
+                pendingCustomTouchWidth = checked;
+                updateTouchWidthControls();
+                markPending();
+            });
+        }
+        installTouchWidthListener(touchWidthSeekBar, false);
+        installTouchWidthListener(touchWidthLandscapeSeekBar, true);
         if (manualWidthSwitch != null) manualWidthSwitch.setOnCheckedChangeListener((b, checked) -> {
             pendingManual = checked; updateWidthControls(); markPending();
         });
@@ -1395,6 +1472,12 @@ public final class SettingsActivity extends Activity {
                     if (independentFocusBannerSwitch != null) independentFocusBannerSwitch.setChecked(false);
                 }
                 updateExperimentalControls();
+                markPending();
+            });
+        }
+        if (focusSwipeEnabledSwitch != null) {
+            focusSwipeEnabledSwitch.setOnCheckedChangeListener((button, checked) -> {
+                pendingFocusSwipeEnabled = checked;
                 markPending();
             });
         }
@@ -1516,6 +1599,7 @@ public final class SettingsActivity extends Activity {
                 : mediaFocusCastPickerField.spinner, mediaSubEnabled);
         // 长按开关始终可用，仅时长输入依赖它自身，不随短按开关清除或置灰。
         setModeSpecificSwitchEnabled(longPressNotificationRowClickSwitch, true);
+        setModeSpecificSwitchEnabled(focusSwipeEnabledSwitch, true);
         setControlEnabled(longPressSecondsLabel, pendingLongPressNotificationRowClick);
         setControlEnabled(longPressSecondsSeekBar, pendingLongPressNotificationRowClick);
         setControlEnabled(longPressSecondsValue, pendingLongPressNotificationRowClick);
@@ -1553,10 +1637,38 @@ public final class SettingsActivity extends Activity {
                 pendingIslandTextMode == FocusRestoreSettings.ISLAND_TEXT_MODE_COMPACT ? 1 : 0);
     }
 
+    private void installTouchWidthListener(SeekBar bar, boolean landscape) {
+        if (bar == null) return;
+        bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (!fromUser) return;
+                int width = MIN_WIDTH_DP + progress;
+                if (landscape) {
+                    pendingTouchWidthLandscapeDp = width;
+                    touchWidthLandscapeValue.setText(width + " dp");
+                } else {
+                    pendingTouchWidthDp = width;
+                    touchWidthValue.setText(width + " dp");
+                }
+            }
+            public void onStartTrackingTouch(SeekBar seekBar) { }
+            public void onStopTrackingTouch(SeekBar seekBar) { markPending(); }
+        });
+    }
+
+    private void updateTouchWidthControls() {
+        setControlEnabled(touchWidthOptionsPanel, pendingCustomTouchWidth);
+        if (touchWidthSeekBar != null) touchWidthSeekBar.setEnabled(pendingCustomTouchWidth);
+        if (touchWidthLandscapeSeekBar != null) touchWidthLandscapeSeekBar.setEnabled(pendingCustomTouchWidth);
+    }
+
     private void updateWidthControls() {
         boolean enabled = pendingManual;
+        // 横竖屏显示宽度共用限制开关，关闭时都禁用编辑并保留已保存值。
         if (widthSeekBar != null) { widthSeekBar.setEnabled(enabled); widthSeekBar.setAlpha(enabled ? 1f : 0.38f); }
+        if (landscapeWidthSeekBar != null) { landscapeWidthSeekBar.setEnabled(enabled); landscapeWidthSeekBar.setAlpha(enabled ? 1f : 0.38f); }
         if (widthValueRow != null) { widthValueRow.setEnabled(enabled); widthValueRow.setAlpha(enabled ? 1f : 0.38f); }
+        if (landscapeWidthValueRow != null) { landscapeWidthValueRow.setEnabled(enabled); landscapeWidthValueRow.setAlpha(enabled ? 1f : 0.38f); }
         if (widthRangeRow != null) { widthRangeRow.setEnabled(enabled); widthRangeRow.setAlpha(enabled ? 1f : 0.38f); }
         if (widthValue != null) { widthValue.setEnabled(enabled); widthValue.setAlpha(enabled ? 1f : 0.38f); }
     }
@@ -1913,6 +2025,10 @@ public final class SettingsActivity extends Activity {
         pendingIndependentFocusBanner = settings.independentFocusBanner;
         pendingLongPressNotificationRowClick = settings.longPressNotificationRowClick;
         pendingLongPressSeconds = settings.longPressSeconds;
+        pendingFocusSwipeEnabled = settings.focusSwipeEnabled;
+        pendingCustomTouchWidth = settings.customTouchWidth;
+        pendingTouchWidthDp = settings.touchWidthDp;
+        pendingTouchWidthLandscapeDp = settings.touchWidthLandscapeDp;
         pendingGeneralSeparator = settings.islandGeneralSeparator;
         pendingSideSeparator = settings.islandSideSeparator;
         pendingForcePackages = new HashSet<>(settings.islandForcePackages);
@@ -1956,6 +2072,10 @@ public final class SettingsActivity extends Activity {
                 .independentFocusBanner(pendingIndependentFocusBanner)
                 .longPressNotificationRowClick(pendingLongPressNotificationRowClick)
                 .longPressSeconds(pendingLongPressSeconds)
+                .focusSwipeEnabled(pendingFocusSwipeEnabled)
+                .customTouchWidth(pendingCustomTouchWidth)
+                .touchWidthDp(pendingTouchWidthDp)
+                .touchWidthLandscapeDp(pendingTouchWidthLandscapeDp)
                 .islandTextMode(pendingIslandTextMode)
                 .focusMaxDisplaySeconds(pendingFocusMaxDisplaySeconds)
                 .islandGeneralSeparator(pendingGeneralSeparator)

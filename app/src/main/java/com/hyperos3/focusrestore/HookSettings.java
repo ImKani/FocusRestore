@@ -40,6 +40,10 @@ final class HookSettings {
     final boolean independentFocusBanner;
     final boolean longPressNotificationRowClick;
     final float longPressSeconds;
+    final boolean focusSwipeEnabled;
+    final boolean customTouchWidth;
+    final int touchWidthDp;
+    final int touchWidthLandscapeDp;
     final int islandTextMode;
     final float focusMaxDisplaySeconds;
     final String generalSeparator;
@@ -57,7 +61,8 @@ final class HookSettings {
                          boolean showFocusDivider, boolean showIslandIcon,
                          boolean tintIslandIcon, boolean useSmallIconFallback,
                          boolean notificationRowClickFallback, boolean independentFocusBanner,
-                          boolean longPressNotificationRowClick, float longPressSeconds,
+                          boolean longPressNotificationRowClick, float longPressSeconds, boolean focusSwipeEnabled,
+                         boolean customTouchWidth, int touchWidthDp, int touchWidthLandscapeDp,
                          int islandTextMode, float focusMaxDisplaySeconds,
                          String generalSeparator,
                          String sideSeparator, Set<String> forcePackages,
@@ -90,6 +95,12 @@ final class HookSettings {
         this.independentFocusBanner = independentFocusBanner;
         this.longPressNotificationRowClick = longPressNotificationRowClick;
         this.longPressSeconds = FocusRestoreSettings.normalizeLongPressSeconds(longPressSeconds);
+        this.focusSwipeEnabled = focusSwipeEnabled;
+        this.customTouchWidth = customTouchWidth;
+        this.touchWidthDp = clamp(touchWidthDp, FocusRestoreSettings.MIN_WIDTH_DP,
+                FocusRestoreSettings.MAX_WIDTH_DP);
+        this.touchWidthLandscapeDp = clamp(touchWidthLandscapeDp, FocusRestoreSettings.MIN_WIDTH_DP,
+                FocusRestoreSettings.MAX_LANDSCAPE_WIDTH_DP);
         this.islandTextMode = FocusRestoreSettings.normalizeIslandTextMode(islandTextMode);
         this.focusMaxDisplaySeconds =
                 FocusRestoreSettings.normalizeMaxDisplaySeconds(focusMaxDisplaySeconds);
@@ -120,7 +131,8 @@ final class HookSettings {
                 source.hideNotificationIcons, source.showFocusDivider, source.showIslandIcon,
                 source.tintIslandIcon, source.useSmallIconFallback,
                 source.notificationRowClickFallback, source.independentFocusBanner,
-                source.longPressNotificationRowClick, source.longPressSeconds,
+                source.longPressNotificationRowClick, source.longPressSeconds, source.focusSwipeEnabled,
+                source.customTouchWidth, source.touchWidthDp, source.touchWidthLandscapeDp,
                 source.islandTextMode, source.focusMaxDisplaySeconds,
                 source.islandGeneralSeparator, source.islandSideSeparator,
                 source.islandForcePackages, source.focusTimeoutExemptPackages);
@@ -183,6 +195,13 @@ final class HookSettings {
                 readBoolean(cursor, SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK, false),
                 readFloat(cursor, SettingsContract.LONG_PRESS_SECONDS,
                         FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS),
+                // 缺新列的旧 Provider 保持关闭，滑动不能从短按或长按设置推导开启。
+                readBoolean(cursor, SettingsContract.FOCUS_SWIPE_ENABLED, false),
+                // 缺少独立触控列时沿用0.32.0实际边界，不能从显示宽度推导开启。
+                readBoolean(cursor, SettingsContract.CUSTOM_TOUCH_WIDTH, false),
+                readInt(cursor, SettingsContract.TOUCH_WIDTH_DP, FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_DP),
+                readInt(cursor, SettingsContract.TOUCH_WIDTH_LANDSCAPE_DP,
+                        FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP),
                 readInt(cursor, SettingsContract.ISLAND_TEXT_MODE,
                         FocusRestoreSettings.DEFAULT_ISLAND_TEXT_MODE),
                 focusMaxDisplaySeconds,
@@ -210,6 +229,9 @@ final class HookSettings {
                 + " independentFocusBanner=" + independentFocusBanner
                 + " longPressNotificationRowClick=" + longPressNotificationRowClick
                 + " longPressSeconds=" + longPressSeconds
+                + " focusSwipeEnabled=" + focusSwipeEnabled
+                + " customTouchWidth=" + customTouchWidth
+                + " touchWidthDp=" + touchWidthDp + " touchWidthLandscapeDp=" + touchWidthLandscapeDp
                 + " mediaFocusCastPicker=" + mediaFocusCastPicker
                 + " mediaFocusCastDirect=" + mediaFocusCastDirect
                 + " islandTextMode=" + islandTextMode

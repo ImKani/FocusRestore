@@ -43,22 +43,26 @@ final class SettingsContract {
     static final int NOTIFICATION_ROW_CLICK_FALLBACK = 22;
     static final int LONG_PRESS_NOTIFICATION_ROW_CLICK = 23;
     static final int LONG_PRESS_SECONDS = 24;
+    static final int FOCUS_SWIPE_ENABLED = 25;
+    static final int CUSTOM_TOUCH_WIDTH = 26;
+    static final int TOUCH_WIDTH_DP = 27;
+    static final int TOUCH_WIDTH_LANDSCAPE_DP = 28;
 
     // 最大显示时间与独立豁免名单。
-    static final int FOCUS_MAX_DISPLAY_SECONDS = 25;
-    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 26;
+    static final int FOCUS_MAX_DISPLAY_SECONDS = 29;
+    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 30;
 
     // 媒体焦点与流转。
-    static final int MEDIA_FOCUS_ENABLED = 27;
-    static final int MEDIA_FOCUS_NATIVE_BANNER = 28;
-    static final int MEDIA_FOCUS_CAST_PICKER = 29;
-    static final int MEDIA_FOCUS_CAST_DIRECT = 30;
+    static final int MEDIA_FOCUS_ENABLED = 31;
+    static final int MEDIA_FOCUS_NATIVE_BANNER = 32;
+    static final int MEDIA_FOCUS_CAST_PICKER = 33;
+    static final int MEDIA_FOCUS_CAST_DIRECT = 34;
 
     // 历史字段仍响应旧 projection；废弃功能不恢复，旧分隔符只供缺列回退。
-    static final int LEGACY_ISLAND_SEPARATOR = 31;
-    static final int EXPAND_ISLAND_ON_CLICK = 32;
-    static final int NOTIFICATION_ICON_HIDE_MODE = 33;
-    static final int ISLAND_CUSTOM_RULES = 34;
+    static final int LEGACY_ISLAND_SEPARATOR = 35;
+    static final int EXPAND_ISLAND_ON_CLICK = 36;
+    static final int NOTIFICATION_ICON_HIDE_MODE = 37;
+    static final int ISLAND_CUSTOM_RULES = 38;
 
     static final String[] COLUMNS = {
             "hook_mode", "compat_retry", "disable_island_property", "disable_island_feature_cache",
@@ -69,6 +73,8 @@ final class SettingsContract {
             "use_small_icon_fallback",
             "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
             "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
+            "focus_swipe_enabled",
+            "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
             "focus_max_display_seconds", "focus_timeout_exempt_packages",
             "media_focus_enabled", "media_focus_native_banner", "media_focus_cast_picker", "media_focus_cast_direct",
             "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules"
@@ -120,6 +126,10 @@ final class SettingsContract {
         row[NOTIFICATION_ROW_CLICK_FALLBACK] = settings.notificationRowClickFallback ? 1 : 0;
         row[LONG_PRESS_NOTIFICATION_ROW_CLICK] = settings.longPressNotificationRowClick ? 1 : 0;
         row[LONG_PRESS_SECONDS] = settings.longPressSeconds;
+        row[FOCUS_SWIPE_ENABLED] = settings.focusSwipeEnabled ? 1 : 0;
+        row[CUSTOM_TOUCH_WIDTH] = settings.customTouchWidth ? 1 : 0;
+        row[TOUCH_WIDTH_DP] = settings.touchWidthDp;
+        row[TOUCH_WIDTH_LANDSCAPE_DP] = settings.touchWidthLandscapeDp;
 
         row[FOCUS_MAX_DISPLAY_SECONDS] = settings.focusMaxDisplaySeconds;
         row[FOCUS_TIMEOUT_EXEMPT_PACKAGES] = joinPackages(settings.focusTimeoutExemptPackages);
