@@ -6,9 +6,7 @@
  */
 
 /*
- * 原始项目：https://github.com/ImKani/FocusRestore
- * 外部事实来源：HyperOS/SystemUI 的 notification_item_bg 与 notification_focus_item_bg 资源；具体版本和分析记录见 Notes。
- * 说明：本文件为 FocusRestore 独立实现，不复制或重新授权 SystemUI 代码。
+ * 资源来源：HyperOS/SystemUI 的 notification_item_bg 与 notification_focus_item_bg；具体版本和分析记录见 Notes。
  */
 
 package com.hyperos3.focusrestore;

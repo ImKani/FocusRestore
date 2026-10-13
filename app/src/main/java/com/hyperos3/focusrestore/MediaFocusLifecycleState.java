@@ -10,7 +10,7 @@ package com.hyperos3.focusrestore;
  * 媒体焦点展示时机：首次/切换仅播放中加入，同 key 暂停保留，原生 top 为空则清除。
  * 接口事实来源：用户本地 MT MCP 的 OS4 SystemUI 17.03.260226.r / 202602260，
  * MiuiIslandMediaControllerImpl.addDynamicIslandView 与 mediaDataChangeListener。
- * 原生作者/许可证未确认；仅依据状态转换独立实现，未复制 ROM 代码。
+ * 上述 ROM 接口的具体版权所有者及私有协议许可未确认。
  */
 final class MediaFocusLifecycleState {
     private String selectedKey;

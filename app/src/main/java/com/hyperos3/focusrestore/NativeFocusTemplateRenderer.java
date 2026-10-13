@@ -6,13 +6,11 @@
  */
 
 /*
- * 原始项目：https://github.com/ImKani/FocusRestore
- * 外部事实来源：miui.systemui.plugin TemplateFactoryV3/TemplateBuilderV3 私有接口；分析版本和证据见 Notes/analysis。
+ * 接口来源：miui.systemui.plugin TemplateFactoryV3/TemplateBuilderV3；分析版本和证据见 Notes/analysis。
  * 旧协议接口来源：MT 只读验证 OS3 17.1.4.71.0（9pip4krs）与 OS4 18.2.2.2.0（z1xngmhd），
  * 小米 HyperOS 插件 FocusTemplate.wrapNotification / TemplateRevert.buildNormalViews；
- * 具体作者/版权所有者及私有协议许可未确认。
- * 本项目独立构造 TemplateRevert 与 Content，不复制 ROM 实现，不调用有超时副作用的 wrap。
- * 说明：本文件为 FocusRestore 独立实现，不复制或重新授权 SystemUI/plugin 代码。
+ * 上述 ROM 接口的具体版权所有者及私有协议许可未确认。
+ * 模块自行构造 TemplateRevert 与 Content，避免调用有超时副作用的 wrap。
  */
 
 package com.hyperos3.focusrestore;
@@ -198,13 +196,12 @@ final class NativeFocusTemplateRenderer {
                         synchronized (lock) {
                             if (!installation.connected) return;
                             Long removedAt = removedKeys.get(stamp.key);
-                            if (removedAt != null && stamp.postTime <= removedAt) return;
+                            if (NativeFocusRemovalPolicy.rejects(removedAt, stamp.postTime)) return;
                             Source previous = sources.get(stamp.key);
                             if (previous != null && previous.stamp.postTime > stamp.postTime) return;
                             // 同一通知代已有 V3 时保留原通路，旧模板仅补没有 V3 来源的情况。
                             if (previous != null && !previous.legacy
                                     && previous.stamp.identity.matches(stamp.identity)) return;
-                            removedKeys.remove(stamp.key);
                             pruneSources();
                             sources.put(stamp.key, new Source(installation, (Context) param.args[0], stamp,
                                     templateClass));
@@ -311,22 +308,30 @@ final class NativeFocusTemplateRenderer {
         notifySourceChanged();
     }
 
-    void onNotificationRemoved(String key) {
+    void onNotificationRemoved(String key, StatusBarNotification removedNotification) {
         if (key == null) return;
+        if (removedNotification == null || !key.equals(removedNotification.getKey())) {
+            report("native removal missing notification identity key=" + key, null);
+            return;
+        }
+        long removedPostTime = removedNotification.getPostTime();
         boolean hadSource;
         boolean firstRemoval;
         synchronized (lock) {
-            hadSource = sources.remove(key) != null;
-            // Reject a late coroutine completing an old post after its notification was removed.
+            Source source = sources.get(key);
+            hadSource = source != null && source.stamp.postTime <= removedPostTime;
+            if (hadSource) sources.remove(key);
+            // 系统取消后可在旧删除事件分发前重发同 key；回调时间会误杀新代次。
+            // 重复删除保留最高已删除代次，较新的缓存不受旧事件影响。
             firstRemoval = !removedKeys.containsKey(key);
-            removedKeys.put(key, System.currentTimeMillis());
+            removedKeys.put(key, NativeFocusRemovalPolicy.latest(removedKeys.get(key), removedPostTime));
             trim(removedKeys, MAX_SOURCES);
         }
         // A key without a cached template is often removed many times in one burst; logging every
         // repeat would bury the interesting lines without adding information.
         if (hadSource || firstRemoval) {
             debug("native source dropped key=" + key + " hadCachedTemplate=" + hadSource
-                    + " firstRemoval=" + firstRemoval + " removedKeys=" + removedKeys.size());
+                    + " firstRemoval=" + firstRemoval + " removedPostTime=" + removedPostTime);
         }
     }
 
@@ -367,9 +372,9 @@ final class NativeFocusTemplateRenderer {
         synchronized (lock) {
             pruneSources();
             Long removedAt = removedKeys.get(key);
-            if (removedAt != null && requested.postTime <= removedAt) {
+            if (NativeFocusRemovalPolicy.rejects(removedAt, requested.postTime)) {
                 throw unavailable("notification was removed; refusing a late native source"
-                        + " (postTime=" + requested.postTime + " removedAt=" + removedAt + ")");
+                        + " (postTime=" + requested.postTime + " removedPostTime=" + removedAt + ")");
             }
             source = sources.get(key);
         }
@@ -536,9 +541,9 @@ final class NativeFocusTemplateRenderer {
                 return;
             }
             Long removedAt = removedKeys.get(stamp.key);
-            if (removedAt != null && stamp.postTime <= removedAt) {
+            if (NativeFocusRemovalPolicy.rejects(removedAt, stamp.postTime)) {
                 debug("native source ignored key=" + stamp.key + " postTime=" + stamp.postTime
-                        + " reason=posted-before-removal removedAt=" + removedAt);
+                        + " reason=removed-generation removedPostTime=" + removedAt);
                 return;
             }
             Source previous = sources.get(stamp.key);
@@ -549,7 +554,6 @@ final class NativeFocusTemplateRenderer {
                 return;
             }
             firstReady = previous == null || previous.installation != installation;
-            removedKeys.remove(stamp.key);
             pruneSources();
             sources.put(stamp.key, new Source(installation, factory, template, stamp, isFlip));
             trim(sources, MAX_SOURCES);

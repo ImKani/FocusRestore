@@ -14,7 +14,7 @@ import java.util.Objects;
  * 单槽 Focus 的隐藏队列；null 是原生 Empty 的收起位置，不是已删除通知。
  * 接口事实来源：小米 miui.systemui.plugin 17.1.4.71.0 / 18.2.2.2.0，
  * SwipeEventCoordinator.handleAppEvent、Hidden/BigIslandStateHandler，用户只读 APK MCP
- * http://192.168.31.21:8787/mcp；私有协议许可未确认。独立实现队列，不复制 ROM 实现。
+ * http://192.168.31.21:8787/mcp；私有协议许可未确认。
  */
 final class FocusSwipeSelection {
     private final List<String> keys = new ArrayList<>();

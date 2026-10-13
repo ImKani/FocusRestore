@@ -642,7 +642,7 @@ final class HyperOS4FocusController {
                     "com.android.systemui.Dependency");
             // 小米 SystemUI 17.03.260226.r 移除了静态 get(Class)，改用相同缓存的实例入口。
             // 用户只读 APK MCP http://192.168.31.21:8787/mcp：Dependency.sDependency /
-            // getDependencyInner(Object)，私有接口许可未确认；仅依据接口事实独立适配。
+            // getDependencyInner(Object)，私有接口许可未确认。
             if (FocusReflection.hasMethod(dependencyClass, "get", Class.class)) {
                 Method getter = dependencyClass.getDeclaredMethod("get", Class.class);
                 getter.setAccessible(true);

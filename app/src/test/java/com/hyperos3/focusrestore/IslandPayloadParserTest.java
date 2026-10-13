@@ -348,6 +348,28 @@ public class IslandPayloadParserTest {
         assertNull(IslandPayloadParser.findPictureReference("{invalid", false));
     }
 
+    @Test public void islandOverrideExcludesTickerAndBannerPictures() {
+        String payload = "{\"param_v2\":{\"tickerPic\":\"miui.focus.pic_ticker\","
+                + "\"pic\":\"miui.focus.pic_background\",\"bannerPicInfo\":{"
+                + "\"pic\":\"miui.focus.pic_banner\"},\"hintInfo\":{"
+                + "\"pic\":\"miui.focus.pic_hint\"}}}";
+        assertNull(IslandPayloadParser.findIslandPictureReference(payload, false));
+        assertNull(IslandPayloadParser.findIslandPictureReference(payload, true));
+        assertEquals("miui.focus.pic_ticker", IslandPayloadParser.findTickerPictureReference(payload, false));
+    }
+
+    @Test public void islandOverrideKeepsKnownIconNodesAndTheirDarkFallback() {
+        String payload = "{\"param_v2\":{\"baseInfo\":{\"pic\":\"miui.focus.pic_app\"},"
+                + "\"param_island\":{\"smallIslandArea\":{\"picInfo\":{"
+                + "\"pic\":\"miui.focus.pic_island\",\"picDark\":\"miui.focus.pic_island_dark\"}}}}}";
+        assertEquals("miui.focus.pic_island", IslandPayloadParser.findIslandPictureReference(payload, false));
+        assertEquals("miui.focus.pic_island_dark", IslandPayloadParser.findIslandPictureReference(payload, true));
+        String lightOnly = "{\"param_v2\":{\"animTextInfo\":{\"animIconInfo\":{"
+                + "\"src\":\"miui.focus.pic_animation\"}}}}";
+        assertEquals("miui.focus.pic_animation", IslandPayloadParser.findIslandPictureReference(lightOnly, true));
+        assertNull(IslandPayloadParser.findIslandPictureReference("{invalid", false));
+    }
+
     private static String repeat(char value, int count) {
         StringBuilder result = new StringBuilder(count);
         for (int index = 0; index < count; index++) result.append(value);

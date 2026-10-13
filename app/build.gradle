@@ -5,7 +5,6 @@
  * Source: https://github.com/ImKani/FocusRestore
  */
 
-// SPDX-License-Identifier: GPL-3.0-only; Copyright (C) ImKani; FocusRestore: https://github.com/ImKani/FocusRestore
 plugins { id 'com.android.application' }
 
 android {
@@ -20,13 +19,13 @@ android {
         applicationId 'com.hyperos3.focusrestore'
         minSdk 27
         targetSdk 35
-        versionCode 271
-        versionName '0.33.1'
+        versionCode 274
+        versionName '0.34.1'
     }
 
     signingConfigs {
         preservedDebug {
-            // Keep the certificate used by the existing published test APKs.
+            // ImKani 各版本沿用同一固定证书，Debug 与 Release 可覆盖升级并保留配置。
             storeFile file('../.android/debug.keystore')
             storePassword 'android'
             keyAlias 'androiddebugkey'
@@ -39,7 +38,7 @@ android {
             signingConfig signingConfigs.preservedDebug
         }
         release {
-            // Sign local release test builds so ADB can install them.
+            // Release 与 Debug 使用相同签名。
             signingConfig signingConfigs.preservedDebug
         }
     }

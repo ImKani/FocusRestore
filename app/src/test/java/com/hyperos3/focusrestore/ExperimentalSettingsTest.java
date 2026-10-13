@@ -25,6 +25,68 @@ import static org.junit.Assert.assertTrue;
 
 public class ExperimentalSettingsTest {
     @Test
+    public void iconChoicesAndIndependentTintRoundTripWithoutChangingPriority() throws Exception {
+        assertEquals(0, FocusRestoreSettings.defaults().focusIconPriority);
+        assertFalse(FocusRestoreSettings.defaults().showIslandIcon);
+        assertTrue(FocusRestoreSettings.defaults().tintDeviceIcon);
+        for (int priority = 0; priority < 3; priority++) {
+            for (int mask = 0; mask < 8; mask++) {
+                FocusRestoreSettings settings = FocusRestoreSettings.edit().focusIconPriority(priority)
+                        .showIslandIcon((mask & 1) != 0).tintIslandIcon((mask & 2) != 0)
+                        .tintDeviceIcon((mask & 4) != 0).build();
+                Map<String, Object> values = new HashMap<>();
+                SharedPreferences store = memoryPreferences(values);
+                assertTrue(settings.save(store));
+                for (FocusRestoreSettings copy : new FocusRestoreSettings[]{
+                        FocusRestoreSettings.edit(settings).build(), FocusRestoreSettings.fromPreferences(store),
+                        SettingsBackupCodec.decode(SettingsBackupCodec.encode(settings))}) {
+                    assertEquals(priority, copy.focusIconPriority);
+                    assertEquals(priority == 2, copy.useSmallIconFallback);
+                    assertEquals(settings.showIslandIcon, copy.showIslandIcon);
+                    assertEquals(settings.tintIslandIcon, copy.tintIslandIcon);
+                    assertEquals(settings.tintDeviceIcon, copy.tintDeviceIcon);
+                    HookSettings hook = HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                            SettingsContract.COLUMNS, SettingsContract.toRow(copy, "")));
+                    assertEquals(priority, hook.focusIconPriority);
+                    assertEquals(settings.tintDeviceIcon, hook.tintDeviceIcon);
+                }
+                assertEquals(priority, FocusRestoreSettings.edit(settings)
+                        .showIslandIcon(!settings.showIslandIcon).build().focusIconPriority);
+            }
+        }
+    }
+
+    @Test
+    public void missingPriorityMigratesLegacyFlagsOnceAndExplicitPriorityWins() {
+        for (boolean small : new boolean[]{false, true}) {
+            for (boolean island : new boolean[]{false, true}) {
+                Map<String, Object> values = legacyPreferences();
+                values.put("use_small_icon_fallback", small);
+                values.put("show_island_icon", island);
+                SharedPreferences store = memoryPreferences(values);
+                int expected = small ? 2 : island ? 1 : 0;
+                FocusRestoreSettings migrated = FocusRestoreSettings.fromPreferences(store);
+                assertEquals(expected, migrated.focusIconPriority);
+                assertTrue(migrated.tintDeviceIcon);
+                HookSettings hook = HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                        SettingsContractTest.LEGACY_COLUMNS, SettingsContract.toRow(migrated, "",
+                                SettingsContractTest.LEGACY_COLUMNS)));
+                assertEquals(expected, hook.focusIconPriority);
+                assertTrue(hook.tintDeviceIcon);
+                assertTrue(FocusRestoreSettings.edit(migrated).focusIconPriority(0).build().save(store));
+                values.put("show_island_icon", true);
+                values.put("use_small_icon_fallback", true);
+                assertEquals(0, FocusRestoreSettings.fromPreferences(store).focusIconPriority);
+            }
+        }
+        assertEquals(0, FocusRestoreSettings.edit().focusIconPriority(-1).build().focusIconPriority);
+        assertEquals(0, FocusRestoreSettings.edit().focusIconPriority(3).build().focusIconPriority);
+        assertArrayEquals(new int[]{0, 1, 2}, FocusIconPriority.order(0));
+        assertArrayEquals(new int[]{1, 0, 2}, FocusIconPriority.order(1));
+        assertArrayEquals(new int[]{2, 0, 1}, FocusIconPriority.order(2));
+    }
+
+    @Test
     public void customTouchWidthIsOptionalAndIndependentAcrossStoresProviderAndBackup() throws Exception {
         FocusRestoreSettings defaults = FocusRestoreSettings.defaults();
         assertFalse(defaults.customTouchWidth);

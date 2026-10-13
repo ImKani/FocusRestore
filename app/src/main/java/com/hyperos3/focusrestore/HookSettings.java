@@ -36,6 +36,8 @@ final class HookSettings {
     final boolean showIslandIcon;
     final boolean tintIslandIcon;
     final boolean useSmallIconFallback;
+    final int focusIconPriority;
+    final boolean tintDeviceIcon;
     final boolean notificationRowClickFallback;
     final boolean independentFocusBanner;
     final boolean longPressNotificationRowClick;
@@ -60,6 +62,7 @@ final class HookSettings {
                          boolean allowFocusClick, boolean hideNotificationIcons,
                          boolean showFocusDivider, boolean showIslandIcon,
                          boolean tintIslandIcon, boolean useSmallIconFallback,
+                         int focusIconPriority, boolean tintDeviceIcon,
                          boolean notificationRowClickFallback, boolean independentFocusBanner,
                           boolean longPressNotificationRowClick, float longPressSeconds, boolean focusSwipeEnabled,
                          boolean customTouchWidth, int touchWidthDp, int touchWidthLandscapeDp,
@@ -91,6 +94,8 @@ final class HookSettings {
         this.showIslandIcon = showIslandIcon;
         this.tintIslandIcon = tintIslandIcon;
         this.useSmallIconFallback = useSmallIconFallback;
+        this.focusIconPriority = FocusRestoreSettings.normalizeIconPriority(focusIconPriority);
+        this.tintDeviceIcon = tintDeviceIcon;
         this.notificationRowClickFallback = notificationRowClickFallback;
         this.independentFocusBanner = independentFocusBanner;
         this.longPressNotificationRowClick = longPressNotificationRowClick;
@@ -130,6 +135,7 @@ final class HookSettings {
                 source.disableIslandFeatureCache, source.allowFocusClick,
                 source.hideNotificationIcons, source.showFocusDivider, source.showIslandIcon,
                 source.tintIslandIcon, source.useSmallIconFallback,
+                source.focusIconPriority, source.tintDeviceIcon,
                 source.notificationRowClickFallback, source.independentFocusBanner,
                 source.longPressNotificationRowClick, source.longPressSeconds, source.focusSwipeEnabled,
                 source.customTouchWidth, source.touchWidthDp, source.touchWidthLandscapeDp,
@@ -187,6 +193,12 @@ final class HookSettings {
                         FocusRestoreSettings.DEFAULT_TINT_ISLAND_ICON),
                 readBoolean(cursor, SettingsContract.USE_SMALL_ICON_FALLBACK,
                         FocusRestoreSettings.DEFAULT_USE_SMALL_ICON_FALLBACK),
+                readInt(cursor, SettingsContract.FOCUS_ICON_PRIORITY,
+                        FocusRestoreSettings.legacyIconPriority(
+                                readBoolean(cursor, SettingsContract.USE_SMALL_ICON_FALLBACK, false),
+                                readBoolean(cursor, SettingsContract.SHOW_ISLAND_ICON, false))),
+                readBoolean(cursor, SettingsContract.TINT_DEVICE_ICON,
+                        FocusRestoreSettings.DEFAULT_TINT_DEVICE_ICON),
                 readBoolean(cursor, SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK,
                         FocusRestoreSettings.DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK),
                 readBoolean(cursor, SettingsContract.INDEPENDENT_FOCUS_BANNER,
@@ -224,6 +236,7 @@ final class HookSettings {
                 + " showIslandIcon=" + showIslandIcon
                 + " tintIslandIcon=" + tintIslandIcon
                 + " expandIslandOnClick=false(deprecated)"
+                + " focusIconPriority=" + focusIconPriority + " tintDeviceIcon=" + tintDeviceIcon
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
                 + " independentFocusBanner=" + independentFocusBanner

@@ -49,6 +49,8 @@ public final class FocusRestoreSettings {
     public static final String KEY_SHOW_ISLAND_ICON = "show_island_icon";
     public static final String KEY_TINT_ISLAND_ICON = "tint_island_icon";
     public static final String KEY_EXPAND_ISLAND_ON_CLICK = "expand_island_on_click";
+    public static final String KEY_FOCUS_ICON_PRIORITY = "focus_icon_priority";
+    public static final String KEY_TINT_DEVICE_ICON = "tint_device_icon";
     public static final String KEY_USE_SMALL_ICON_FALLBACK = "use_small_icon_fallback";
     public static final String KEY_NOTIFICATION_ROW_CLICK_FALLBACK = "notification_row_click_fallback";
     public static final String KEY_INDEPENDENT_FOCUS_BANNER = "independent_focus_banner";
@@ -93,6 +95,11 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_SHOW_FOCUS_DIVIDER = true;
     public static final boolean DEFAULT_SHOW_ISLAND_ICON = false;
     public static final boolean DEFAULT_TINT_ISLAND_ICON = true;
+    public static final int ICON_APP_FIRST = 0;
+    public static final int ICON_FOCUS_FIRST = 1;
+    public static final int ICON_SMALL_FIRST = 2;
+    public static final int DEFAULT_FOCUS_ICON_PRIORITY = ICON_APP_FIRST;
+    public static final boolean DEFAULT_TINT_DEVICE_ICON = true;
     public static final boolean DEFAULT_USE_SMALL_ICON_FALLBACK = false;
     public static final boolean DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK = false;
     public static final boolean DEFAULT_INDEPENDENT_FOCUS_BANNER = false;
@@ -133,6 +140,8 @@ public final class FocusRestoreSettings {
     public final boolean showFocusDivider;
     public final boolean showIslandIcon;
     public final boolean tintIslandIcon;
+    public final int focusIconPriority;
+    public final boolean tintDeviceIcon;
     public final boolean useSmallIconFallback;
     public final boolean notificationRowClickFallback;
     public final boolean independentFocusBanner;
@@ -172,7 +181,12 @@ public final class FocusRestoreSettings {
         this.showFocusDivider = editor.showFocusDivider;
         this.showIslandIcon = editor.showIslandIcon;
         this.tintIslandIcon = editor.tintIslandIcon;
-        this.useSmallIconFallback = editor.useSmallIconFallback;
+        // 旧偏好仅在缺新键时迁移；保存后新顺序成为唯一决策，旧布尔供旧 Hook 读取。
+        this.focusIconPriority = editor.focusIconPriority == null
+                ? legacyIconPriority(editor.useSmallIconFallback, editor.showIslandIcon)
+                : normalizeIconPriority(editor.focusIconPriority);
+        this.tintDeviceIcon = editor.tintDeviceIcon;
+        this.useSmallIconFallback = this.focusIconPriority == ICON_SMALL_FIRST;
         this.notificationRowClickFallback = editor.notificationRowClickFallback;
         this.independentFocusBanner = editor.independentFocusBanner;
         this.longPressNotificationRowClick = editor.longPressNotificationRowClick;
@@ -218,6 +232,8 @@ public final class FocusRestoreSettings {
         private boolean showFocusDivider = DEFAULT_SHOW_FOCUS_DIVIDER;
         private boolean showIslandIcon = DEFAULT_SHOW_ISLAND_ICON;
         private boolean tintIslandIcon = DEFAULT_TINT_ISLAND_ICON;
+        private Integer focusIconPriority;
+        private boolean tintDeviceIcon = DEFAULT_TINT_DEVICE_ICON;
         private boolean useSmallIconFallback = DEFAULT_USE_SMALL_ICON_FALLBACK;
         private boolean notificationRowClickFallback = DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK;
         private boolean independentFocusBanner = DEFAULT_INDEPENDENT_FOCUS_BANNER;
@@ -258,6 +274,8 @@ public final class FocusRestoreSettings {
             this.showFocusDivider = source.showFocusDivider;
             this.showIslandIcon = source.showIslandIcon;
             this.tintIslandIcon = source.tintIslandIcon;
+            this.focusIconPriority = source.focusIconPriority;
+            this.tintDeviceIcon = source.tintDeviceIcon;
             this.useSmallIconFallback = source.useSmallIconFallback;
             this.notificationRowClickFallback = source.notificationRowClickFallback;
             this.independentFocusBanner = source.independentFocusBanner;
@@ -301,6 +319,8 @@ public final class FocusRestoreSettings {
         public Editor showFocusDivider(boolean value) { this.showFocusDivider = value; return this; }
         public Editor showIslandIcon(boolean value) { this.showIslandIcon = value; return this; }
         public Editor tintIslandIcon(boolean value) { this.tintIslandIcon = value; return this; }
+        public Editor focusIconPriority(int value) { this.focusIconPriority = value; return this; }
+        public Editor tintDeviceIcon(boolean value) { this.tintDeviceIcon = value; return this; }
         public Editor useSmallIconFallback(boolean value) {
             this.useSmallIconFallback = value; return this;
         }
@@ -405,6 +425,10 @@ public final class FocusRestoreSettings {
                         DEFAULT_TINT_ISLAND_ICON))
                 .useSmallIconFallback(preferences.getBoolean(KEY_USE_SMALL_ICON_FALLBACK,
                         DEFAULT_USE_SMALL_ICON_FALLBACK))
+                .focusIconPriority(preferences.getInt(KEY_FOCUS_ICON_PRIORITY,
+                        legacyIconPriority(preferences.getBoolean(KEY_USE_SMALL_ICON_FALLBACK, false),
+                                preferences.getBoolean(KEY_SHOW_ISLAND_ICON, false))))
+                .tintDeviceIcon(preferences.getBoolean(KEY_TINT_DEVICE_ICON, DEFAULT_TINT_DEVICE_ICON))
                 .notificationRowClickFallback(preferences.getBoolean(
                         KEY_NOTIFICATION_ROW_CLICK_FALLBACK,
                         DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK))
@@ -445,6 +469,7 @@ public final class FocusRestoreSettings {
                 + " showIslandIcon=" + showIslandIcon
                 + " tintIslandIcon=" + tintIslandIcon
                 + " expandIslandOnClick=false(deprecated)"
+                + " focusIconPriority=" + focusIconPriority + " tintDeviceIcon=" + tintDeviceIcon
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
                 + " independentFocusBanner=" + independentFocusBanner
@@ -490,6 +515,8 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_SHOW_ISLAND_ICON, showIslandIcon)
                 .putBoolean(KEY_TINT_ISLAND_ICON, tintIslandIcon)
                 .putBoolean(KEY_EXPAND_ISLAND_ON_CLICK, false)
+                .putInt(KEY_FOCUS_ICON_PRIORITY, focusIconPriority)
+                .putBoolean(KEY_TINT_DEVICE_ICON, tintDeviceIcon)
                 .putBoolean(KEY_USE_SMALL_ICON_FALLBACK, useSmallIconFallback)
                 .putBoolean(KEY_NOTIFICATION_ROW_CLICK_FALLBACK, notificationRowClickFallback)
                 .putBoolean(KEY_INDEPENDENT_FOCUS_BANNER, independentFocusBanner)
@@ -618,5 +645,12 @@ public final class FocusRestoreSettings {
 
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+    public static int normalizeIconPriority(int value) {
+        return value >= ICON_APP_FIRST && value <= ICON_SMALL_FIRST ? value : ICON_APP_FIRST;
+    }
+
+    static int legacyIconPriority(boolean small, boolean island) {
+        return small ? ICON_SMALL_FIRST : island ? ICON_FOCUS_FIRST : ICON_APP_FIRST;
     }
 }

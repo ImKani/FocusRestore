@@ -213,6 +213,32 @@ final class IslandPayloadParser {
         }
     }
 
+    /** 优先图标仅取岛区域及已知图标节点，不能把横幅背景或任意根图片当应用图标。 */
+    static String findIslandPictureReference(String payload, boolean dark) {
+        if (!InputLimits.isPayloadAllowed(payload) || payload.trim().length() == 0) return null;
+        try {
+            JSONObject v2 = container(new JSONObject(payload));
+            String result = findIslandIconNode(v2, dark);
+            return result == null && dark ? findIslandIconNode(v2, false) : result;
+        } catch (Throwable ignored) { return null; }
+    }
+
+    private static String findIslandIconNode(JSONObject v2, boolean dark) {
+        JSONObject island = firstObject(v2, "param_island", "paramIsland");
+        if (island != null) {
+            String result = findPictureInNode(island.opt("smallIslandArea"), dark, 0, false);
+            if (result != null) return result;
+            result = findPictureInNode(island.opt("bigIslandArea"), dark, 0, false);
+            if (result != null) return result;
+        }
+        for (String key : new String[]{"baseInfo", "highlightInfo", "highlightInfoV3",
+                "chatInfo", "iconTextInfo", "animTextInfo"}) {
+            String result = findPictureInNode(v2.opt(key), dark, 0, false);
+            if (result != null) return result;
+        }
+        return null;
+    }
+
     private static String findKnownPictureReference(JSONObject v2, boolean dark) {
         JSONObject island = firstObject(v2, "param_island", "paramIsland");
         if (island != null) {
@@ -285,7 +311,7 @@ final class IslandPayloadParser {
 
     private static String cleanPictureReference(Object value) {
         // 来源：用户 0.29.2 设备日志中的出行载荷与 miui.focus.pics 键；协议所有者、
-        // 版本及许可未确认。本项目独立按键精确读取，不复制外部实现。
+        // 版本及许可未确认。
         // Bundle 引用是键名，不是 drawable 名；island_pic_small 也属于有效的精确引用。
         // 仅接受标识符字符串，避免把 URL、对象或空值当成图标；资源名兜底仍单独限制前缀。
         if (!(value instanceof String)) return null;

@@ -182,7 +182,9 @@ public final class SettingsActivity extends Activity {
     private Switch showFocusDividerSwitch;
     private Switch showIslandIconSwitch;
     private Switch tintIslandIconSwitch;
-    private Switch useSmallIconFallbackSwitch;
+    private SpinnerField focusIconPriorityField;
+    private TextView focusIconOrderText;
+    private Switch tintDeviceIconSwitch;
     private Switch notificationRowClickFallbackSwitch;
     private Switch independentFocusBannerSwitch;
     private Switch longPressNotificationRowClickSwitch;
@@ -218,6 +220,8 @@ public final class SettingsActivity extends Activity {
             pendingTintIslandIcon, pendingUseSmallIconFallback,
             pendingNotificationRowClickFallback, pendingIndependentFocusBanner,
             pendingLongPressNotificationRowClick, pendingFocusSwipeEnabled, pendingCustomTouchWidth;
+    private int pendingFocusIconPriority;
+    private boolean pendingTintDeviceIcon;
     private int pendingTouchWidthDp, pendingTouchWidthLandscapeDp;
     private float pendingLongPressSeconds;
     private int pendingHookMode, pendingWidthDp, pendingDelayMs, pendingIslandTextMode;
@@ -503,7 +507,9 @@ public final class SettingsActivity extends Activity {
         showFocusDividerSwitch = null;
         showIslandIconSwitch = null;
         tintIslandIconSwitch = null;
-        useSmallIconFallbackSwitch = null;
+        focusIconPriorityField = null;
+        focusIconOrderText = null;
+        tintDeviceIconSwitch = null;
         notificationRowClickFallbackSwitch = null;
         independentFocusBannerSwitch = null;
         longPressNotificationRowClickSwitch = null;
@@ -696,18 +702,36 @@ public final class SettingsActivity extends Activity {
     }
 
     private void buildAdvancedPage(LinearLayout root) {
-        root.addView(sectionHeader("实验性图标"), matchWrap(dp(8)));
+        root.addView(sectionHeader("焦点图标"), matchWrap(dp(8)));
         LinearLayout iconPanel = panel();
-        showIslandIconSwitch = createSwitch("显示超级岛图标（实验性）");
-        tintIslandIconSwitch = createSwitch("图标跟随状态栏反色（实验性）");
-        useSmallIconFallbackSwitch = createSwitch("优先使用通知 smallIcon 兜底（实验性）");
+        iconPanel.addView(text("焦点图标优先级", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        focusIconPriorityField = choiceSpinner(new String[]{"应用图标优先", "焦点专用图标优先", "通知小图标优先"},
+                pendingFocusIconPriority, position -> {
+                    pendingFocusIconPriority = position;
+                    pendingUseSmallIconFallback = position == FocusRestoreSettings.ICON_SMALL_FIRST;
+                    updateFocusIconOrder();
+                    markPending();
+                });
+        iconPanel.addView(focusIconPriorityField.spinner, matchWrap(dp(4)));
+        focusIconOrderText = text("", 13, COLOR_TEXT_SECONDARY);
+        updateFocusIconOrder();
+        iconPanel.addView(focusIconOrderText, matchWrap(dp(8)));
+        iconPanel.addView(text("通知小图标（smallIcon）依赖应用自行适配。国内不少应用未提供适合状态栏的单色透明图标，反色后可能显示为大白块；遇到这种情况，建议选择应用图标或焦点专用图标优先。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        showIslandIconSwitch = createSwitch("优先使用超级岛解析图标");
+        tintIslandIconSwitch = createSwitch("超级岛解析图标与通知小图标跟随状态栏反色");
         iconPanel.addView(showIslandIconSwitch, matchWrap(dp(4)));
         iconPanel.addView(tintIslandIconSwitch, matchWrap(dp(4)));
-        iconPanel.addView(useSmallIconFallbackSwitch, matchWrap(0));
-        iconPanel.addView(text(
-                "实验性图标路径依赖 ROM 通知资源，可能显示异常或影响焦点图标；不建议启用。",
+        iconPanel.addView(text("超级岛图标可用时优先显示；其余按所选顺序回退。应用图标保留原色，焦点专用图标使用通知提供的浅深版本。设备通知使用独立图标。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         root.addView(iconPanel, matchWrap(dp(12)));
+        root.addView(sectionHeader("设备通知图标"), matchWrap(dp(8)));
+        LinearLayout deviceIconPanel = panel();
+        tintDeviceIconSwitch = createSwitch("设备通知图标跟随状态栏反色");
+        deviceIconPanel.addView(tintDeviceIconSwitch, matchWrap(dp(4)));
+        deviceIconPanel.addView(text("开启后随状态栏前景色显示，改善浅色背景下的可见性；关闭保留设备图标原色。不参与上面的优先级。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        root.addView(deviceIconPanel, matchWrap(dp(12)));
 
         root.addView(sectionHeader("点击行为"), matchWrap(dp(8)));
         LinearLayout interactionPanel = panel();
@@ -844,7 +868,7 @@ public final class SettingsActivity extends Activity {
 
         showIslandIconSwitch.setChecked(pendingShowIslandIcon);
         tintIslandIconSwitch.setChecked(pendingTintIslandIcon);
-        useSmallIconFallbackSwitch.setChecked(pendingUseSmallIconFallback);
+        tintDeviceIconSwitch.setChecked(pendingTintDeviceIcon);
         allowFocusClickSwitch.setChecked(pendingAllowFocusClick);
         notificationRowClickFallbackSwitch.setChecked(pendingNotificationRowClickFallback);
         independentFocusBannerSwitch.setChecked(pendingIndependentFocusBanner);
@@ -1254,6 +1278,8 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.showIslandIcon", pendingShowIslandIcon);
         outState.putBoolean("m3.tintIslandIcon", pendingTintIslandIcon);
         outState.putBoolean("m3.useSmallIconFallback", pendingUseSmallIconFallback);
+        outState.putInt("m3.focusIconPriority", pendingFocusIconPriority);
+        outState.putBoolean("m3.tintDeviceIcon", pendingTintDeviceIcon);
         outState.putBoolean("m3.rowClickFallback", pendingNotificationRowClickFallback);
         outState.putBoolean("m3.independentFocusBanner", pendingIndependentFocusBanner);
         outState.putBoolean("m3.longPressNotificationRowClick", pendingLongPressNotificationRowClick);
@@ -1312,6 +1338,8 @@ public final class SettingsActivity extends Activity {
         pendingAllowFocusClick = state.getBoolean("m3.click", pendingAllowFocusClick);
         pendingHideNotificationIcons = state.getBoolean("m3.hide", pendingHideNotificationIcons);
         pendingShowFocusDivider = state.getBoolean("m3.divider", pendingShowFocusDivider);
+        pendingFocusIconPriority = state.getInt("m3.focusIconPriority", pendingFocusIconPriority);
+        pendingTintDeviceIcon = state.getBoolean("m3.tintDeviceIcon", pendingTintDeviceIcon);
         pendingShowIslandIcon = state.getBoolean("m3.showIslandIcon", pendingShowIslandIcon);
         pendingTintIslandIcon = state.getBoolean("m3.tintIslandIcon", pendingTintIslandIcon);
         pendingUseSmallIconFallback = state.getBoolean("m3.useSmallIconFallback",
@@ -1448,13 +1476,10 @@ public final class SettingsActivity extends Activity {
             pendingTintIslandIcon = c;
             markPending();
         });
-        if (useSmallIconFallbackSwitch != null) {
-            useSmallIconFallbackSwitch.setOnCheckedChangeListener((b, c) -> {
-                pendingUseSmallIconFallback = c;
-                updateExperimentalControls();
-                markPending();
-            });
-        }
+        if (tintDeviceIconSwitch != null) tintDeviceIconSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingTintDeviceIcon = c;
+            markPending();
+        });
         if (allowFocusClickSwitch != null) allowFocusClickSwitch.setOnCheckedChangeListener((b, c) -> {
             pendingAllowFocusClick = c;
             if (c) {
@@ -1563,15 +1588,20 @@ public final class SettingsActivity extends Activity {
         timeoutExemptButton.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
     }
 
+    private void updateFocusIconOrder() {
+        if (focusIconOrderText == null) return;
+        String[] orders = {"应用图标 → 焦点专用图标 → 通知小图标", "焦点专用图标 → 应用图标 → 通知小图标",
+                "通知小图标 → 应用图标 → 焦点专用图标"};
+        focusIconOrderText.setText(orders[FocusRestoreSettings.normalizeIconPriority(pendingFocusIconPriority)]);
+    }
+
     private void updateExperimentalControls() {
-        boolean islandIconEnabled = pendingIslandCompat;
-        setModeSpecificSwitchEnabled(showIslandIconSwitch, islandIconEnabled);
+        setModeSpecificSwitchEnabled(showIslandIconSwitch, true);
         boolean modeEnabled = pendingIslandCompat;
         setControlEnabled(islandTextModeField == null ? null : islandTextModeField.spinner,
                 modeEnabled);
         setModeSpecificSwitchEnabled(tintIslandIconSwitch,
-                pendingIslandCompat && (pendingShowIslandIcon || pendingUseSmallIconFallback));
-        setModeSpecificSwitchEnabled(useSmallIconFallbackSwitch, pendingIslandCompat);
+                true);
         boolean nativeBannerEnabled = pendingIndependentFocusBanner;
         if (nativeBannerEnabled) {
             pendingAllowFocusClick = false;
@@ -2021,6 +2051,8 @@ public final class SettingsActivity extends Activity {
         pendingShowIslandIcon = settings.showIslandIcon;
         pendingTintIslandIcon = settings.tintIslandIcon;
         pendingUseSmallIconFallback = settings.useSmallIconFallback;
+        pendingFocusIconPriority = settings.focusIconPriority;
+        pendingTintDeviceIcon = settings.tintDeviceIcon;
         pendingNotificationRowClickFallback = settings.notificationRowClickFallback;
         pendingIndependentFocusBanner = settings.independentFocusBanner;
         pendingLongPressNotificationRowClick = settings.longPressNotificationRowClick;
@@ -2068,6 +2100,8 @@ public final class SettingsActivity extends Activity {
                 .showIslandIcon(pendingShowIslandIcon)
                 .tintIslandIcon(pendingTintIslandIcon)
                 .useSmallIconFallback(pendingUseSmallIconFallback)
+                .focusIconPriority(pendingFocusIconPriority)
+                .tintDeviceIcon(pendingTintDeviceIcon)
                 .notificationRowClickFallback(pendingNotificationRowClickFallback)
                 .independentFocusBanner(pendingIndependentFocusBanner)
                 .longPressNotificationRowClick(pendingLongPressNotificationRowClick)

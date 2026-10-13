@@ -9,7 +9,7 @@
  * 接口事实来源：用户提供的 HyperOS SystemUI 16.03.251211.r / K80u 17.03.260226.r，
  * DeviceNotificationListenerImpl.handleDeviceNotification、DeviceNotificationModel 的左右 TextParams /
  * IconParams 与 Bundle.duration；旧 StrongToastModel.statusBarGuideModel / charge / duration / target。
- * 系统接口版权所有者：小米；私有协议许可未确认。仅依据接口独立实现，未复制 ROM 实现。
+ * 系统接口版权所有者：小米；私有协议许可未确认。
  */
 
 package com.hyperos3.focusrestore;

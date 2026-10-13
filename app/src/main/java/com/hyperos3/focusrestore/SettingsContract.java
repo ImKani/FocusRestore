@@ -36,33 +36,36 @@ final class SettingsContract {
     static final int TINT_ISLAND_ICON = 17;
     static final int USE_SMALL_ICON_FALLBACK = 18;
 
+    static final int FOCUS_ICON_PRIORITY = 19;
+    static final int TINT_DEVICE_ICON = 20;
+
     // 横幅与点击手势。
-    static final int INDEPENDENT_FOCUS_BANNER = 19;
-    static final int SPECIAL_BANNER_NORMAL_BACKGROUND = 20;
-    static final int ALLOW_FOCUS_CLICK = 21;
-    static final int NOTIFICATION_ROW_CLICK_FALLBACK = 22;
-    static final int LONG_PRESS_NOTIFICATION_ROW_CLICK = 23;
-    static final int LONG_PRESS_SECONDS = 24;
-    static final int FOCUS_SWIPE_ENABLED = 25;
-    static final int CUSTOM_TOUCH_WIDTH = 26;
-    static final int TOUCH_WIDTH_DP = 27;
-    static final int TOUCH_WIDTH_LANDSCAPE_DP = 28;
+    static final int INDEPENDENT_FOCUS_BANNER = 21;
+    static final int SPECIAL_BANNER_NORMAL_BACKGROUND = 22;
+    static final int ALLOW_FOCUS_CLICK = 23;
+    static final int NOTIFICATION_ROW_CLICK_FALLBACK = 24;
+    static final int LONG_PRESS_NOTIFICATION_ROW_CLICK = 25;
+    static final int LONG_PRESS_SECONDS = 26;
+    static final int FOCUS_SWIPE_ENABLED = 27;
+    static final int CUSTOM_TOUCH_WIDTH = 28;
+    static final int TOUCH_WIDTH_DP = 29;
+    static final int TOUCH_WIDTH_LANDSCAPE_DP = 30;
 
     // 最大显示时间与独立豁免名单。
-    static final int FOCUS_MAX_DISPLAY_SECONDS = 29;
-    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 30;
+    static final int FOCUS_MAX_DISPLAY_SECONDS = 31;
+    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 32;
 
     // 媒体焦点与流转。
-    static final int MEDIA_FOCUS_ENABLED = 31;
-    static final int MEDIA_FOCUS_NATIVE_BANNER = 32;
-    static final int MEDIA_FOCUS_CAST_PICKER = 33;
-    static final int MEDIA_FOCUS_CAST_DIRECT = 34;
+    static final int MEDIA_FOCUS_ENABLED = 33;
+    static final int MEDIA_FOCUS_NATIVE_BANNER = 34;
+    static final int MEDIA_FOCUS_CAST_PICKER = 35;
+    static final int MEDIA_FOCUS_CAST_DIRECT = 36;
 
     // 历史字段仍响应旧 projection；废弃功能不恢复，旧分隔符只供缺列回退。
-    static final int LEGACY_ISLAND_SEPARATOR = 35;
-    static final int EXPAND_ISLAND_ON_CLICK = 36;
-    static final int NOTIFICATION_ICON_HIDE_MODE = 37;
-    static final int ISLAND_CUSTOM_RULES = 38;
+    static final int LEGACY_ISLAND_SEPARATOR = 37;
+    static final int EXPAND_ISLAND_ON_CLICK = 38;
+    static final int NOTIFICATION_ICON_HIDE_MODE = 39;
+    static final int ISLAND_CUSTOM_RULES = 40;
 
     static final String[] COLUMNS = {
             "hook_mode", "compat_retry", "disable_island_property", "disable_island_feature_cache",
@@ -70,7 +73,7 @@ final class SettingsContract {
             "island_compat", "island_text_mode", "island_general_separator", "island_side_separator",
             "island_force_packages",
             "hide_notification_icons", "show_focus_divider", "show_island_icon", "tint_island_icon",
-            "use_small_icon_fallback",
+            "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon",
             "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
             "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
             "focus_swipe_enabled",
@@ -119,6 +122,9 @@ final class SettingsContract {
         row[SHOW_ISLAND_ICON] = settings.showIslandIcon ? 1 : 0;
         row[TINT_ISLAND_ICON] = settings.tintIslandIcon ? 1 : 0;
         row[USE_SMALL_ICON_FALLBACK] = settings.useSmallIconFallback ? 1 : 0;
+
+        row[FOCUS_ICON_PRIORITY] = settings.focusIconPriority;
+        row[TINT_DEVICE_ICON] = settings.tintDeviceIcon ? 1 : 0;
 
         row[INDEPENDENT_FOCUS_BANNER] = settings.independentFocusBanner ? 1 : 0;
         row[SPECIAL_BANNER_NORMAL_BACKGROUND] = settings.specialBannerNormalBackground ? 1 : 0;

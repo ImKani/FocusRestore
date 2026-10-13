@@ -49,7 +49,7 @@ final class SettingsBackupCodec {
             "[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?");
     private static final Set<String> INTEGER_FIELDS = new HashSet<>(Arrays.asList("formatVersion",
             "hook_mode", "island_text_mode", "text_width_dp", "text_width_landscape_dp",
-            "marquee_delay_ms", "media_focus_cast_picker", "touch_width_dp", "touch_width_landscape_dp"));
+            "marquee_delay_ms", "media_focus_cast_picker", "focus_icon_priority", "touch_width_dp", "touch_width_landscape_dp"));
 
     private SettingsBackupCodec() { }
 
@@ -113,7 +113,7 @@ final class SettingsBackupCodec {
                     "long_press_seconds", "focus_swipe_enabled",
                     "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp");
             JSONObject icons = group(groups, "icons", "show_island_icon", "tint_island_icon",
-                    "use_small_icon_fallback");
+                    "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon");
             JSONObject marquee = group(groups, "marquee", "marquee_bounce", "marquee_delay_ms");
             JSONObject compatibility = group(groups, "compatibility", "compat_retry",
                     "disable_island_property", "disable_island_feature_cache");
@@ -124,6 +124,10 @@ final class SettingsBackupCodec {
             if (mode != 3 && mode != 4) throw invalid("hook_mode 必须为 3 或 4");
             if (picker != 1 && picker != 2) throw invalid("media_focus_cast_picker 必须为 1 或 2");
             if (textMode != 0 && textMode != 1) throw invalid("island_text_mode 必须为 0 或 1");
+            int iconPriority = integer(icons, "focus_icon_priority",
+                    FocusRestoreSettings.legacyIconPriority(bool(icons, "use_small_icon_fallback", false),
+                            bool(icons, "show_island_icon", false)));
+            if (iconPriority < 0 || iconPriority > 2) throw invalid("focus_icon_priority 必须为 0、1 或 2");
             int width = integer(focus, "text_width_dp", defaults.widthDp);
             String legacySeparator = separator(island, "island_separator", defaults.islandGeneralSeparator);
             Set<String> forcePackages = packages(island, "island_force_packages");
@@ -163,6 +167,8 @@ final class SettingsBackupCodec {
                     .customTouchWidth(bool(interaction, "custom_touch_width", defaults.customTouchWidth))
                     .touchWidthDp(integer(interaction, "touch_width_dp", defaults.touchWidthDp))
                     .touchWidthLandscapeDp(integer(interaction, "touch_width_landscape_dp", defaults.touchWidthLandscapeDp))
+                    .focusIconPriority(iconPriority)
+                    .tintDeviceIcon(bool(icons, "tint_device_icon", defaults.tintDeviceIcon))
                     .showIslandIcon(bool(icons, "show_island_icon", defaults.showIslandIcon))
                     .tintIslandIcon(bool(icons, "tint_island_icon", defaults.tintIslandIcon))
                     .useSmallIconFallback(bool(icons, "use_small_icon_fallback", defaults.useSmallIconFallback))
@@ -206,7 +212,9 @@ final class SettingsBackupCodec {
                         "touch_width_landscape_dp", settings.touchWidthLandscapeDp),
                 "icons", entries("show_island_icon", settings.showIslandIcon,
                         "tint_island_icon", settings.tintIslandIcon,
-                        "use_small_icon_fallback", settings.useSmallIconFallback),
+                        "use_small_icon_fallback", settings.useSmallIconFallback,
+                        "focus_icon_priority", settings.focusIconPriority,
+                        "tint_device_icon", settings.tintDeviceIcon),
                 "marquee", entries("marquee_bounce", settings.marqueeBounce,
                         "marquee_delay_ms", settings.marqueeDelayMs),
                 "compatibility", entries("compat_retry", settings.compatRetry,

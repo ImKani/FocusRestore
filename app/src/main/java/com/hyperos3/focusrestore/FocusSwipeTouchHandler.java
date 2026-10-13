@@ -20,7 +20,7 @@ import de.robv.android.xposed.XposedHelpers;
  * 在状态栏根视图观察 DOWN，仅水平滑动接管，保留系统下拉通知栏分发。
  * 50dp 门槛依据用户只读 APK MCP http://192.168.31.21:8787/mcp 中小米插件
  * 17.1.4.71.0 / 18.2.2.2.0 的 island_swipe_threshold 与
- * DynamicIslandTouchInteractor.onTouchEvent；私有协议许可未确认，未复制 ROM 实现。
+ * DynamicIslandTouchInteractor.onTouchEvent；私有协议许可未确认。
  */
 final class FocusSwipeTouchHandler implements View.OnAttachStateChangeListener {
     interface Target {

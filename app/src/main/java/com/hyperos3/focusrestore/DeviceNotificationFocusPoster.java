@@ -6,13 +6,11 @@
  */
 
 /*
- * 原始项目：https://github.com/ImKani/FocusRestore
- * 外部事实来源：HyperOS 3 SystemUI APK os3系统界面_16.03.251211.r.apk 的 com.android.systemui
+ * 接口与资源来源：HyperOS 3 SystemUI APK os3系统界面_16.03.251211.r.apk 的 com.android.systemui
  * 16.03.251211.r（source go/retraceme 517ab4bb…ce5979）与系统界面组件包 miui.systemui.plugin
  * 17.1.4.71.0 的资源表；分析记录见 Notes/analysis/0.25.0-构造焦点通知方案.md。
- * 说明：本文件为 FocusRestore 独立实现，不复制或重新授权 SystemUI / MIUI 代码。
- * SystemUI / MIUI 资源及私有协议的版权所有者、原协议：未确认；沿用上述版本接口事实，
- * 本项目独立增加投递诊断、图标安全降级与请求序号。OS4 plugin 图片契约仍待验证。
+ * 上述 SystemUI / MIUI 资源及私有协议的具体版权所有者、许可未确认。
+ * 投递包含诊断、图标安全降级与请求序号；OS4 plugin 图片契约仍待验证。
  */
 
 package com.hyperos3.focusrestore;

@@ -67,7 +67,7 @@ public class SettingsBackupCodecTest {
         int fields = 0;
         JSONObject groups = root.getJSONObject("settings");
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
-        assertEquals(35, fields);
+        assertEquals(37, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules"}) {
             assertFalse(excluded, text.contains("\"" + excluded + "\""));
@@ -443,12 +443,33 @@ public class SettingsBackupCodecTest {
                 .compatRetry(true).marqueeBounce(false).islandCompat(true)
                 .disableIslandProperty(false).disableIslandFeatureCache(false).allowFocusClick(true)
                 .hideNotificationIcons(false).showFocusDivider(false).showIslandIcon(true).tintIslandIcon(false)
-                .useSmallIconFallback(true).notificationRowClickFallback(true).independentFocusBanner(true)
+                .useSmallIconFallback(true).focusIconPriority(1).tintDeviceIcon(false)
+                .notificationRowClickFallback(true).independentFocusBanner(true)
                 .longPressNotificationRowClick(true).longPressSeconds(2.75f).focusSwipeEnabled(true).islandTextMode(1)
                 .customTouchWidth(true).touchWidthDp(100).touchWidthLandscapeDp(720)
                 .focusMaxDisplaySeconds(12.34f).islandGeneralSeparator("general").islandSideSeparator("side")
                 .islandForcePackages(new HashSet<>(Arrays.asList("com.example.z", "com.example.a")))
                 .focusTimeoutExemptPackages(Collections.singleton("com.example.travel")).build();
+    }
+
+    @Test public void oldIconBackupsMigrateAndNewPriorityRejectsInvalidValues() throws Exception {
+        for (boolean small : new boolean[]{false, true}) {
+            for (boolean island : new boolean[]{false, true}) {
+                FocusRestoreSettings migrated = decodeGroups("{\"icons\":{\"use_small_icon_fallback\":"
+                        + small + ",\"show_island_icon\":" + island + "}}");
+                assertEquals(small ? 2 : island ? 1 : 0, migrated.focusIconPriority);
+                assertTrue(migrated.tintDeviceIcon);
+                assertEquals(island, migrated.showIslandIcon);
+            }
+        }
+        FocusRestoreSettings explicit = decodeGroups("{\"icons\":{\"focus_icon_priority\":0,"
+                + "\"use_small_icon_fallback\":true,\"show_island_icon\":true,\"tint_device_icon\":false}}");
+        assertEquals(0, explicit.focusIconPriority);
+        assertFalse(explicit.useSmallIconFallback);
+        assertFalse(explicit.tintDeviceIcon);
+        for (String invalid : new String[]{"-1", "3", "1.5", "true", "\"1\""}) {
+            rejectGroups("{\"icons\":{\"focus_icon_priority\":" + invalid + "}}");
+        }
     }
 
     private static void assertEverySettingEquals(FocusRestoreSettings expected, FocusRestoreSettings actual) throws Exception {
@@ -460,7 +481,7 @@ public class SettingsBackupCodecTest {
             assertEquals(field.getName(), field.get(expected), field.get(actual));
             count++;
         }
-        assertEquals("current user snapshot field count", 35, count);
+        assertEquals("current user snapshot field count", 37, count);
     }
 
     private static FocusRestoreSettings decodeGroups(String groups) throws IOException {

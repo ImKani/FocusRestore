@@ -379,6 +379,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         hookFocusedParentParams();
         hookFocusedTextMarquee();
         hookPromptViewSetData();
+        hookOS3DeviceIconTint();
         hookPromptShouldShow();
         hookDisableConvertedFocusClick();
         hookFocusLongPress();
@@ -441,7 +442,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     public void onNotificationRemoved(Object notificationEntry, String key) {
                         forgetFocusDisplay(key);
                         WeakReference<Object> ref = notificationEntries.get(key);
-                        if (ref == null || ref.get() == notificationEntry) removeBannerNotification(key);
+                        if (ref == null || ref.get() == notificationEntry) removeBannerNotification(key, notificationEntry);
                     }
 
                     @Override
@@ -578,7 +579,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * （versionCode 202602260）；MediaOutputDialogManager.createAndShow 的六参数重载，
      * MediaControlPanel$$ExternalSyntheticLambda8 调用末尾布尔参数为 false。
      * 出处：http://192.168.31.239:8787/mcp；
-     * 版权所有者及该 ROM 私有实现许可证未确认。本项目仅依据签名独立适配，未复制外部实现。
+     * 上述 ROM 接口的具体版权所有者及私有协议许可未确认。
      */
     private void hookMediaOutputEntry() {
         try {
@@ -761,7 +762,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * 来源：用户 MT MCP 只读 SystemUI 17.03.260226.r / 202602260。
      * MiuiMediaNotificationControllerImpl.access$setTopMediaData 与
      * MiuiMediaDismissRepository.setLastDismissPkg；ROM 版权所有者/协议未确认。
-     * 仅依据接口事实独立同步媒体焦点，未复制 ROM 实现，不依赖被屏蔽的岛视图。
+     * 媒体焦点同步不依赖被屏蔽的岛视图。
      */
     private void hookOS4MediaFocusSelection() {
         if (installedHookMode != FocusRestoreSettings.HOOK_MODE_OS4) return;
@@ -1410,7 +1411,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             if (TextUtils.isEmpty(key)) return;
                             WeakReference<Object> ref = notificationEntries.get(key);
                             // A delayed removal must not close a newer same-key entry.
-                            if (ref == null || ref.get() == entry) removeBannerNotification(key);
+                            if (ref == null || ref.get() == entry) removeBannerNotification(key, entry);
                         }
                     });
             log("OS3 banner removal hooks=" + hooks.size());
@@ -1419,7 +1420,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
-    private void removeBannerNotification(String key) {
+    private void removeBannerNotification(String key, Object entry) {
         if (TextUtils.isEmpty(key)) return;
         notificationEntries.remove(key);
         os3SwipeSelection.remove(key);
@@ -1427,7 +1428,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         activeMediaNotificationKeys.remove(key);
         FocusBannerController controller = bannerController;
         if (controller != null) controller.onNotificationRemoved(key);
-        if (nativeBannerRenderer != null) nativeBannerRenderer.onNotificationRemoved(key);
+        Object removed = notificationEntrySbn(entry);
+        StatusBarNotification removedSbn = removed instanceof StatusBarNotification
+                ? (StatusBarNotification) removed : null;
+        if (nativeBannerRenderer != null) nativeBannerRenderer.onNotificationRemoved(key, removedSbn);
     }
 
     private boolean showIndependentFocusBanner(View anchor, Object directEntry, String key,
@@ -1767,7 +1771,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     /**
      * 接口事实来源：K80u SystemUI 17.03.260226.r 的 CommandQueueDelegate.setStatus、
      * DeviceNotificationListenerImpl.handleDeviceNotification、DynamicIslandPluginController.onPluginLoaded。
-     * 小米私有协议许可未确认，仅按接口独立实现，未复制 ROM 代码。
+     * 接口来自小米 SystemUI，私有协议许可未确认。
      * 岛关闭时 ROM 不注册设备通知 listener，所以命令入口与内容模型入口必须同时覆盖。
      */
     private void hookDeviceNotificationConversion() {
@@ -2729,6 +2733,47 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * 来源：作者授权 OS3 SystemUI 16.03.251211.r / 202501210，MT APK MCP。
+     * FocusedNotifPromptView.setIconDrawable(Z) 读 mData 与 mIcon；onDarkChanged 保存
+     * mTintColor/mIsLight，调色板回调按 mUseTint 选 mTintColor 或 mLightColor/mDarkColor。
+     * 接口来自小米及 Android 上游；ROM 私有许可未确认。
+     */
+    private void hookOS3DeviceIconTint() {
+        try {
+            Class<?> prompt = FocusReflection.findClass(
+                    "com.android.systemui.statusbar.phone.FocusedNotifPromptView", classLoader);
+            for (String method : new String[]{"setData", "setIconDrawable", "onDarkChanged", "onLightDarkTintChanged"}) {
+                XposedBridge.hookAllMethods(prompt, method, new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam param) {
+                        if (!param.hasThrowable()) applyOS3DeviceIconTint(param.thisObject);
+                    }
+                });
+            }
+        } catch (Throwable failure) { error("hook OS3 device icon tint", failure); }
+    }
+
+    private void applyOS3DeviceIconTint(Object prompt) {
+        FocusData data = inspectBean(getField(prompt, "mData"));
+        if (data == null || !isConstructedDevice(data.notification) || data.contentRv != null) return;
+        Object image = getField(prompt, "mIcon");
+        if (!(image instanceof android.widget.ImageView) || !(prompt instanceof View)) return;
+        SelectedFocusIcon selected = selectFocusIcon(data.notification, data.islandParam, data.packageName,
+                !getBooleanField(prompt, "mIsLight", true), true);
+        if (selected == null) return;
+        boolean useTint = getBooleanField(prompt, "mUseTint", true);
+        String colorField = useTint ? "mTintColor"
+                : getBooleanField(prompt, "mIsLight", true) ? "mLightColor" : "mDarkColor";
+        Object color = getField(prompt, colorField);
+        if (!(color instanceof Integer)) return;
+        try {
+            // 每次从通知原图重绘，关闭开关立即恢复原色，不叠加之前的着色结果。
+            FocusIconStyler.Result styled = FocusIconStyler.load(((View) prompt).getContext(), selected.icon,
+                    false, currentSettings.tintDeviceIcon, (Integer) color, 13);
+            if (styled != null) ((android.widget.ImageView) image).setImageDrawable(styled.drawable);
+        } catch (Throwable failure) { error("OS3 device icon tint key=" + data.key, failure); }
+    }
+
     private void hookPromptViewSetData() {
         try {
             Class<?> view = FocusReflection.findClass(
@@ -3016,7 +3061,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             if (content.getMinimumWidth() != width) content.setMinimumWidth(width);
             // OS3 的点击监听原本只在文字/RemoteViews 层，扩容后空白由内容容器走同一入口。
             // 小米 SystemUI 16.03.251211.r：FocusedNotifPromptView.updateContentViewClickable /
-            // onFocusNotifPromptClicked；用户只读 APK MCP，私有许可未确认，未复制 ROM 实现。
+            // onFocusNotifPromptClicked；用户只读 APK MCP，私有许可未确认。
             if (getField(prompt, "mData") != null
                     && (!content.hasOnClickListeners() || original.clickInstalled)) {
                 content.setOnClickListener(clicked -> {
@@ -3648,7 +3693,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     /**
      * 私有接口依据本项目既有 OS3/OS4 SystemUI 观察：NotificationEntry.row、
      * ExpandableNotificationRow.getEntry()/mEntry；精确 ROM 版本、版权所有者与协议未确认。
-     * 独立实现长按身份复核，打开动作复用本项目横幅正文入口，未复制 ROM 实现。
+     * 长按时复核通知身份，打开动作复用本项目横幅正文入口。
      */
     private Runnable captureLongPressRowClick(Object directEntry, String key, String mode) {
         if (TextUtils.isEmpty(key)) return null;
@@ -3686,7 +3731,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private FocusLongPressGesture promptLongPressGesture(Object prompt) {
         // Xposed API 82 的 additionalFields 弱键表不能通过强 value 反向持有 View。
-        // 来源 rovo89/XposedBridge XposedHelpers.java（具体源码版本与许可证未确认），仅依据容器事实独立实现：
+        // 容器行为来源：rovo89/XposedBridge XposedHelpers.java（具体源码版本与许可证未确认）：
         // https://github.com/rovo89/XposedBridge/blob/art/app/src/main/java/de/robv/android/xposed/XposedHelpers.java
         Object value = XposedHelpers.getAdditionalInstanceField(prompt, "focusRestoreLongPress");
         Object gesture = value instanceof WeakReference ? ((WeakReference<?>) value).get() : null;
@@ -4328,6 +4373,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         synchronized (originalBeanStates) {
             savedState = originalBeanStates.get(bean);
         }
+        if (savedState != null && savedState.nativeIconOnly) {
+            // 原生图标修改没有接管正文或 Focus 标记，Bean 原位更新时不能恢复旧正文。
+            restoreOriginalBean(bean, data, stage + "NativeIconRestore");
+            savedState = null;
+        }
         if (savedState != null) {
             data.isFocus = savedState.originalFocus || data.hasExplicitFocusData;
             data.isOriginalFocus = savedState.originalFocus || data.hasExplicitFocusData;
@@ -4413,6 +4463,24 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             preMarkedIslands.remove(expanded);
             preMarkedOriginalFocus.remove(expanded);
         }
+        }
+
+        // OS3 时钟可直接成为原生 Focus；图标设置独立于岛文字转换，原生 RV 内部图标仍由 ROM 管理。
+        if (data.isFocus && !convertedBeans.contains(bean) && data.contentRv == null
+                && data.contentNightRv == null && !data.hasBarRv && !data.hasMainRv) {
+            OriginalBeanState iconState;
+            synchronized (originalBeanStates) {
+                iconState = originalBeanStates.get(bean);
+                if (iconState == null) {
+                    Object expanded = getField(bean, "sbn");
+                    iconState = new OriginalBeanState(expanded, data.isOriginalFocus,
+                            stringValue(getField(bean, "content")), getField(bean, "icon"),
+                            getField(bean, "iconDark"), getField(bean, "drawable"), getField(bean, "drawableDark"));
+                    iconState.nativeIconOnly = true;
+                    originalBeanStates.put(bean, iconState);
+                }
+            }
+            applyConvertedBeanIcon(bean, iconState, data, stage + "NativeIcon");
         }
 
         if (FALLBACK_MAIN_RV_FOR_STATUS_BAR && data.isFocus) {
@@ -4564,6 +4632,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             state = originalBeanStates.get(bean);
         }
         if (state == null) return;
+        if (state.nativeIconOnly) {
+            if (restoreConvertedBeanIcon(bean, state, stage + " restoreNativeIcon")) {
+                synchronized (originalBeanStates) {
+                    if (originalBeanStates.get(bean) == state) originalBeanStates.remove(bean);
+                }
+            }
+            return;
+        }
         clearPreMark(state.expanded, false);
         boolean contentRestored = setObjectField(bean, "content", state.originalContent,
                 stage + " restoreContent");
@@ -4663,50 +4739,83 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                                 String packageName, boolean dark,
                                                 boolean allowFallback) {
         if (notification == null) return null;
+        // 深色图仅从浅色已选来源寻找配对；缺图或加载失败沿用浅色，不能跳到另一类来源。
+        if (dark) {
+            SelectedFocusIcon light = selectFocusIcon(notification, islandParam, packageName, false, allowFallback);
+            if (light == null) return null;
+            SelectedFocusIcon variant = null;
+            if (light.islandIcon) variant = parsedIslandIcon(notification, islandParam, packageName, true);
+            else if (light.source.startsWith("ticker")) variant = tickerFocusIcon(notification, islandParam, true,
+                    isConstructedDevice(notification));
+            return variant == null ? light : variant;
+        }
+        if (isConstructedDevice(notification)) {
+            SelectedFocusIcon device = tickerFocusIcon(notification, islandParam, false, true);
+            return device != null ? device : usableFocusIcon(notification.getSmallIcon(),
+                    currentSettings.tintDeviceIcon, false, "deviceSmallIcon");
+        }
+        if (currentSettings.showIslandIcon) {
+            SelectedFocusIcon parsed = parsedIslandIcon(notification, islandParam, packageName, false);
+            if (parsed != null) return parsed;
+        }
+        if (!allowFallback) return null;
+        for (int source : FocusIconPriority.order(currentSettings.focusIconPriority)) {
+            SelectedFocusIcon candidate;
+            if (source == FocusIconPriority.APP) {
+                candidate = usableFocusIcon(applicationIcon(packageName), false, false, "applicationIcon");
+            } else if (source == FocusIconPriority.FOCUS) {
+                candidate = tickerFocusIcon(notification, islandParam, false, false);
+            } else {
+                candidate = usableFocusIcon(notification.getSmallIcon(), currentSettings.tintIslandIcon,
+                        false, "notificationSmallIcon");
+            }
+            if (candidate != null) return candidate;
+        }
+        logFocusIconResolution(notification.extras == null ? null
+                : notification.extras.getBundle("miui.focus.pics"), islandParam, packageName, false);
+        return null;
+    }
+
+    private static boolean isConstructedDevice(Notification notification) {
+        return notification != null && notification.extras != null
+                && notification.extras.getBoolean(DeviceNotificationFocusPoster.EXTRA_MODULE_MARKER, false);
+    }
+
+    private SelectedFocusIcon tickerFocusIcon(Notification notification, String islandParam,
+                                               boolean dark, boolean device) {
         Bundle extras = notification.extras;
         Bundle pictures = extras == null ? null : extras.getBundle("miui.focus.pics");
-        String directReference = extras == null ? null : extras.getString(
+        String reference = extras == null ? null : extras.getString(
                 dark ? "miui.focus.pic_ticker_dark" : "miui.focus.pic_ticker");
-        Icon icon = iconFromBundle(pictures, directReference);
-        if (icon != null) {
-            return new SelectedFocusIcon(icon, false, false, "ticker:" + directReference);
-        }
-        if (dark && extras != null) {
-            icon = iconFromBundle(pictures, extras.getString("miui.focus.pic_ticker"));
-            if (icon != null) return new SelectedFocusIcon(icon, false, false, "tickerLight");
-        }
-        String payloadTicker = IslandPayloadParser.findTickerPictureReference(islandParam, dark);
-        icon = iconFromBundle(pictures, payloadTicker);
-        if (icon != null) {
-            return new SelectedFocusIcon(icon, false, false, "tickerPayload:" + payloadTicker);
-        }
+        SelectedFocusIcon result = usableFocusIcon(iconFromBundle(pictures, reference),
+                device && currentSettings.tintDeviceIcon, false, "ticker:" + reference);
+        if (result != null) return result;
+        reference = IslandPayloadParser.findTickerPictureReference(islandParam, dark);
+        return usableFocusIcon(iconFromBundle(pictures, reference), device && currentSettings.tintDeviceIcon,
+                false, "tickerPayload:" + reference);
+    }
 
-        if (currentSettings.showIslandIcon) {
-            String payloadReference = IslandPayloadParser.findPictureReference(islandParam, dark);
-            icon = iconFromBundle(pictures, payloadReference);
-            if (icon != null) return new SelectedFocusIcon(icon,
-                    currentSettings.tintIslandIcon, true, "island:" + payloadReference);
-            // 引用名拿不到时，借设备通知那条已经验证过的做法：按名字去应用自己的包里找 drawable。
-            // 岛载荷下发的引用名形如 miui.focus.pic_weather，第三方应用通常没有这个资源名，
-            // 所以这只是一种可能落空的兜底；成功与否由 logFocusIconResolution 的
-            // islandDrawable 字段记录下来（能找到就说明该应用真的按这个名字放了资源）。
-            Icon packageDrawable = islandIconFromPackage(packageName, payloadReference);
-            if (packageDrawable != null) {
-                return new SelectedFocusIcon(packageDrawable, currentSettings.tintIslandIcon,
-                        true, "islandDrawable:" + packageName + "/" + payloadReference);
-            }
-        }
-        logFocusIconResolution(pictures, islandParam, packageName, dark);
+    private SelectedFocusIcon parsedIslandIcon(Notification notification, String islandParam,
+                                               String packageName, boolean dark) {
+        Bundle pictures = notification.extras == null ? null : notification.extras.getBundle("miui.focus.pics");
+        String reference = IslandPayloadParser.findIslandPictureReference(islandParam, dark);
+        SelectedFocusIcon result = usableFocusIcon(iconFromBundle(pictures, reference),
+                currentSettings.tintIslandIcon, true, "island:" + reference);
+        if (result != null) return result;
+        return usableFocusIcon(islandIconFromPackage(packageName, reference), currentSettings.tintIslandIcon,
+                true, "islandDrawable:" + packageName + "/" + reference);
+    }
 
-        if (!allowFallback) return null;
-        if (currentSettings.useSmallIconFallback) {
-            icon = notification.getSmallIcon();
-            if (icon != null) return new SelectedFocusIcon(icon,
-                    currentSettings.tintIslandIcon, false, "notificationSmallIcon");
+    private SelectedFocusIcon usableFocusIcon(Icon icon, boolean tint, boolean island, String source) {
+        if (icon == null || systemUiContext == null) return null;
+        try {
+            // 非空 Icon 不代表资源可用；真实加载及绘制失败时继续下一来源。
+            if (FocusIconStyler.load(systemUiContext, icon, island, false, Color.WHITE, 13) == null) return null;
+            return new SelectedFocusIcon(icon, tint, island, source);
+        } catch (Throwable failure) {
+            if (firstDiagnosis("iconLoad|" + source)) error("focus icon candidate source=" + source, failure);
+            return null;
         }
-        icon = applicationIcon(packageName);
-        return icon == null ? null : new SelectedFocusIcon(icon, false, false,
-                "applicationIcon");
     }
 
     /**
@@ -5644,6 +5753,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         boolean patchedIconDark;
         boolean patchedDrawable;
         boolean patchedDrawableDark;
+        boolean nativeIconOnly;
 
         OriginalBeanState(Object expanded, boolean originalFocus, String originalContent,
                           Object originalIcon, Object originalIconDark,

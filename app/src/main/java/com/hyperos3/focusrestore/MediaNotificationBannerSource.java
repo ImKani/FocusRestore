@@ -365,7 +365,7 @@ final class MediaNotificationBannerSource implements FocusBannerSource {
         final String bannerKey = sbn.getKey();
         if (seamless != null) {
             // 原生 listener 用按钮的 Application Context 读取 CTA；应用资源 Context 可没有 Application。
-            // 来源：OS4 SystemUI 17.03.260226.r MiuiMediaTransferManagerImpl$2.onClick，仅依据接口独立适配。
+            // 接口来源：OS4 SystemUI 17.03.260226.r MiuiMediaTransferManagerImpl$2.onClick。
             ImageView seamlessIcon = new ImageView(systemUiContext);
             seamlessIcon.setImageDrawable(seamless);
             TypedValue tintValue = new TypedValue();

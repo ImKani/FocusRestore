@@ -19,7 +19,7 @@ final class OS4DarkTintCallback {
             // 小米 SystemUI 17.03.260226.r，用户只读 APK MCP：
             // http://192.168.31.21:8787/mcp，DarkIconDispatcherImpl.addDarkReceiver /
             // applyIconTint：两个 int 依次为 mIconTint、mContrastTint。
-            // 私有接口许可未确认；仅依据接口事实独立适配，未复制 ROM 实现。
+            // 上述 ROM 私有接口许可未确认。
             tintIndex = 1;
         } else {
             return null;

@@ -21,7 +21,7 @@ import de.robv.android.xposed.XposedHelpers;
  * MiuiMediaViewControllerImpl.mediaTransferManager 是 dagger.Lazy；
  * MiuiMediaTransferManagerImpl.mModalController 是实际 IModalController 实例，不是 Lazy。
  * 其 mOnClickHandler（MiuiMediaTransferManagerImpl$2）处理 CTA、原生 modal、动画与关闭入口。
- * 具体作者、版权所有者及 ROM 私有实现许可证未确认；仅依据接口独立适配，未复制外部实现。
+ * 上述 ROM 接口的具体版权所有者及私有协议许可未确认。
  */
 final class NativeMediaTransferEntry {
     interface Logger {
