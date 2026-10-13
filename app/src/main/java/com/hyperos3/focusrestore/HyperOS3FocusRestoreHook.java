@@ -145,6 +145,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private boolean modeHooksInstalled;
     private int installedHookMode;
     private HyperOS4FocusController os4Controller;
+    private OS3FocusDivider os3FocusDivider;
     private volatile FocusBannerController bannerController;
     private NativeFocusTemplateRenderer nativeBannerRenderer;
     private final Set<View> os3PromptViews = Collections.newSetFromMap(new WeakHashMap<>());
@@ -379,6 +380,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         hookFocusedParentParams();
         hookFocusedTextMarquee();
         hookPromptViewSetData();
+        os3FocusDivider = new OS3FocusDivider(() -> currentSettings, HyperOS3FocusRestoreHook::error);
+        os3FocusDivider.install(classLoader);
         hookOS3DeviceIconTint();
         hookPromptShouldShow();
         hookDisableConvertedFocusClick();
@@ -2743,14 +2746,69 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         try {
             Class<?> prompt = FocusReflection.findClass(
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptView", classLoader);
-            for (String method : new String[]{"setData", "setIconDrawable", "onDarkChanged", "onLightDarkTintChanged"}) {
+            for (String method : new String[]{"onFinishInflate", "onAttachedToWindow", "setData",
+                    "setIconDrawable", "onDarkChanged", "onLightDarkTintChanged"}) {
                 XposedBridge.hookAllMethods(prompt, method, new XC_MethodHook() {
                     @Override protected void afterHookedMethod(MethodHookParam param) {
-                        if (!param.hasThrowable()) applyOS3DeviceIconTint(param.thisObject);
+                        if (!param.hasThrowable()) {
+                            applyOS3IconSize(param.thisObject);
+                            applyOS3DividerAppearance(param.thisObject);
+                            applyOS3DeviceIconTint(param.thisObject);
+                        }
                     }
                 });
             }
+            Class<?> controller = FocusReflection.findClass(
+                    "com.android.systemui.statusbar.phone.FocusedNotifPromptController", classLoader);
+            // OS3 updateFromConfigChanged最后重新写mIconWidth，setIconDrawable的after尚早于这次覆盖。
+            XposedBridge.hookAllMethods(controller, "updateFromConfigChanged", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam param) {
+                    if (param.hasThrowable()) return;
+                    Object view = getField(param.thisObject, "mView");
+                    if (view == null) return;
+                    applyOS3IconSize(view);
+                    applyOS3DividerAppearance(view);
+                    Object bean = getField(view, "mData");
+                    if (bean != null) {
+                        try {
+                            patchBean(bean, "OS3 configuration icon refresh");
+                            XposedHelpers.callMethod(view, "setIconDrawable",
+                                    getBooleanField(view, "mIsLight", true));
+                        } catch (Throwable failure) { error("OS3 configuration icon refresh", failure); }
+                    }
+                }
+            });
         } catch (Throwable failure) { error("hook OS3 device icon tint", failure); }
+    }
+
+    private void applyOS3DividerAppearance(Object prompt) {
+        if (os3FocusDivider != null && prompt instanceof View) os3FocusDivider.apply((View) prompt);
+    }
+
+    private void applyOS3IconSize(Object prompt) {
+        try {
+            Object image = getField(prompt, "mIcon");
+            if (!(image instanceof View)) return;
+            View icon = (View) image;
+            ViewGroup.LayoutParams params = icon.getLayoutParams();
+            if (params == null) return;
+            int size = FocusIconStyler.statusBarSizePx(icon.getContext(), currentSettings.focusIconSizeDp);
+            // 来源：OS3 ROM updateIconRect按mIconWidth修正水平矩形；Controller配置更新会重置它。
+            // 控件、像素与定位字段同步，不扫描通知RemoteViews内部图标。
+            boolean changed = params.width != size || params.height != size;
+            if (changed) {
+                params.width = size;
+                params.height = size;
+                icon.setLayoutParams(params);
+            }
+            Object width = getField(prompt, "mIconWidth");
+            if (width instanceof Integer && (Integer) width != size) {
+                XposedHelpers.setIntField(prompt, "mIconWidth", size);
+                changed = true;
+            }
+            // 布局完成后由ROM自己的定位链重读实际矩形，避免立即读取旧View尺寸。
+            if (changed) XposedHelpers.callMethod(prompt, "setNeedUpdateRect", true);
+        } catch (Throwable failure) { error("OS3 focus icon size", failure); }
     }
 
     private void applyOS3DeviceIconTint(Object prompt) {
@@ -2768,8 +2826,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         if (!(color instanceof Integer)) return;
         try {
             // 每次从通知原图重绘，关闭开关立即恢复原色，不叠加之前的着色结果。
-            FocusIconStyler.Result styled = FocusIconStyler.load(((View) prompt).getContext(), selected.icon,
-                    false, currentSettings.tintDeviceIcon, (Integer) color, 13);
+            Context iconContext = ((View) prompt).getContext();
+            FocusIconStyler.Result styled = FocusIconStyler.loadAtSize(iconContext, selected.icon,
+                    false, currentSettings.tintDeviceIcon, (Integer) color,
+                    FocusIconStyler.statusBarSizePx(iconContext, currentSettings.focusIconSizeDp));
             if (styled != null) ((android.widget.ImageView) image).setImageDrawable(styled.drawable);
         } catch (Throwable failure) { error("OS3 device icon tint key=" + data.key, failure); }
     }
@@ -2889,9 +2949,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 return false;
             }
             boolean swipeChanged;
+            boolean appearanceChanged;
             synchronized (this) {
                 if (generation != settingsReadGeneration) return false;
                 swipeChanged = currentSettings.focusSwipeEnabled != next.focusSwipeEnabled;
+                appearanceChanged = !sameFocusAppearance(currentSettings, next);
                 currentSettings = next;
                 if (modeHooksInstalled && next.hookMode != installedHookMode) {
                     log("hook mode change saved configuredMode=OS" + next.hookMode
@@ -2915,6 +2977,30 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     }
                 });
             }
+            if (appearanceChanged && modeHooksInstalled && mainHandler != null) {
+                mainHandler.post(() -> {
+                    // 后台读取结果可能已被下一代设置替代；不让旧尺寸覆盖新设置。
+                    if (!sameFocusAppearance(currentSettings, next)) return;
+                    if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4) {
+                        if (os4Controller != null) os4Controller.onAppearanceSettingChanged();
+                    } else {
+                        for (View prompt : promptViewsSnapshot()) {
+                            if (!prompt.isAttachedToWindow()) continue;
+                            applyOS3IconSize(prompt);
+                            applyOS3DividerAppearance(prompt);
+                            Object bean = getField(prompt, "mData");
+                            // 隐藏的已挂载焦点可能只通过visibility恢复，也需同步位图；不改变显隐状态。
+                            if (bean == null) continue;
+                            try {
+                                patchBean(bean, "appearance setting refresh");
+                                XposedHelpers.callMethod(prompt, "setIconDrawable",
+                                        getBooleanField(prompt, "mIsLight", true));
+                                if (prompt.isShown()) applyTextWidth(prompt);
+                            } catch (Throwable failure) { error("OS3 appearance refresh", failure); }
+                        }
+                    }
+                });
+            }
             if (!next.independentFocusBanner) {
                 FocusBannerController controller = bannerController;
                 if (controller != null) controller.dismiss("setting-disabled");
@@ -2927,6 +3013,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             error("readProviderSettings", t);
             return false;
         }
+    }
+
+    private static boolean sameFocusAppearance(HookSettings first, HookSettings second) {
+        return first.focusIconSizeDp == second.focusIconSizeDp
+                && first.showFocusDivider == second.showFocusDivider
+                && first.focusDividerStartDp == second.focusDividerStartDp
+                && first.focusDividerEndDp == second.focusDividerEndDp
+                && first.focusDividerWidthDp == second.focusDividerWidthDp
+                && first.focusDividerStyle == second.focusDividerStyle;
     }
 
     private void logProviderSettingsState(boolean available, String reason) {
@@ -3747,7 +3842,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     android.content.res.Configuration.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam param) {
                             // 旋转不一定触发 setData，横竖屏触控宽度须随配置更新。
-                            if (!param.hasThrowable()) applyTextWidth(param.thisObject);
+                            if (!param.hasThrowable()) {
+                                applyOS3IconSize(param.thisObject);
+                                applyOS3DividerAppearance(param.thisObject);
+                                applyTextWidth(param.thisObject);
+                            }
                         }
                     });
             Method dispatch = promptClass.getMethod("dispatchTouchEvent", MotionEvent.class);
@@ -4515,16 +4614,17 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             return false;
         }
         if (systemUiContext == null) return false;
+        int iconSizePx = FocusIconStyler.statusBarSizePx(systemUiContext, currentSettings.focusIconSizeDp);
         SelectedFocusIcon dark = selectFocusIcon(data.notification, data.islandParam, data.packageName,
                 true, true);
         if (dark == null) dark = light;
         final FocusIconStyler.Result styledLight;
         final FocusIconStyler.Result styledDark;
         try {
-            styledLight = FocusIconStyler.load(systemUiContext, light.icon,
-                    light.islandIcon, light.tint, Color.WHITE, 13);
-            styledDark = FocusIconStyler.load(systemUiContext, dark.icon,
-                    dark.islandIcon, dark.tint, Color.BLACK, 13);
+            styledLight = FocusIconStyler.loadAtSize(systemUiContext, light.icon,
+                    light.islandIcon, light.tint, Color.WHITE, iconSizePx);
+            styledDark = FocusIconStyler.loadAtSize(systemUiContext, dark.icon,
+                    dark.islandIcon, dark.tint, Color.BLACK, iconSizePx);
             if (styledLight == null || styledDark == null) {
                 log(stage + " island focus icon load returned null package=" + data.packageName
                         + " lightType=" + light.icon.getType()
@@ -4572,7 +4672,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             return false;
         }
         log(stage + " applied island focus icon light=" + light.source
-                + " dark=" + dark.source);
+                + " dark=" + dark.source + " sizePx=" + iconSizePx
+                + " nativeIconOnly=" + state.nativeIconOnly);
         return true;
     }
 
@@ -4810,7 +4911,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         if (icon == null || systemUiContext == null) return null;
         try {
             // 非空 Icon 不代表资源可用；真实加载及绘制失败时继续下一来源。
-            if (FocusIconStyler.load(systemUiContext, icon, island, false, Color.WHITE, 13) == null) return null;
+            if (FocusIconStyler.loadAtSize(systemUiContext, icon, island, false, Color.WHITE,
+                    FocusIconStyler.statusBarSizePx(systemUiContext, currentSettings.focusIconSizeDp)) == null) return null;
             return new SelectedFocusIcon(icon, tint, island, source);
         } catch (Throwable failure) {
             if (firstDiagnosis("iconLoad|" + source)) error("focus icon candidate source=" + source, failure);

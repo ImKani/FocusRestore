@@ -33,6 +33,12 @@ final class HookSettings {
     final boolean allowFocusClick;
     final boolean hideNotificationIcons;
     final boolean showFocusDivider;
+    final int focusIconSizeDp;
+    final int focusDividerStartDp;
+    final int focusDividerEndDp;
+    final int focusDividerWidthDp;
+    final int focusDividerStyle;
+
     final boolean showIslandIcon;
     final boolean tintIslandIcon;
     final boolean useSmallIconFallback;
@@ -60,7 +66,9 @@ final class HookSettings {
                          boolean compatRetry, boolean marqueeBounce, boolean islandCompat,
                          boolean disableIslandProperty, boolean disableIslandFeatureCache,
                          boolean allowFocusClick, boolean hideNotificationIcons,
-                         boolean showFocusDivider, boolean showIslandIcon,
+                         boolean showFocusDivider,
+                         int focusIconSizeDp, int focusDividerStartDp, int focusDividerEndDp,
+                         int focusDividerWidthDp, int focusDividerStyle, boolean showIslandIcon,
                          boolean tintIslandIcon, boolean useSmallIconFallback,
                          int focusIconPriority, boolean tintDeviceIcon,
                          boolean notificationRowClickFallback, boolean independentFocusBanner,
@@ -91,6 +99,12 @@ final class HookSettings {
         this.allowFocusClick = allowFocusClick;
         this.hideNotificationIcons = hideNotificationIcons;
         this.showFocusDivider = showFocusDivider;
+        this.focusIconSizeDp = FocusRestoreSettings.normalizeFocusIconSizeDp(focusIconSizeDp);
+        this.focusDividerStartDp = FocusRestoreSettings.normalizeFocusDividerSpacingDp(focusDividerStartDp);
+        this.focusDividerEndDp = FocusRestoreSettings.normalizeFocusDividerSpacingDp(focusDividerEndDp);
+        this.focusDividerWidthDp = FocusRestoreSettings.normalizeFocusDividerWidthDp(focusDividerWidthDp);
+        this.focusDividerStyle = FocusRestoreSettings.normalizeFocusDividerStyle(focusDividerStyle);
+
         this.showIslandIcon = showIslandIcon;
         this.tintIslandIcon = tintIslandIcon;
         this.useSmallIconFallback = useSmallIconFallback;
@@ -133,7 +147,9 @@ final class HookSettings {
                 source.marqueeDelayMs, source.compatRetry, source.marqueeBounce,
                 source.islandCompat, source.disableIslandProperty,
                 source.disableIslandFeatureCache, source.allowFocusClick,
-                source.hideNotificationIcons, source.showFocusDivider, source.showIslandIcon,
+                source.hideNotificationIcons, source.showFocusDivider,
+                source.focusIconSizeDp, source.focusDividerStartDp, source.focusDividerEndDp,
+                source.focusDividerWidthDp, source.focusDividerStyle, source.showIslandIcon,
                 source.tintIslandIcon, source.useSmallIconFallback,
                 source.focusIconPriority, source.tintDeviceIcon,
                 source.notificationRowClickFallback, source.independentFocusBanner,
@@ -187,6 +203,12 @@ final class HookSettings {
                         FocusRestoreSettings.DEFAULT_HIDE_NOTIFICATION_ICONS),
                 readBoolean(cursor, SettingsContract.SHOW_FOCUS_DIVIDER,
                         FocusRestoreSettings.DEFAULT_SHOW_FOCUS_DIVIDER),
+                // 旧 Provider 缺外观列时使用系统默认，不推导自其他设置。
+                readInt(cursor, SettingsContract.FOCUS_ICON_SIZE_DP, FocusRestoreSettings.DEFAULT_FOCUS_ICON_SIZE_DP),
+                readInt(cursor, SettingsContract.FOCUS_DIVIDER_START_DP, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_START_DP),
+                readInt(cursor, SettingsContract.FOCUS_DIVIDER_END_DP, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_END_DP),
+                readInt(cursor, SettingsContract.FOCUS_DIVIDER_WIDTH_DP, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_WIDTH_DP),
+                readInt(cursor, SettingsContract.FOCUS_DIVIDER_STYLE, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_STYLE),
                 readBoolean(cursor, SettingsContract.SHOW_ISLAND_ICON,
                         FocusRestoreSettings.DEFAULT_SHOW_ISLAND_ICON),
                 readBoolean(cursor, SettingsContract.TINT_ISLAND_ICON,
@@ -233,6 +255,11 @@ final class HookSettings {
                 + " allowFocusClick=" + allowFocusClick
                 + " hideNotificationIcons=" + hideNotificationIcons
                 + " showFocusDivider=" + showFocusDivider
+                + " focusIconSizeDp=" + focusIconSizeDp
+                + " focusDividerStartDp=" + focusDividerStartDp
+                + " focusDividerEndDp=" + focusDividerEndDp
+                + " focusDividerWidthDp=" + focusDividerWidthDp
+                + " focusDividerStyle=" + focusDividerStyle
                 + " showIslandIcon=" + showIslandIcon
                 + " tintIslandIcon=" + tintIslandIcon
                 + " expandIslandOnClick=false(deprecated)"

@@ -67,7 +67,7 @@ public class SettingsBackupCodecTest {
         int fields = 0;
         JSONObject groups = root.getJSONObject("settings");
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
-        assertEquals(37, fields);
+        assertEquals(42, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules"}) {
             assertFalse(excluded, text.contains("\"" + excluded + "\""));
@@ -436,6 +436,29 @@ public class SettingsBackupCodecTest {
         assertFalse("defaults for a separate import must not inherit current settings", decodeGroups("{}") .islandCompat);
     }
 
+    @Test
+    public void appearanceImportRejectsGapsBoundsAndWrongTypes() throws Exception {
+        for (String invalid : new String[]{"-1", "1", "7", "33", "1.0", "true", "\"8\""}) {
+            rejectGroups("{\"icons\":{\"focus_icon_size_dp\":" + invalid + "}}");
+        }
+        for (String key : new String[]{"focus_divider_start_dp", "focus_divider_end_dp"}) {
+            for (String invalid : new String[]{"-2", "25", "0.5", "false", "\"0\""}) {
+                rejectGroups("{\"focus\":{\"" + key + "\":" + invalid + "}}");
+            }
+        }
+        for (String invalid : new String[]{"-1", "5", "1.5", "true", "\"1\""}) {
+            rejectGroups("{\"focus\":{\"focus_divider_width_dp\":" + invalid + "}}");
+        }
+        for (String invalid : new String[]{"-1", "4", "1.5", "null", "\"1\""}) {
+            rejectGroups("{\"focus\":{\"focus_divider_style\":" + invalid + "}}");
+        }
+        FocusRestoreSettings automatic = decodeGroups("{\"icons\":{\"focus_icon_size_dp\":0},\"focus\":{\"focus_divider_start_dp\":-1,\"focus_divider_end_dp\":-1,\"focus_divider_width_dp\":0,\"focus_divider_style\":0}}");
+        assertEverySettingEquals(FocusRestoreSettings.defaults(), automatic);
+        for (int size : new int[]{8, 32}) {
+            assertEquals(size, decodeGroups("{\"icons\":{\"focus_icon_size_dp\":" + size + "}}").focusIconSizeDp);
+        }
+    }
+
     private static FocusRestoreSettings allSettings(boolean direct) {
         return FocusRestoreSettings.edit().hookMode(4).limitWidth(false).widthDp(244).widthLandscapeDp(1200)
                 .marqueeDelayMs(1700).specialBannerNormalBackground(false)
@@ -443,6 +466,8 @@ public class SettingsBackupCodecTest {
                 .compatRetry(true).marqueeBounce(false).islandCompat(true)
                 .disableIslandProperty(false).disableIslandFeatureCache(false).allowFocusClick(true)
                 .hideNotificationIcons(false).showFocusDivider(false).showIslandIcon(true).tintIslandIcon(false)
+                .focusIconSizeDp(23).focusDividerStartDp(0).focusDividerEndDp(24)
+                .focusDividerWidthDp(4).focusDividerStyle(3)
                 .useSmallIconFallback(true).focusIconPriority(1).tintDeviceIcon(false)
                 .notificationRowClickFallback(true).independentFocusBanner(true)
                 .longPressNotificationRowClick(true).longPressSeconds(2.75f).focusSwipeEnabled(true).islandTextMode(1)
@@ -487,7 +512,7 @@ public class SettingsBackupCodecTest {
             assertEquals(field.getName(), field.get(expected), field.get(actual));
             count++;
         }
-        assertEquals("current user snapshot field count", 37, count);
+        assertEquals("current user snapshot field count", 42, count);
     }
 
     private static FocusRestoreSettings decodeGroups(String groups) throws IOException {

@@ -86,6 +86,27 @@ public class SettingsActivityStateTest {
     }
 
     @Test
+    public void appearanceStateControlsAndCleanupRemainAvailableOnOs3() throws Exception {
+        String source = readSettingsActivitySource();
+        for (String field : new String[]{"focusIconSizeDp", "focusDividerStartDp", "focusDividerEndDp",
+                "focusDividerWidthDp", "focusDividerStyle"}) {
+            String pending = "pending" + Character.toUpperCase(field.charAt(0)) + field.substring(1);
+            assertTrue(source.contains("outState.putInt(\"m3." + field + "\", " + pending + ")"));
+            assertTrue(source.contains("state.getInt(\"m3." + field + "\", " + pending + ")"));
+            assertTrue(source.contains("." + field + "(" + pending + ")"));
+        }
+        for (String control : new String[]{"focusIconSizeSeekBar", "focusDividerStartSeekBar", "focusDividerEndSeekBar",
+                "focusDividerWidthSeekBar", "focusDividerStyleField"}) assertTrue(source.contains(control + " = null;"));
+        assertTrue(source.contains("setModeSpecificSwitchEnabled(showFocusDividerSwitch, true)"));
+        assertTrue(!source.contains("显示焦点分隔线（HyperOS 4）"));
+        assertTrue(source.contains("focusIconOrderContainer.setPadding(0, dp(6), 0, dp(6))"));
+        assertTrue(!source.contains("protected void onMeasure"));
+        assertTrue(source.contains("FocusRestoreSettings.focusIconSizeFromProgress(progress)"));
+        assertTrue(source.contains("FocusRestoreSettings.focusDividerSpacingFromProgress(progress)"));
+        assertTrue(source.contains("value == automatic ? \"跟随系统\""));
+    }
+
+    @Test
     public void adapterViewsUseItemListenersDuringPageCleanup() throws Exception {
         String source = readSettingsActivitySource();
         int start = source.indexOf("private void detachPageListeners(View view)");
@@ -128,8 +149,9 @@ public class SettingsActivityStateTest {
             for (File base : new File[]{directory, new File(directory, "app")}) {
                 File candidate = new File(base, relative);
                 if (candidate.isFile()) {
+                    // 工作区可能按 core.autocrlf 使用 CRLF；结构守卫应忽略换行编码。
                     return new String(Files.readAllBytes(candidate.toPath()),
-                            StandardCharsets.UTF_8);
+                            StandardCharsets.UTF_8).replace("\r\n", "\n");
                 }
                 tried.append(candidate.getPath()).append(", ");
             }

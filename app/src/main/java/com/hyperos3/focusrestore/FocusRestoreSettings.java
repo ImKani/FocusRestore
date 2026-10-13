@@ -45,6 +45,11 @@ public final class FocusRestoreSettings {
     public static final String KEY_DISABLE_ISLAND_FEATURE_CACHE = "disable_island_feature_cache";
     public static final String KEY_HOOK_MODE = "hook_mode";
     public static final String KEY_HIDE_NOTIFICATION_ICONS = "hide_notification_icons";
+    public static final String KEY_FOCUS_ICON_SIZE_DP = "focus_icon_size_dp";
+    public static final String KEY_FOCUS_DIVIDER_START_DP = "focus_divider_start_dp";
+    public static final String KEY_FOCUS_DIVIDER_END_DP = "focus_divider_end_dp";
+    public static final String KEY_FOCUS_DIVIDER_WIDTH_DP = "focus_divider_width_dp";
+    public static final String KEY_FOCUS_DIVIDER_STYLE = "focus_divider_style";
     public static final String KEY_SHOW_FOCUS_DIVIDER = "show_focus_divider";
     public static final String KEY_SHOW_ISLAND_ICON = "show_island_icon";
     public static final String KEY_TINT_ISLAND_ICON = "tint_island_icon";
@@ -92,6 +97,11 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_DISABLE_ISLAND_FEATURE_CACHE = true;
     public static final boolean DEFAULT_ALLOW_FOCUS_CLICK = false;
     public static final boolean DEFAULT_HIDE_NOTIFICATION_ICONS = true;
+    public static final int DEFAULT_FOCUS_ICON_SIZE_DP = 0;
+    public static final int DEFAULT_FOCUS_DIVIDER_START_DP = -1;
+    public static final int DEFAULT_FOCUS_DIVIDER_END_DP = -1;
+    public static final int DEFAULT_FOCUS_DIVIDER_WIDTH_DP = 0;
+    public static final int DEFAULT_FOCUS_DIVIDER_STYLE = 0;
     public static final boolean DEFAULT_SHOW_FOCUS_DIVIDER = true;
     public static final boolean DEFAULT_SHOW_ISLAND_ICON = false;
     public static final boolean DEFAULT_TINT_ISLAND_ICON = true;
@@ -139,6 +149,12 @@ public final class FocusRestoreSettings {
     public final boolean allowFocusClick;
     public final boolean hideNotificationIcons;
     public final boolean showFocusDivider;
+    public final int focusIconSizeDp;
+    public final int focusDividerStartDp;
+    public final int focusDividerEndDp;
+    public final int focusDividerWidthDp;
+    public final int focusDividerStyle;
+
     public final boolean showIslandIcon;
     public final boolean tintIslandIcon;
     public final int focusIconPriority;
@@ -180,6 +196,12 @@ public final class FocusRestoreSettings {
         this.allowFocusClick = editor.allowFocusClick;
         this.hideNotificationIcons = editor.hideNotificationIcons;
         this.showFocusDivider = editor.showFocusDivider;
+        this.focusIconSizeDp = normalizeFocusIconSizeDp(editor.focusIconSizeDp);
+        this.focusDividerStartDp = normalizeFocusDividerSpacingDp(editor.focusDividerStartDp);
+        this.focusDividerEndDp = normalizeFocusDividerSpacingDp(editor.focusDividerEndDp);
+        this.focusDividerWidthDp = normalizeFocusDividerWidthDp(editor.focusDividerWidthDp);
+        this.focusDividerStyle = normalizeFocusDividerStyle(editor.focusDividerStyle);
+
         this.showIslandIcon = editor.showIslandIcon;
         this.tintIslandIcon = editor.tintIslandIcon;
         // 旧偏好仅在缺新键时迁移；保存后新顺序成为唯一决策，旧布尔供旧 Hook 读取。
@@ -231,6 +253,12 @@ public final class FocusRestoreSettings {
         private boolean allowFocusClick = DEFAULT_ALLOW_FOCUS_CLICK;
         private boolean hideNotificationIcons = DEFAULT_HIDE_NOTIFICATION_ICONS;
         private boolean showFocusDivider = DEFAULT_SHOW_FOCUS_DIVIDER;
+        private int focusIconSizeDp = DEFAULT_FOCUS_ICON_SIZE_DP;
+        private int focusDividerStartDp = DEFAULT_FOCUS_DIVIDER_START_DP;
+        private int focusDividerEndDp = DEFAULT_FOCUS_DIVIDER_END_DP;
+        private int focusDividerWidthDp = DEFAULT_FOCUS_DIVIDER_WIDTH_DP;
+        private int focusDividerStyle = DEFAULT_FOCUS_DIVIDER_STYLE;
+
         private boolean showIslandIcon = DEFAULT_SHOW_ISLAND_ICON;
         private boolean tintIslandIcon = DEFAULT_TINT_ISLAND_ICON;
         private Integer focusIconPriority;
@@ -273,6 +301,12 @@ public final class FocusRestoreSettings {
             this.allowFocusClick = source.allowFocusClick;
             this.hideNotificationIcons = source.hideNotificationIcons;
             this.showFocusDivider = source.showFocusDivider;
+            this.focusIconSizeDp = source.focusIconSizeDp;
+            this.focusDividerStartDp = source.focusDividerStartDp;
+            this.focusDividerEndDp = source.focusDividerEndDp;
+            this.focusDividerWidthDp = source.focusDividerWidthDp;
+            this.focusDividerStyle = source.focusDividerStyle;
+
             this.showIslandIcon = source.showIslandIcon;
             this.tintIslandIcon = source.tintIslandIcon;
             this.focusIconPriority = source.focusIconPriority;
@@ -317,6 +351,11 @@ public final class FocusRestoreSettings {
         public Editor hideNotificationIcons(boolean value) {
             this.hideNotificationIcons = value; return this;
         }
+        public Editor focusIconSizeDp(int value) { this.focusIconSizeDp = value; return this; }
+        public Editor focusDividerStartDp(int value) { this.focusDividerStartDp = value; return this; }
+        public Editor focusDividerEndDp(int value) { this.focusDividerEndDp = value; return this; }
+        public Editor focusDividerWidthDp(int value) { this.focusDividerWidthDp = value; return this; }
+        public Editor focusDividerStyle(int value) { this.focusDividerStyle = value; return this; }
         public Editor showFocusDivider(boolean value) { this.showFocusDivider = value; return this; }
         public Editor showIslandIcon(boolean value) { this.showIslandIcon = value; return this; }
         public Editor tintIslandIcon(boolean value) { this.tintIslandIcon = value; return this; }
@@ -418,6 +457,11 @@ public final class FocusRestoreSettings {
                         DEFAULT_ALLOW_FOCUS_CLICK))
                 .hideNotificationIcons(preferences.getBoolean(KEY_HIDE_NOTIFICATION_ICONS,
                         DEFAULT_HIDE_NOTIFICATION_ICONS))
+                .focusIconSizeDp(preferences.getInt(KEY_FOCUS_ICON_SIZE_DP, DEFAULT_FOCUS_ICON_SIZE_DP))
+                .focusDividerStartDp(preferences.getInt(KEY_FOCUS_DIVIDER_START_DP, DEFAULT_FOCUS_DIVIDER_START_DP))
+                .focusDividerEndDp(preferences.getInt(KEY_FOCUS_DIVIDER_END_DP, DEFAULT_FOCUS_DIVIDER_END_DP))
+                .focusDividerWidthDp(preferences.getInt(KEY_FOCUS_DIVIDER_WIDTH_DP, DEFAULT_FOCUS_DIVIDER_WIDTH_DP))
+                .focusDividerStyle(preferences.getInt(KEY_FOCUS_DIVIDER_STYLE, DEFAULT_FOCUS_DIVIDER_STYLE))
                 .showFocusDivider(preferences.getBoolean(KEY_SHOW_FOCUS_DIVIDER,
                         DEFAULT_SHOW_FOCUS_DIVIDER))
                 .showIslandIcon(preferences.getBoolean(KEY_SHOW_ISLAND_ICON,
@@ -467,6 +511,11 @@ public final class FocusRestoreSettings {
                 + " allowFocusClick=" + allowFocusClick
                 + " hideNotificationIcons=" + hideNotificationIcons
                 + " showFocusDivider=" + showFocusDivider
+                + " focusIconSizeDp=" + focusIconSizeDp
+                + " focusDividerStartDp=" + focusDividerStartDp
+                + " focusDividerEndDp=" + focusDividerEndDp
+                + " focusDividerWidthDp=" + focusDividerWidthDp
+                + " focusDividerStyle=" + focusDividerStyle
                 + " showIslandIcon=" + showIslandIcon
                 + " tintIslandIcon=" + tintIslandIcon
                 + " expandIslandOnClick=false(deprecated)"
@@ -513,6 +562,11 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_ALLOW_FOCUS_CLICK, allowFocusClick)
                 .putBoolean(KEY_HIDE_NOTIFICATION_ICONS, hideNotificationIcons)
                 .putBoolean(KEY_SHOW_FOCUS_DIVIDER, showFocusDivider)
+                .putInt(KEY_FOCUS_ICON_SIZE_DP, focusIconSizeDp)
+                .putInt(KEY_FOCUS_DIVIDER_START_DP, focusDividerStartDp)
+                .putInt(KEY_FOCUS_DIVIDER_END_DP, focusDividerEndDp)
+                .putInt(KEY_FOCUS_DIVIDER_WIDTH_DP, focusDividerWidthDp)
+                .putInt(KEY_FOCUS_DIVIDER_STYLE, focusDividerStyle)
                 .putBoolean(KEY_SHOW_ISLAND_ICON, showIslandIcon)
                 .putBoolean(KEY_TINT_ISLAND_ICON, tintIslandIcon)
                 .putBoolean(KEY_EXPAND_ISLAND_ON_CLICK, false)
@@ -538,6 +592,21 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_HOOK_SETTINGS_READY, true)
                 .commit();
     }
+
+    // 0 保留 ROM 图标尺寸；非法小尺寸回退自动，避免保存 UI 无法表达的 1～7 dp。
+    static int normalizeFocusIconSizeDp(int value) {
+        return value < 8 ? DEFAULT_FOCUS_ICON_SIZE_DP : Math.min(32, value);
+    }
+
+    static int normalizeFocusDividerSpacingDp(int value) { return clamp(value, -1, 24); }
+    static int normalizeFocusDividerWidthDp(int value) { return clamp(value, 0, 4); }
+    static int normalizeFocusDividerStyle(int value) { return value >= 0 && value <= 3 ? value : 0; }
+
+    // 滑动条首格为自动，后续每格只对应可保存的实际尺寸。
+    static int focusIconSizeFromProgress(int progress) { return progress <= 0 ? 0 : clamp(progress, 1, 25) + 7; }
+    static int focusIconSizeToProgress(int value) { int size = normalizeFocusIconSizeDp(value); return size == 0 ? 0 : size - 7; }
+    static int focusDividerSpacingFromProgress(int progress) { return clamp(progress, 0, 25) - 1; }
+    static int focusDividerSpacingToProgress(int value) { return normalizeFocusDividerSpacingDp(value) + 1; }
 
     // 非有限值不能进入手势计时；有限越界值夹紧，避免立即触发或永不触发。
     static float normalizeLongPressSeconds(float seconds) {

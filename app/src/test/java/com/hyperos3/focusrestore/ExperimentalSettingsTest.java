@@ -164,6 +164,68 @@ public class ExperimentalSettingsTest {
         assertEquals(80, reverse.touchWidthLandscapeDp);
     }
 
+    @Test
+    public void appearanceSurvivesBothStoresCopyBackupAndNamedProvider() throws Exception {
+        SharedPreferences first = memoryPreferences(new HashMap<>());
+        SharedPreferences second = memoryPreferences(new HashMap<>());
+        // 先保存自定义再恢复自动，防止关闭或归零后只更新 UI 而存储仍残留旧值。
+        for (boolean custom : new boolean[]{true, false}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit().hookMode(3).showFocusDivider(false)
+                    .focusIconSizeDp(custom ? 8 : 0).focusDividerStartDp(custom ? 0 : -1)
+                    .focusDividerEndDp(custom ? 24 : -1).focusDividerWidthDp(custom ? 4 : 0)
+                    .focusDividerStyle(custom ? 2 : 0).build();
+            for (SharedPreferences store : new SharedPreferences[]{first, second}) {
+                assertTrue(settings.save(store));
+                FocusRestoreSettings loaded = FocusRestoreSettings.fromPreferences(store);
+                for (FocusRestoreSettings copy : new FocusRestoreSettings[]{loaded,
+                        FocusRestoreSettings.edit(loaded).build(), SettingsBackupCodec.decode(SettingsBackupCodec.encode(loaded))}) {
+                    HookSettings hook = HookSettings.fromCursor(SettingsContractTest.namedCursor(SettingsContract.COLUMNS, SettingsContract.toRow(copy, "")));
+                    assertEquals(settings.focusIconSizeDp, copy.focusIconSizeDp);
+                    assertEquals(settings.focusDividerStartDp, copy.focusDividerStartDp);
+                    assertEquals(settings.focusDividerEndDp, copy.focusDividerEndDp);
+                    assertEquals(settings.focusDividerWidthDp, copy.focusDividerWidthDp);
+                    assertEquals(settings.focusDividerStyle, copy.focusDividerStyle);
+                    assertEquals(settings.focusIconSizeDp, hook.focusIconSizeDp);
+                    assertEquals(settings.focusDividerStartDp, hook.focusDividerStartDp);
+                    assertEquals(settings.focusDividerEndDp, hook.focusDividerEndDp);
+                    assertEquals(settings.focusDividerWidthDp, hook.focusDividerWidthDp);
+                    assertEquals(settings.focusDividerStyle, hook.focusDividerStyle);
+                    assertFalse(copy.showFocusDivider);
+                    assertEquals(3, copy.hookMode);
+                }
+                assertEquals(settings.focusIconSizeDp, store.getInt("focus_icon_size_dp", -99));
+                assertEquals(settings.focusDividerWidthDp, store.getInt("focus_divider_width_dp", -99));
+            }
+        }
+        FocusRestoreSettings legacy = FocusRestoreSettings.fromPreferences(memoryPreferences(legacyPreferences()));
+        assertEquals(0, legacy.focusIconSizeDp);
+        assertEquals(-1, legacy.focusDividerStartDp);
+        assertEquals(-1, legacy.focusDividerEndDp);
+        assertEquals(0, legacy.focusDividerWidthDp);
+        assertEquals(0, legacy.focusDividerStyle);
+    }
+
+    @Test
+    public void appearanceBoundsAndSliderStepsAlwaysProduceSaveableValues() {
+        for (int progress = 0; progress <= 25; progress++) {
+            int size = FocusRestoreSettings.focusIconSizeFromProgress(progress);
+            assertEquals(progress == 0 ? 0 : progress + 7, size);
+            assertEquals(progress, FocusRestoreSettings.focusIconSizeToProgress(size));
+            int spacing = FocusRestoreSettings.focusDividerSpacingFromProgress(progress);
+            assertEquals(progress - 1, spacing);
+            assertEquals(progress, FocusRestoreSettings.focusDividerSpacingToProgress(spacing));
+        }
+        for (int invalid : new int[]{Integer.MIN_VALUE, -1, 1, 7}) assertEquals(0, FocusRestoreSettings.normalizeFocusIconSizeDp(invalid));
+        assertEquals(32, FocusRestoreSettings.normalizeFocusIconSizeDp(Integer.MAX_VALUE));
+        FocusRestoreSettings bounded = FocusRestoreSettings.edit().focusDividerStartDp(-2).focusDividerEndDp(25)
+                .focusDividerWidthDp(5).focusDividerStyle(4).build();
+        assertEquals(-1, bounded.focusDividerStartDp);
+        assertEquals(24, bounded.focusDividerEndDp);
+        assertEquals(4, bounded.focusDividerWidthDp);
+        assertEquals(0, bounded.focusDividerStyle);
+        assertEquals(0, FocusRestoreSettings.edit().focusDividerWidthDp(-1).build().focusDividerWidthDp);
+    }
+
     private static void assertTouchWidths(FocusRestoreSettings settings, boolean enabled) {
         assertEquals(enabled, settings.customTouchWidth);
         assertEquals(100, settings.touchWidthDp);

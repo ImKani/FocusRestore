@@ -49,7 +49,8 @@ final class SettingsBackupCodec {
             "[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?");
     private static final Set<String> INTEGER_FIELDS = new HashSet<>(Arrays.asList("formatVersion",
             "hook_mode", "island_text_mode", "text_width_dp", "text_width_landscape_dp",
-            "marquee_delay_ms", "media_focus_cast_picker", "focus_icon_priority", "touch_width_dp", "touch_width_landscape_dp"));
+            "marquee_delay_ms", "media_focus_cast_picker", "focus_icon_priority", "touch_width_dp", "touch_width_landscape_dp",
+            "focus_icon_size_dp", "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style"));
 
     private SettingsBackupCodec() { }
 
@@ -104,7 +105,8 @@ final class SettingsBackupCodec {
                     "island_force_packages");
             JSONObject focus = group(groups, "focus", "limit_text_width", "text_width_dp",
                     "text_width_landscape_dp", "focus_max_display_seconds",
-                    "focus_timeout_exempt_packages", "hide_notification_icons", "show_focus_divider");
+                    "focus_timeout_exempt_packages", "hide_notification_icons", "show_focus_divider",
+                    "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style");
             JSONObject media = group(groups, "media", "media_focus_enabled", "media_focus_native_banner",
                     "media_focus_cast_picker", "media_focus_cast_direct");
             JSONObject interaction = group(groups, "interaction", "independent_focus_banner",
@@ -113,7 +115,7 @@ final class SettingsBackupCodec {
                     "long_press_seconds", "focus_swipe_enabled",
                     "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp");
             JSONObject icons = group(groups, "icons", "show_island_icon", "tint_island_icon",
-                    "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon");
+                    "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon", "focus_icon_size_dp");
             JSONObject marquee = group(groups, "marquee", "marquee_bounce", "marquee_delay_ms");
             JSONObject compatibility = group(groups, "compatibility", "compat_retry",
                     "disable_island_property", "disable_island_feature_cache");
@@ -130,6 +132,12 @@ final class SettingsBackupCodec {
             if (iconPriority < 0 || iconPriority >= FocusRestoreSettings.ICON_ORDER_COUNT) {
                 throw invalid("focus_icon_priority 必须为 0～5 的整数");
             }
+            int iconSize = integer(icons, "focus_icon_size_dp", defaults.focusIconSizeDp);
+            if (iconSize != 0 && (iconSize < 8 || iconSize > 32)) throw invalid("focus_icon_size_dp 必须为 0 或 8～32");
+            int dividerStart = rangedInteger(focus, "focus_divider_start_dp", defaults.focusDividerStartDp, -1, 24);
+            int dividerEnd = rangedInteger(focus, "focus_divider_end_dp", defaults.focusDividerEndDp, -1, 24);
+            int dividerWidth = rangedInteger(focus, "focus_divider_width_dp", defaults.focusDividerWidthDp, 0, 4);
+            int dividerStyle = rangedInteger(focus, "focus_divider_style", defaults.focusDividerStyle, 0, 3);
             int width = integer(focus, "text_width_dp", defaults.widthDp);
             String legacySeparator = separator(island, "island_separator", defaults.islandGeneralSeparator);
             Set<String> forcePackages = packages(island, "island_force_packages");
@@ -155,6 +163,8 @@ final class SettingsBackupCodec {
                     .focusTimeoutExemptPackages(timeoutExemptPackages)
                     .hideNotificationIcons(bool(focus, "hide_notification_icons", defaults.hideNotificationIcons))
                     .showFocusDivider(bool(focus, "show_focus_divider", defaults.showFocusDivider))
+                    .focusIconSizeDp(iconSize).focusDividerStartDp(dividerStart).focusDividerEndDp(dividerEnd)
+                    .focusDividerWidthDp(dividerWidth).focusDividerStyle(dividerStyle)
                     .mediaFocusEnabled(bool(media, "media_focus_enabled", defaults.mediaFocusEnabled))
                     .mediaFocusNativeBanner(bool(media, "media_focus_native_banner", defaults.mediaFocusNativeBanner))
                     .mediaFocusCastPicker(picker)
@@ -197,7 +207,11 @@ final class SettingsBackupCodec {
                         "focus_max_display_seconds", settings.focusMaxDisplaySeconds,
                         "focus_timeout_exempt_packages", new TreeSet<>(settings.focusTimeoutExemptPackages),
                         "hide_notification_icons", settings.hideNotificationIcons,
-                        "show_focus_divider", settings.showFocusDivider),
+                        "show_focus_divider", settings.showFocusDivider,
+                         "focus_divider_start_dp", settings.focusDividerStartDp,
+                         "focus_divider_end_dp", settings.focusDividerEndDp,
+                         "focus_divider_width_dp", settings.focusDividerWidthDp,
+                         "focus_divider_style", settings.focusDividerStyle),
                 "media", entries("media_focus_enabled", settings.mediaFocusEnabled,
                         "media_focus_native_banner", settings.mediaFocusNativeBanner,
                         "media_focus_cast_picker", settings.mediaFocusCastPicker,
@@ -216,7 +230,7 @@ final class SettingsBackupCodec {
                         "tint_island_icon", settings.tintIslandIcon,
                         "use_small_icon_fallback", settings.useSmallIconFallback,
                         "focus_icon_priority", settings.focusIconPriority,
-                        "tint_device_icon", settings.tintDeviceIcon),
+                        "tint_device_icon", settings.tintDeviceIcon, "focus_icon_size_dp", settings.focusIconSizeDp),
                 "marquee", entries("marquee_bounce", settings.marqueeBounce,
                         "marquee_delay_ms", settings.marqueeDelayMs),
                 "compatibility", entries("compat_retry", settings.compatRetry,
@@ -341,6 +355,12 @@ final class SettingsBackupCodec {
         if (!Double.isFinite(number) || number < Integer.MIN_VALUE || number > Integer.MAX_VALUE
                 || number != Math.rint(number)) throw invalid(key + " 不是有效整数");
         return (int) number;
+    }
+
+    private static int rangedInteger(JSONObject object, String key, int fallback, int min, int max) throws IOException {
+        int value = integer(object, key, fallback);
+        if (value < min || value > max) throw invalid(key + " 必须为 " + min + "～" + max + " 的整数");
+        return value;
     }
 
     private static float seconds(JSONObject object, String key, float fallback) throws IOException {

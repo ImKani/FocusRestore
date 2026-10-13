@@ -7,6 +7,19 @@
 
 plugins { id 'com.android.application' }
 
+/*
+ * 作者签名密码：优先环境变量 FOCUSRESTORE_KEY_PASSWORD，其次读取被 .gitignore 忽略的本地密码文件。
+ * 与 :app 使用同一作者证书，解析逻辑需与 app/build.gradle 保持一致；正式签名密码不写进公开仓库。
+ */
+def authorSigningPassword = System.getenv('FOCUSRESTORE_KEY_PASSWORD')
+if (!authorSigningPassword) {
+    def authorPasswordFile = file('../.android/focusrestore-author.password.txt')
+    if (!authorPasswordFile.exists()) {
+        throw new GradleException("缺少作者签名密码：请设置 FOCUSRESTORE_KEY_PASSWORD，或恢复 ${authorPasswordFile}")
+    }
+    authorSigningPassword = authorPasswordFile.text.trim()
+}
+
 android {
     namespace 'com.hyperos3.focustestnotifier'
     compileSdk 35
@@ -24,21 +37,22 @@ android {
     }
 
     signingConfigs {
-        // Same preserved test certificate as :app, so both install over each other cleanly.
-        preservedDebug {
-            storeFile file('../.android/debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
+        // 与 :app 共用作者证书；本测试工具的 Debug 与 Release 可互相覆盖安装，首次迁移需卸载旧签名版本。
+        authorSigning {
+            storeFile file('../.android/focusrestore-author.p12')
+            storeType 'PKCS12'
+            storePassword authorSigningPassword
+            keyAlias 'focusrestore'
+            keyPassword authorSigningPassword
         }
     }
 
     buildTypes {
         debug {
-            signingConfig signingConfigs.preservedDebug
+            signingConfig signingConfigs.authorSigning
         }
         release {
-            signingConfig signingConfigs.preservedDebug
+            signingConfig signingConfigs.authorSigning
         }
     }
 

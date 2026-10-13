@@ -850,6 +850,10 @@ final class HyperOS4FocusController {
         return sbn instanceof StatusBarNotification ? ((StatusBarNotification) sbn).getPostTime() : -1L;
     }
 
+    void onAppearanceSettingChanged() {
+        renderBest();
+    }
+
     void onSwipeSettingChanged() {
         swipeSelection.clear();
         renderBest();
@@ -864,7 +868,7 @@ final class HyperOS4FocusController {
         private boolean tintCurrentIcon;
         private boolean currentIslandIcon;
         private Icon currentIcon;
-        private int currentIconSizeDp;
+        private int currentIconSizePx;
         private int contentInsetPx;
         private int maxWidthPx = Integer.MAX_VALUE;
         private int touchWidthPx;
@@ -943,31 +947,37 @@ final class HyperOS4FocusController {
                     + " widthDp=" + configuredWidthDp + " portraitDp=" + settings.widthDp
                     + " landscapeDp=" + settings.widthLandscapeDp);
             if (settings.showFocusDivider) {
-                int dividerWidth = Math.max(1, Math.round(density));
-                int dividerHeight = Math.max(1, Math.round(12f * density));
-                contentInsetPx = dividerWidth + Math.max(1, Math.round(6f * density));
+                FocusDividerDrawable decoration = new FocusDividerDrawable(density,
+                        settings.focusDividerStyle, settings.focusDividerWidthDp, currentTint);
+                int start = Math.round((settings.focusDividerStartDp < 0
+                        ? 0 : settings.focusDividerStartDp) * density);
+                int end = Math.round((settings.focusDividerEndDp < 0
+                        ? 6 : settings.focusDividerEndDp) * density);
+                contentInsetPx = start + decoration.getIntrinsicWidth() + end;
                 divider = new View(getContext());
-                divider.setBackgroundColor(currentTint);
+                divider.setBackground(decoration);
                 divider.setAlpha(0.45f);
                 LayoutParams dividerParams = new LayoutParams(
-                        dividerWidth, dividerHeight, Gravity.CENTER_VERTICAL | Gravity.START);
+                        decoration.getIntrinsicWidth(), decoration.getIntrinsicHeight(),
+                        Gravity.CENTER_VERTICAL | Gravity.START);
+                dividerParams.setMarginStart(start);
                 addView(divider, dividerParams);
             }
             boolean usingDarkIcon = isNightMode() && item.iconDark != null;
             Icon selectedIcon = usingDarkIcon ? item.iconDark : item.icon;
             if (selectedIcon != null && nextContent instanceof TextView) {
                 try {
-                    currentIconSizeDp = 13;
-                    int iconSize = Math.max(1, Math.round(currentIconSizeDp * density));
+                    currentIconSizePx = FocusIconStyler.statusBarSizePx(getContext(), settings.focusIconSizeDp);
+                    int iconSize = currentIconSizePx;
                     int iconGap = Math.max(1, Math.round(4f * density));
                     iconView = new ImageView(getContext());
                     iconView.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
                     tintCurrentIcon = usingDarkIcon ? item.tintIconDark : item.tintIcon;
                     currentIslandIcon = usingDarkIcon ? item.islandIconDark : item.islandIcon;
                     currentIcon = selectedIcon;
-                    FocusIconStyler.Result iconResult = FocusIconStyler.load(getContext(),
+                    FocusIconStyler.Result iconResult = FocusIconStyler.loadAtSize(getContext(),
                             selectedIcon, currentIslandIcon, tintCurrentIcon,
-                            currentTint, currentIconSizeDp);
+                            currentTint, currentIconSizePx);
                     if (iconResult == null) {
                         throw new IllegalStateException("Icon.loadDrawable returned null package="
                                 + item.packageName + " type=" + selectedIcon.getType());
@@ -980,7 +990,7 @@ final class HyperOS4FocusController {
                     bindClick(iconView, item, settings);
                     contentInsetPx += iconSize + iconGap;
                     logger.log("OS4 focus icon attached key=" + item.key
-                            + " tinted=" + tintCurrentIcon);
+                            + " tinted=" + tintCurrentIcon + " sizePx=" + currentIconSizePx);
                 } catch (Throwable throwable) {
                     iconView = null;
                     tintCurrentIcon = false;
@@ -1045,7 +1055,7 @@ final class HyperOS4FocusController {
             tintCurrentIcon = false;
             currentIslandIcon = false;
             currentIcon = null;
-            currentIconSizeDp = 0;
+            currentIconSizePx = 0;
             contentInsetPx = 0;
             bannerClicks = false;
             notificationRowClicks = false;
@@ -1094,14 +1104,16 @@ final class HyperOS4FocusController {
         }
 
         void updateDividerTint() {
-            if (divider != null) divider.setBackgroundColor(currentTint);
+            if (divider != null && divider.getBackground() instanceof FocusDividerDrawable) {
+                ((FocusDividerDrawable) divider.getBackground()).setColor(currentTint);
+            }
         }
 
         void refreshTintedIcon() {
             if (iconView == null || currentIcon == null || !tintCurrentIcon) return;
             try {
-                FocusIconStyler.Result result = FocusIconStyler.load(getContext(), currentIcon,
-                        currentIslandIcon, true, currentTint, currentIconSizeDp);
+                FocusIconStyler.Result result = FocusIconStyler.loadAtSize(getContext(), currentIcon,
+                        currentIslandIcon, true, currentTint, currentIconSizePx);
                 if (result != null) iconView.setImageDrawable(result.drawable);
             } catch (Throwable throwable) {
                 logger.error("OS4 refresh tinted island icon", throwable);

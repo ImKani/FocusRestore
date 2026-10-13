@@ -182,11 +182,17 @@ public final class SettingsActivity extends Activity {
     private Switch allowFocusClickSwitch;
     private Switch hideNotificationIconsSwitch;
     private Switch showFocusDividerSwitch;
+    private SeekBar focusIconSizeSeekBar;
+    private SeekBar focusDividerStartSeekBar;
+    private SeekBar focusDividerEndSeekBar;
+    private SeekBar focusDividerWidthSeekBar;
+    private SpinnerField focusDividerStyleField;
+    private LinearLayout focusDividerOptionsPanel;
     private Switch showIslandIconSwitch;
     private Switch tintIslandIconSwitch;
     private static final String[] ICON_TYPE_LABELS = {"应用图标", "焦点专用图标", "通知小图标"};
     private LinearLayout focusIconOrderContainer;
-    private final TextView[] focusIconOrderRows = new TextView[3];
+    private final LinearLayout[] focusIconOrderRows = new LinearLayout[3];
     private FocusIconDragHandler focusIconDragHandler;
     private Switch tintDeviceIconSwitch;
     private Switch notificationRowClickFallbackSwitch;
@@ -225,6 +231,12 @@ public final class SettingsActivity extends Activity {
             pendingNotificationRowClickFallback, pendingIndependentFocusBanner,
             pendingLongPressNotificationRowClick, pendingFocusSwipeEnabled, pendingCustomTouchWidth;
     private int pendingFocusIconPriority;
+    private int pendingFocusIconSizeDp;
+    private int pendingFocusDividerStartDp;
+    private int pendingFocusDividerEndDp;
+    private int pendingFocusDividerWidthDp;
+    private int pendingFocusDividerStyle;
+
     private boolean pendingTintDeviceIcon;
     private int pendingTouchWidthDp, pendingTouchWidthLandscapeDp;
     private float pendingLongPressSeconds;
@@ -510,6 +522,12 @@ public final class SettingsActivity extends Activity {
         allowFocusClickSwitch = null;
         hideNotificationIconsSwitch = null;
         showFocusDividerSwitch = null;
+        focusIconSizeSeekBar = null;
+        focusDividerStartSeekBar = null;
+        focusDividerEndSeekBar = null;
+        focusDividerWidthSeekBar = null;
+        focusDividerStyleField = null;
+        focusDividerOptionsPanel = null;
         showIslandIconSwitch = null;
         tintIslandIconSwitch = null;
         if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
@@ -687,9 +705,10 @@ public final class SettingsActivity extends Activity {
         focusPanel.addView(text(
                 "豁免名单内的应用不受上面的时间限制，按系统自己的时长显示（与超级岛白名单相互独立）。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
-        showFocusDividerSwitch = createSwitch("显示焦点分隔线（HyperOS 4）");
+        showFocusDividerSwitch = createSwitch("显示焦点分隔线");
         focusPanel.addView(hideNotificationIconsSwitch, matchWrap(dp(4)));
-                        focusPanel.addView(showFocusDividerSwitch, matchWrap(0));
+        focusPanel.addView(showFocusDividerSwitch, matchWrap(dp(4)));
+
         root.addView(focusPanel, matchWrap(dp(12)));
 
         manualWidthSwitch.setChecked(pendingManual);
@@ -709,11 +728,65 @@ public final class SettingsActivity extends Activity {
         installSettingsListeners();
     }
 
+    private void buildFocusDividerControls(LinearLayout panel) {
+        panel.addView(text("分隔线样式", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        focusDividerStyleField = choiceSpinner(new String[]{"竖线 │", "圆点 ·", "斜线 /", "短横线 −"},
+                pendingFocusDividerStyle, position -> {
+                    if (pendingFocusDividerStyle == position) return;
+                    pendingFocusDividerStyle = position;
+                    markPending();
+                });
+        panel.addView(focusDividerStyleField.spinner, matchWrap(dp(4)));
+        focusDividerStartSeekBar = appearanceSlider(panel, "分隔线前间距（时间侧）", 25,
+                FocusRestoreSettings.focusDividerSpacingToProgress(pendingFocusDividerStartDp),
+                progress -> FocusRestoreSettings.focusDividerSpacingFromProgress(progress),
+                value -> pendingFocusDividerStartDp = value, -1);
+        focusDividerEndSeekBar = appearanceSlider(panel, "分隔线后间距（焦点侧）", 25,
+                FocusRestoreSettings.focusDividerSpacingToProgress(pendingFocusDividerEndDp),
+                progress -> FocusRestoreSettings.focusDividerSpacingFromProgress(progress),
+                value -> pendingFocusDividerEndDp = value, -1);
+        focusDividerWidthSeekBar = appearanceSlider(panel, "分隔线粗细", 4,
+                pendingFocusDividerWidthDp, progress -> progress,
+                value -> pendingFocusDividerWidthDp = value, 0);
+        panel.addView(text("间距可跟随系统或设为 0～24 dp；宽度可跟随系统或设为 1～4 dp。关闭分隔线后保留这些选择。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(4)));
+    }
+
+    private SeekBar appearanceSlider(LinearLayout panel, String label, int max, int progress,
+            java.util.function.IntUnaryOperator decode, IntConsumer update, int automatic) {
+        LinearLayout row = valueRow(label, appearanceValue(decode.applyAsInt(progress), automatic));
+        TextView valueLabel = (TextView) row.getChildAt(1);
+        panel.addView(row, matchWrap(dp(4)));
+        SeekBar slider = new SeekBar(this);
+        styleSeekBar(slider);
+        slider.setMax(max);
+        slider.setProgress(progress);
+        slider.setContentDescription(label);
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            public void onProgressChanged(SeekBar bar, int position, boolean fromUser) {
+                if (!fromUser) return;
+                int value = decode.applyAsInt(position);
+                update.accept(value);
+                valueLabel.setText(appearanceValue(value, automatic));
+            }
+            public void onStartTrackingTouch(SeekBar bar) { }
+            public void onStopTrackingTouch(SeekBar bar) { markPending(); }
+        });
+        panel.addView(slider, matchWrap(dp(2)));
+        return slider;
+    }
+
+    private String appearanceValue(int value, int automatic) {
+        return value == automatic ? "跟随系统" : value + " dp";
+    }
+
     private void buildAdvancedPage(LinearLayout root) {
         root.addView(sectionHeader("焦点图标"), matchWrap(dp(8)));
         LinearLayout iconPanel = panel();
         iconPanel.addView(text("焦点图标优先级（按住拖动排序）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
         focusIconOrderContainer = new LinearLayout(this);
+        // 首尾换位按手指到行中心判定，无需预留半行高的大留白。
+        focusIconOrderContainer.setPadding(0, dp(6), 0, dp(6));
         focusIconOrderContainer.setOrientation(LinearLayout.VERTICAL);
         iconPanel.addView(focusIconOrderContainer, matchWrap(dp(8)));
         rebuildFocusIconOrderRows();
@@ -727,7 +800,17 @@ public final class SettingsActivity extends Activity {
         iconPanel.addView(tintIslandIconSwitch, matchWrap(dp(4)));
         iconPanel.addView(text("超级岛图标可用时优先显示；其余按所选顺序回退。应用图标保留原色，焦点专用图标使用通知提供的浅深版本。设备通知使用独立图标。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        focusIconSizeSeekBar = appearanceSlider(iconPanel, "焦点图标尺寸", 25,
+                FocusRestoreSettings.focusIconSizeToProgress(pendingFocusIconSizeDp),
+                progress -> FocusRestoreSettings.focusIconSizeFromProgress(progress),
+                value -> pendingFocusIconSizeDp = value, 0);
+        iconPanel.addView(rangeRow("跟随系统 / 8 dp", "32 dp"), matchWrap(dp(4)));
         root.addView(iconPanel, matchWrap(dp(12)));
+        root.addView(sectionHeader("焦点分隔线"), matchWrap(dp(8)));
+        focusDividerOptionsPanel = panel();
+        buildFocusDividerControls(focusDividerOptionsPanel);
+        root.addView(focusDividerOptionsPanel, matchWrap(dp(12)));
+        updateFocusDividerControls();
         root.addView(sectionHeader("设备通知图标"), matchWrap(dp(8)));
         LinearLayout deviceIconPanel = panel();
         tintDeviceIconSwitch = createSwitch("设备通知图标跟随状态栏反色");
@@ -1278,6 +1361,12 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.click", pendingAllowFocusClick);
         outState.putBoolean("m3.hide", pendingHideNotificationIcons);
         outState.putBoolean("m3.divider", pendingShowFocusDivider);
+        outState.putInt("m3.focusIconSizeDp", pendingFocusIconSizeDp);
+        outState.putInt("m3.focusDividerStartDp", pendingFocusDividerStartDp);
+        outState.putInt("m3.focusDividerEndDp", pendingFocusDividerEndDp);
+        outState.putInt("m3.focusDividerWidthDp", pendingFocusDividerWidthDp);
+        outState.putInt("m3.focusDividerStyle", pendingFocusDividerStyle);
+
         outState.putBoolean("m3.showIslandIcon", pendingShowIslandIcon);
         outState.putBoolean("m3.tintIslandIcon", pendingTintIslandIcon);
         outState.putBoolean("m3.useSmallIconFallback", pendingUseSmallIconFallback);
@@ -1341,6 +1430,18 @@ public final class SettingsActivity extends Activity {
         pendingAllowFocusClick = state.getBoolean("m3.click", pendingAllowFocusClick);
         pendingHideNotificationIcons = state.getBoolean("m3.hide", pendingHideNotificationIcons);
         pendingShowFocusDivider = state.getBoolean("m3.divider", pendingShowFocusDivider);
+        // 旧 Bundle 缺外观字段时保留已加载值；恢复数据也须遵守可保存范围。
+        pendingFocusIconSizeDp = FocusRestoreSettings.normalizeFocusIconSizeDp(
+                state.getInt("m3.focusIconSizeDp", pendingFocusIconSizeDp));
+        pendingFocusDividerStartDp = FocusRestoreSettings.normalizeFocusDividerSpacingDp(
+                state.getInt("m3.focusDividerStartDp", pendingFocusDividerStartDp));
+        pendingFocusDividerEndDp = FocusRestoreSettings.normalizeFocusDividerSpacingDp(
+                state.getInt("m3.focusDividerEndDp", pendingFocusDividerEndDp));
+        pendingFocusDividerWidthDp = FocusRestoreSettings.normalizeFocusDividerWidthDp(
+                state.getInt("m3.focusDividerWidthDp", pendingFocusDividerWidthDp));
+        pendingFocusDividerStyle = FocusRestoreSettings.normalizeFocusDividerStyle(
+                state.getInt("m3.focusDividerStyle", pendingFocusDividerStyle));
+
         pendingFocusIconPriority = FocusRestoreSettings.normalizeIconPriority(
                 state.getInt("m3.focusIconPriority", pendingFocusIconPriority));
         pendingTintDeviceIcon = state.getBoolean("m3.tintDeviceIcon", pendingTintDeviceIcon);
@@ -1559,6 +1660,7 @@ public final class SettingsActivity extends Activity {
         });
         if (showFocusDividerSwitch != null) showFocusDividerSwitch.setOnCheckedChangeListener((b, c) -> {
             pendingShowFocusDivider = c;
+            updateFocusDividerControls();
             markPending();
         });
     }
@@ -1597,12 +1699,20 @@ public final class SettingsActivity extends Activity {
         focusIconOrderContainer.removeAllViews();
         int[] order = FocusIconPriority.order(pendingFocusIconPriority);
         for (int slot = 0; slot < order.length; slot++) {
-            TextView row = text("", 15, COLOR_TEXT_PRIMARY);
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
             row.setTag(order[slot]);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(14), dp(8), dp(14), dp(8));
             row.setMinimumHeight(dp(48));
             row.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
+            TextView label = text("", 15, COLOR_TEXT_PRIMARY);
+            label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            row.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
+            TextView handle = text("≡", 20, COLOR_TEXT_SECONDARY);
+            handle.setGravity(Gravity.CENTER);
+            handle.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            row.addView(handle, new LinearLayout.LayoutParams(dp(28), -2));
             focusIconOrderRows[slot] = row;
             focusIconOrderContainer.addView(row, matchWrap(dp(4)));
         }
@@ -1611,9 +1721,9 @@ public final class SettingsActivity extends Activity {
 
     private void refreshFocusIconRowLabels() {
         for (int slot = 0; slot < focusIconOrderRows.length; slot++) {
-            TextView row = focusIconOrderRows[slot];
+            LinearLayout row = focusIconOrderRows[slot];
             String label = ICON_TYPE_LABELS[(Integer) row.getTag()];
-            row.setText((slot + 1) + ". " + label + "  ≡");
+            ((TextView) row.getChildAt(0)).setText((slot + 1) + ". " + label);
             row.setContentDescription(label + "，第 " + (slot + 1) + " 位，按住可拖动排序");
         }
     }
@@ -1622,9 +1732,10 @@ public final class SettingsActivity extends Activity {
     private final class FocusIconDragHandler implements View.OnTouchListener {
         private final int touchSlop = ViewConfiguration.get(SettingsActivity.this).getScaledTouchSlop();
         private int pointerId = -1;
-        private TextView touchedRow;
+        private LinearLayout touchedRow;
         private boolean dragging;
         private float downX, downY, pointerOffset;
+        private float minimumPointerY, maximumPointerY;
         private final Runnable armDrag = () -> {
             if (destroyed || touchedRow == null || focusIconDragHandler != this
                     || focusIconOrderContainer == null || !focusIconOrderContainer.isAttachedToWindow()) return;
@@ -1633,6 +1744,10 @@ public final class SettingsActivity extends Activity {
             touchedRow.setElevation(dp(6));
             touchedRow.setAlpha(0.94f);
             touchedRow.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+            if (BuildConfig.DEBUG) android.util.Log.i(TAG, "DIAG icon sort start version="
+                    + BuildConfig.VERSION_NAME + " slot=" + draggingSlot()
+                    + " rowHeightPx=" + touchedRow.getHeight() + " grabOffsetPx=" + pointerOffset
+                    + " edgeSpacePx=" + focusIconOrderContainer.getPaddingTop());
         };
 
         @Override
@@ -1640,7 +1755,7 @@ public final class SettingsActivity extends Activity {
             int action = event.getActionMasked();
             if (action == MotionEvent.ACTION_DOWN) {
                 finish(false);
-                for (TextView row : focusIconOrderRows) {
+                for (LinearLayout row : focusIconOrderRows) {
                     if (event.getY() >= row.getTop() && event.getY() < row.getBottom()) {
                         touchedRow = row;
                         break;
@@ -1650,6 +1765,7 @@ public final class SettingsActivity extends Activity {
                 pointerId = event.getPointerId(0);
                 downX = event.getX();
                 downY = event.getY();
+                minimumPointerY = maximumPointerY = downY;
                 pointerOffset = downY - touchedRow.getTop();
                 view.postDelayed(armDrag, ViewConfiguration.getLongPressTimeout());
                 return true;
@@ -1689,31 +1805,40 @@ public final class SettingsActivity extends Activity {
             float top = focusIconOrderContainer.getPaddingTop();
             // 按实际测高计算，字体放大导致行高变化时仍能准确排序。
             for (int index = 0; index < slot; index++) {
-                TextView row = focusIconOrderRows[index];
+                LinearLayout row = focusIconOrderRows[index];
                 LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) row.getLayoutParams();
                 top += params.topMargin + row.getHeight() + params.bottomMargin;
             }
-            return top;
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams)
+                    focusIconOrderRows[slot].getLayoutParams();
+            return top + params.topMargin;
         }
 
         private void moveRow(float pointerY) {
-            float top = Math.max(0f, Math.min(pointerY - pointerOffset,
-                    focusIconOrderContainer.getHeight() - touchedRow.getHeight()));
-            float center = top + touchedRow.getHeight() / 2f;
+            minimumPointerY = Math.min(minimumPointerY, pointerY);
+            maximumPointerY = Math.max(maximumPointerY, pointerY);
             int slot = draggingSlot();
-            while (slot > 0 && center < slotTop(slot - 1)
-                    + focusIconOrderRows[slot - 1].getHeight() / 2f) {
+            if (slot < 0) return;
+            float[] slotCenters = new float[focusIconOrderRows.length];
+            for (int index = 0; index < slotCenters.length; index++) {
+                slotCenters[index] = slotTop(index) + focusIconOrderRows[index].getHeight() / 2f;
+            }
+            int target = FocusIconDragGeometry.targetSlot(pointerY, pointerOffset,
+                    touchedRow.getHeight(), slot, slotCenters);
+            while (slot > target) {
                 focusIconOrderRows[slot] = focusIconOrderRows[slot - 1];
                 focusIconOrderRows[--slot] = touchedRow;
             }
-            while (slot < focusIconOrderRows.length - 1 && center > slotTop(slot + 1)
-                    + focusIconOrderRows[slot + 1].getHeight() / 2f) {
+            while (slot < target) {
                 focusIconOrderRows[slot] = focusIconOrderRows[slot + 1];
                 focusIconOrderRows[++slot] = touchedRow;
             }
+            // 只限制绘制位置；越过首尾的手指坐标仍能用于换位，行本身留在列表内。
+            float top = Math.max(0f, Math.min(pointerY - pointerOffset,
+                    focusIconOrderContainer.getHeight() - touchedRow.getHeight()));
             // 手势期间只移动现有子视图；不移除触摸目标，避免重挂导致事件流中断。
             for (int index = 0; index < focusIconOrderRows.length; index++) {
-                TextView row = focusIconOrderRows[index];
+                LinearLayout row = focusIconOrderRows[index];
                 row.setTranslationY((row == touchedRow ? top : slotTop(index)) - row.getTop());
             }
             refreshFocusIconRowLabels();
@@ -1723,6 +1848,9 @@ public final class SettingsActivity extends Activity {
             if (focusIconOrderContainer == null) return;
             focusIconOrderContainer.removeCallbacks(armDrag);
             if (touchedRow == null) return;
+            if (dragging && BuildConfig.DEBUG) android.util.Log.i(TAG, "DIAG icon sort finish commit="
+                    + commit + " slot=" + draggingSlot() + " minPointerY=" + minimumPointerY
+                    + " maxPointerY=" + maximumPointerY);
             boolean changed = false;
             if (commit && dragging) {
                 int[] order = new int[focusIconOrderRows.length];
@@ -1736,7 +1864,7 @@ public final class SettingsActivity extends Activity {
                     changed = true;
                 }
             }
-            for (TextView row : focusIconOrderRows) {
+            for (LinearLayout row : focusIconOrderRows) {
                 row.setTranslationY(0f);
                 row.setElevation(0f);
                 row.setAlpha(1f);
@@ -2206,6 +2334,12 @@ public final class SettingsActivity extends Activity {
         pendingAllowFocusClick = settings.allowFocusClick;
         pendingHideNotificationIcons = settings.hideNotificationIcons;
         pendingShowFocusDivider = settings.showFocusDivider;
+        pendingFocusIconSizeDp = settings.focusIconSizeDp;
+        pendingFocusDividerStartDp = settings.focusDividerStartDp;
+        pendingFocusDividerEndDp = settings.focusDividerEndDp;
+        pendingFocusDividerWidthDp = settings.focusDividerWidthDp;
+        pendingFocusDividerStyle = settings.focusDividerStyle;
+
         pendingShowIslandIcon = settings.showIslandIcon;
         pendingTintIslandIcon = settings.tintIslandIcon;
         pendingUseSmallIconFallback = settings.useSmallIconFallback;
@@ -2255,6 +2389,11 @@ public final class SettingsActivity extends Activity {
                 .allowFocusClick(pendingAllowFocusClick)
                 .hideNotificationIcons(pendingHideNotificationIcons)
                 .showFocusDivider(pendingShowFocusDivider)
+                .focusIconSizeDp(pendingFocusIconSizeDp)
+                .focusDividerStartDp(pendingFocusDividerStartDp)
+                .focusDividerEndDp(pendingFocusDividerEndDp)
+                .focusDividerWidthDp(pendingFocusDividerWidthDp)
+                .focusDividerStyle(pendingFocusDividerStyle)
                 .showIslandIcon(pendingShowIslandIcon)
                 .tintIslandIcon(pendingTintIslandIcon)
                 .useSmallIconFallback(pendingUseSmallIconFallback)
@@ -2592,7 +2731,7 @@ public final class SettingsActivity extends Activity {
     private void updateModeSpecificControls() {
         boolean os4 = pendingHookMode == FocusRestoreSettings.HOOK_MODE_OS4;
         setModeSpecificSwitchEnabled(hideNotificationIconsSwitch, os4);
-        setModeSpecificSwitchEnabled(showFocusDividerSwitch, os4);
+        setModeSpecificSwitchEnabled(showFocusDividerSwitch, true);
         // 保留容器只对 OS4 的左侧图标容器有意义，并且必须依附于总隐藏开关。
         updateExperimentalControls();
     }
@@ -2601,6 +2740,22 @@ public final class SettingsActivity extends Activity {
         if (control == null) return;
         control.setEnabled(enabled);
         control.setAlpha(enabled ? 1f : 0.42f);
+    }
+
+    private void updateFocusDividerControls() {
+        if (focusDividerOptionsPanel == null) return;
+        focusDividerOptionsPanel.setAlpha(pendingShowFocusDivider ? 1f : 0.42f);
+        setFocusDividerChildrenEnabled(focusDividerOptionsPanel, pendingShowFocusDivider);
+    }
+
+    private void setFocusDividerChildrenEnabled(View view, boolean enabled) {
+        view.setEnabled(enabled);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int index = 0; index < group.getChildCount(); index++) {
+                setFocusDividerChildrenEnabled(group.getChildAt(index), enabled);
+            }
+        }
     }
 
     private void setControlEnabled(View control, boolean enabled) {

@@ -46,7 +46,9 @@ public class SettingsContractTest {
                 "limit_text_width", "text_width_dp", "width_landscape_dp", "marquee_delay_ms", "marquee_bounce",
                 "island_compat", "island_text_mode", "island_general_separator", "island_side_separator",
                 "island_force_packages",
-                "hide_notification_icons", "show_focus_divider", "show_island_icon", "tint_island_icon",
+                "hide_notification_icons", "show_focus_divider",
+                "focus_icon_size_dp", "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style",
+                "show_island_icon", "tint_island_icon",
                 "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon",
                 "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
                 "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
@@ -64,7 +66,9 @@ public class SettingsContractTest {
                 SettingsContract.ISLAND_COMPAT, SettingsContract.ISLAND_TEXT_MODE,
                 SettingsContract.ISLAND_GENERAL_SEPARATOR, SettingsContract.ISLAND_SIDE_SEPARATOR,
                 SettingsContract.ISLAND_FORCE_PACKAGES, SettingsContract.HIDE_NOTIFICATION_ICONS,
-                SettingsContract.SHOW_FOCUS_DIVIDER, SettingsContract.SHOW_ISLAND_ICON,
+                SettingsContract.SHOW_FOCUS_DIVIDER,
+                SettingsContract.FOCUS_ICON_SIZE_DP, SettingsContract.FOCUS_DIVIDER_START_DP, SettingsContract.FOCUS_DIVIDER_END_DP, SettingsContract.FOCUS_DIVIDER_WIDTH_DP, SettingsContract.FOCUS_DIVIDER_STYLE,
+                SettingsContract.SHOW_ISLAND_ICON,
                 SettingsContract.TINT_ISLAND_ICON, SettingsContract.USE_SMALL_ICON_FALLBACK,
                 SettingsContract.FOCUS_ICON_PRIORITY, SettingsContract.TINT_DEVICE_ICON,
                 SettingsContract.INDEPENDENT_FOCUS_BANNER, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND,
@@ -173,6 +177,12 @@ public class SettingsContractTest {
         assertEquals(FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_FEATURE_CACHE, sparse.disableIslandFeatureCache);
         assertEquals(FocusRestoreSettings.DEFAULT_HIDE_NOTIFICATION_ICONS, sparse.hideNotificationIcons);
         assertEquals(FocusRestoreSettings.DEFAULT_SHOW_FOCUS_DIVIDER, sparse.showFocusDivider);
+        assertEquals(FocusRestoreSettings.DEFAULT_FOCUS_ICON_SIZE_DP, sparse.focusIconSizeDp);
+        assertEquals(FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_START_DP, sparse.focusDividerStartDp);
+        assertEquals(FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_END_DP, sparse.focusDividerEndDp);
+        assertEquals(FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_WIDTH_DP, sparse.focusDividerWidthDp);
+        assertEquals(FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_STYLE, sparse.focusDividerStyle);
+
         assertEquals(FocusRestoreSettings.DEFAULT_SHOW_ISLAND_ICON, sparse.showIslandIcon);
         assertEquals(FocusRestoreSettings.DEFAULT_TINT_ISLAND_ICON, sparse.tintIslandIcon);
         assertEquals(FocusRestoreSettings.DEFAULT_USE_SMALL_ICON_FALLBACK, sparse.useSmallIconFallback);
@@ -278,6 +288,27 @@ public class SettingsContractTest {
         FocusRestoreSettings banner = FocusRestoreSettings.edit().mediaFocusNativeBanner(true).mediaFocusCastDirect(false).build();
         assertTrue(banner.mediaFocusNativeBanner);
         assertFalse(banner.mediaFocusCastDirect);
+    }
+
+    @Test
+    public void appearanceFieldsFollowNamesEvenWhenReorderedOrProjected() {
+        FocusRestoreSettings settings = FocusRestoreSettings.edit().focusIconSizeDp(32)
+                .focusDividerStartDp(24).focusDividerEndDp(0).focusDividerWidthDp(4).focusDividerStyle(3).build();
+        String[] projection = {"focus_divider_style", "focus_icon_size_dp", "focus_divider_end_dp",
+                "focus_divider_start_dp", "focus_divider_width_dp", "focus_divider_style"};
+        assertArrayEquals(new Object[]{3, 32, 0, 24, 4, 3}, SettingsContract.toRow(settings, "", projection));
+        HookSettings hook = HookSettings.fromCursor(namedCursor(SettingsContract.COLUMNS, SettingsContract.toRow(settings, "")));
+        assertEquals(32, hook.focusIconSizeDp);
+        assertEquals(24, hook.focusDividerStartDp);
+        assertEquals(0, hook.focusDividerEndDp);
+        assertEquals(4, hook.focusDividerWidthDp);
+        assertEquals(3, hook.focusDividerStyle);
+        HookSettings legacy = HookSettings.fromCursor(namedCursor(LEGACY_COLUMNS, SettingsContract.toRow(settings, "", LEGACY_COLUMNS)));
+        assertEquals(0, legacy.focusIconSizeDp);
+        assertEquals(-1, legacy.focusDividerStartDp);
+        assertEquals(-1, legacy.focusDividerEndDp);
+        assertEquals(0, legacy.focusDividerWidthDp);
+        assertEquals(0, legacy.focusDividerStyle);
     }
 
     private static FocusRestoreSettings distinctiveSettings() {
