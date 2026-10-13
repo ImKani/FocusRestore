@@ -32,6 +32,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import android.view.Gravity;
+import android.view.MotionEvent;
+import android.view.ViewConfiguration;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -182,8 +184,10 @@ public final class SettingsActivity extends Activity {
     private Switch showFocusDividerSwitch;
     private Switch showIslandIconSwitch;
     private Switch tintIslandIconSwitch;
-    private SpinnerField focusIconPriorityField;
-    private TextView focusIconOrderText;
+    private static final String[] ICON_TYPE_LABELS = {"应用图标", "焦点专用图标", "通知小图标"};
+    private LinearLayout focusIconOrderContainer;
+    private final TextView[] focusIconOrderRows = new TextView[3];
+    private FocusIconDragHandler focusIconDragHandler;
     private Switch tintDeviceIconSwitch;
     private Switch notificationRowClickFallbackSwitch;
     private Switch independentFocusBannerSwitch;
@@ -283,6 +287,7 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onPause() {
         backupUiResumed = false;
+        if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
         super.onPause();
     }
 
@@ -507,8 +512,11 @@ public final class SettingsActivity extends Activity {
         showFocusDividerSwitch = null;
         showIslandIconSwitch = null;
         tintIslandIconSwitch = null;
-        focusIconPriorityField = null;
-        focusIconOrderText = null;
+        if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
+        focusIconDragHandler = null;
+        if (focusIconOrderContainer != null) focusIconOrderContainer.setOnTouchListener(null);
+        focusIconOrderContainer = null;
+        java.util.Arrays.fill(focusIconOrderRows, null);
         tintDeviceIconSwitch = null;
         notificationRowClickFallbackSwitch = null;
         independentFocusBannerSwitch = null;
@@ -704,18 +712,13 @@ public final class SettingsActivity extends Activity {
     private void buildAdvancedPage(LinearLayout root) {
         root.addView(sectionHeader("焦点图标"), matchWrap(dp(8)));
         LinearLayout iconPanel = panel();
-        iconPanel.addView(text("焦点图标优先级", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
-        focusIconPriorityField = choiceSpinner(new String[]{"应用图标优先", "焦点专用图标优先", "通知小图标优先"},
-                pendingFocusIconPriority, position -> {
-                    pendingFocusIconPriority = position;
-                    pendingUseSmallIconFallback = position == FocusRestoreSettings.ICON_SMALL_FIRST;
-                    updateFocusIconOrder();
-                    markPending();
-                });
-        iconPanel.addView(focusIconPriorityField.spinner, matchWrap(dp(4)));
-        focusIconOrderText = text("", 13, COLOR_TEXT_SECONDARY);
-        updateFocusIconOrder();
-        iconPanel.addView(focusIconOrderText, matchWrap(dp(8)));
+        iconPanel.addView(text("焦点图标优先级（按住拖动排序）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        focusIconOrderContainer = new LinearLayout(this);
+        focusIconOrderContainer.setOrientation(LinearLayout.VERTICAL);
+        iconPanel.addView(focusIconOrderContainer, matchWrap(dp(8)));
+        rebuildFocusIconOrderRows();
+        focusIconDragHandler = new FocusIconDragHandler();
+        focusIconOrderContainer.setOnTouchListener(focusIconDragHandler);
         iconPanel.addView(text("通知小图标（smallIcon）依赖应用自行适配。国内不少应用未提供适合状态栏的单色透明图标，反色后可能显示为大白块；遇到这种情况，建议选择应用图标或焦点专用图标优先。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         showIslandIconSwitch = createSwitch("优先使用超级岛解析图标");
@@ -1338,7 +1341,8 @@ public final class SettingsActivity extends Activity {
         pendingAllowFocusClick = state.getBoolean("m3.click", pendingAllowFocusClick);
         pendingHideNotificationIcons = state.getBoolean("m3.hide", pendingHideNotificationIcons);
         pendingShowFocusDivider = state.getBoolean("m3.divider", pendingShowFocusDivider);
-        pendingFocusIconPriority = state.getInt("m3.focusIconPriority", pendingFocusIconPriority);
+        pendingFocusIconPriority = FocusRestoreSettings.normalizeIconPriority(
+                state.getInt("m3.focusIconPriority", pendingFocusIconPriority));
         pendingTintDeviceIcon = state.getBoolean("m3.tintDeviceIcon", pendingTintDeviceIcon);
         pendingShowIslandIcon = state.getBoolean("m3.showIslandIcon", pendingShowIslandIcon);
         pendingTintIslandIcon = state.getBoolean("m3.tintIslandIcon", pendingTintIslandIcon);
@@ -1588,11 +1592,165 @@ public final class SettingsActivity extends Activity {
         timeoutExemptButton.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
     }
 
-    private void updateFocusIconOrder() {
-        if (focusIconOrderText == null) return;
-        String[] orders = {"应用图标 → 焦点专用图标 → 通知小图标", "焦点专用图标 → 应用图标 → 通知小图标",
-                "通知小图标 → 应用图标 → 焦点专用图标"};
-        focusIconOrderText.setText(orders[FocusRestoreSettings.normalizeIconPriority(pendingFocusIconPriority)]);
+    private void rebuildFocusIconOrderRows() {
+        if (focusIconOrderContainer == null) return;
+        focusIconOrderContainer.removeAllViews();
+        int[] order = FocusIconPriority.order(pendingFocusIconPriority);
+        for (int slot = 0; slot < order.length; slot++) {
+            TextView row = text("", 15, COLOR_TEXT_PRIMARY);
+            row.setTag(order[slot]);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(14), dp(8), dp(14), dp(8));
+            row.setMinimumHeight(dp(48));
+            row.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
+            focusIconOrderRows[slot] = row;
+            focusIconOrderContainer.addView(row, matchWrap(dp(4)));
+        }
+        refreshFocusIconRowLabels();
+    }
+
+    private void refreshFocusIconRowLabels() {
+        for (int slot = 0; slot < focusIconOrderRows.length; slot++) {
+            TextView row = focusIconOrderRows[slot];
+            String label = ICON_TYPE_LABELS[(Integer) row.getTag()];
+            row.setText((slot + 1) + ". " + label + "  ≡");
+            row.setContentDescription(label + "，第 " + (slot + 1) + " 位，按住可拖动排序");
+        }
+    }
+
+    /** 只在单指长按成立后阻止父级滚动；预览不写配置，取消时恢复已保存顺序。 */
+    private final class FocusIconDragHandler implements View.OnTouchListener {
+        private final int touchSlop = ViewConfiguration.get(SettingsActivity.this).getScaledTouchSlop();
+        private int pointerId = -1;
+        private TextView touchedRow;
+        private boolean dragging;
+        private float downX, downY, pointerOffset;
+        private final Runnable armDrag = () -> {
+            if (destroyed || touchedRow == null || focusIconDragHandler != this
+                    || focusIconOrderContainer == null || !focusIconOrderContainer.isAttachedToWindow()) return;
+            dragging = true;
+            focusIconOrderContainer.getParent().requestDisallowInterceptTouchEvent(true);
+            touchedRow.setElevation(dp(6));
+            touchedRow.setAlpha(0.94f);
+            touchedRow.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        };
+
+        @Override
+        public boolean onTouch(View view, MotionEvent event) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                finish(false);
+                for (TextView row : focusIconOrderRows) {
+                    if (event.getY() >= row.getTop() && event.getY() < row.getBottom()) {
+                        touchedRow = row;
+                        break;
+                    }
+                }
+                if (touchedRow == null) return false;
+                pointerId = event.getPointerId(0);
+                downX = event.getX();
+                downY = event.getY();
+                pointerOffset = downY - touchedRow.getTop();
+                view.postDelayed(armDrag, ViewConfiguration.getLongPressTimeout());
+                return true;
+            }
+            if (touchedRow == null) return false;
+            // 多指或系统取消都丢弃预览，不能将未完成的拖动当成保存。
+            if (action == MotionEvent.ACTION_CANCEL || event.getPointerCount() != 1
+                    || event.findPointerIndex(pointerId) < 0) {
+                finish(false);
+                return true;
+            }
+            if (action == MotionEvent.ACTION_MOVE) {
+                if (!dragging) {
+                    if (Math.abs(event.getX() - downX) > touchSlop
+                            || Math.abs(event.getY() - downY) > touchSlop) finish(false);
+                    return true;
+                }
+                moveRow(event.getY());
+                return true;
+            }
+            if (action == MotionEvent.ACTION_UP) {
+                if (dragging) moveRow(event.getY());
+                finish(dragging);
+                return true;
+            }
+            return true;
+        }
+
+        private int draggingSlot() {
+            for (int slot = 0; slot < focusIconOrderRows.length; slot++) {
+                if (focusIconOrderRows[slot] == touchedRow) return slot;
+            }
+            return -1;
+        }
+
+        private float slotTop(int slot) {
+            float top = focusIconOrderContainer.getPaddingTop();
+            // 按实际测高计算，字体放大导致行高变化时仍能准确排序。
+            for (int index = 0; index < slot; index++) {
+                TextView row = focusIconOrderRows[index];
+                LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) row.getLayoutParams();
+                top += params.topMargin + row.getHeight() + params.bottomMargin;
+            }
+            return top;
+        }
+
+        private void moveRow(float pointerY) {
+            float top = Math.max(0f, Math.min(pointerY - pointerOffset,
+                    focusIconOrderContainer.getHeight() - touchedRow.getHeight()));
+            float center = top + touchedRow.getHeight() / 2f;
+            int slot = draggingSlot();
+            while (slot > 0 && center < slotTop(slot - 1)
+                    + focusIconOrderRows[slot - 1].getHeight() / 2f) {
+                focusIconOrderRows[slot] = focusIconOrderRows[slot - 1];
+                focusIconOrderRows[--slot] = touchedRow;
+            }
+            while (slot < focusIconOrderRows.length - 1 && center > slotTop(slot + 1)
+                    + focusIconOrderRows[slot + 1].getHeight() / 2f) {
+                focusIconOrderRows[slot] = focusIconOrderRows[slot + 1];
+                focusIconOrderRows[++slot] = touchedRow;
+            }
+            // 手势期间只移动现有子视图；不移除触摸目标，避免重挂导致事件流中断。
+            for (int index = 0; index < focusIconOrderRows.length; index++) {
+                TextView row = focusIconOrderRows[index];
+                row.setTranslationY((row == touchedRow ? top : slotTop(index)) - row.getTop());
+            }
+            refreshFocusIconRowLabels();
+        }
+
+        void finish(boolean commit) {
+            if (focusIconOrderContainer == null) return;
+            focusIconOrderContainer.removeCallbacks(armDrag);
+            if (touchedRow == null) return;
+            boolean changed = false;
+            if (commit && dragging) {
+                int[] order = new int[focusIconOrderRows.length];
+                for (int slot = 0; slot < order.length; slot++) {
+                    order[slot] = (Integer) focusIconOrderRows[slot].getTag();
+                }
+                int priority = FocusIconPriority.indexOf(order);
+                if (priority >= 0 && priority != pendingFocusIconPriority) {
+                    pendingFocusIconPriority = priority;
+                    pendingUseSmallIconFallback = FocusIconPriority.smallFirst(priority);
+                    changed = true;
+                }
+            }
+            for (TextView row : focusIconOrderRows) {
+                row.setTranslationY(0f);
+                row.setElevation(0f);
+                row.setAlpha(1f);
+            }
+            touchedRow = null;
+            pointerId = -1;
+            if (dragging) {
+                // 松手后重建排列；取消、暂停或切页从原配置还原，无排队动画引用。
+                rebuildFocusIconOrderRows();
+                focusIconOrderContainer.getParent().requestDisallowInterceptTouchEvent(false);
+            }
+            dragging = false;
+            if (changed) markPending();
+        }
     }
 
     private void updateExperimentalControls() {

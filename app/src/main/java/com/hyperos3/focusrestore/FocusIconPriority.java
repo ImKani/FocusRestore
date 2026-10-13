@@ -12,12 +12,25 @@ final class FocusIconPriority {
     static final int FOCUS = 1;
     static final int SMALL = 2;
 
+    // 0～2 保留已发布的持久值语义；UI 与 Hook 共用完整排列，避免回退顺序分叉。
+    private static final int[][] ORDERS = {
+            {APP, FOCUS, SMALL}, {FOCUS, APP, SMALL}, {SMALL, APP, FOCUS},
+            {APP, SMALL, FOCUS}, {FOCUS, SMALL, APP}, {SMALL, FOCUS, APP}
+    };
+
     static int[] order(int priority) {
-        switch (priority) {
-            case FocusRestoreSettings.ICON_FOCUS_FIRST: return new int[]{FOCUS, APP, SMALL};
-            case FocusRestoreSettings.ICON_SMALL_FIRST: return new int[]{SMALL, APP, FOCUS};
-            default: return new int[]{APP, FOCUS, SMALL};
+        return ORDERS[FocusRestoreSettings.normalizeIconPriority(priority)].clone();
+    }
+
+    static int indexOf(int[] order) {
+        for (int priority = 0; priority < ORDERS.length; priority++) {
+            if (java.util.Arrays.equals(ORDERS[priority], order)) return priority;
         }
+        return -1;
+    }
+
+    static boolean smallFirst(int priority) {
+        return ORDERS[FocusRestoreSettings.normalizeIconPriority(priority)][0] == SMALL;
     }
 
     private FocusIconPriority() { }

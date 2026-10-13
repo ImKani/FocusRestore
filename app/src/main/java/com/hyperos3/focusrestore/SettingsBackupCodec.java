@@ -127,7 +127,9 @@ final class SettingsBackupCodec {
             int iconPriority = integer(icons, "focus_icon_priority",
                     FocusRestoreSettings.legacyIconPriority(bool(icons, "use_small_icon_fallback", false),
                             bool(icons, "show_island_icon", false)));
-            if (iconPriority < 0 || iconPriority > 2) throw invalid("focus_icon_priority 必须为 0、1 或 2");
+            if (iconPriority < 0 || iconPriority >= FocusRestoreSettings.ICON_ORDER_COUNT) {
+                throw invalid("focus_icon_priority 必须为 0～5 的整数");
+            }
             int width = integer(focus, "text_width_dp", defaults.widthDp);
             String legacySeparator = separator(island, "island_separator", defaults.islandGeneralSeparator);
             Set<String> forcePackages = packages(island, "island_force_packages");

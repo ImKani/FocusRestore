@@ -98,6 +98,7 @@ public final class FocusRestoreSettings {
     public static final int ICON_APP_FIRST = 0;
     public static final int ICON_FOCUS_FIRST = 1;
     public static final int ICON_SMALL_FIRST = 2;
+    public static final int ICON_ORDER_COUNT = 6;
     public static final int DEFAULT_FOCUS_ICON_PRIORITY = ICON_APP_FIRST;
     public static final boolean DEFAULT_TINT_DEVICE_ICON = true;
     public static final boolean DEFAULT_USE_SMALL_ICON_FALLBACK = false;
@@ -186,7 +187,7 @@ public final class FocusRestoreSettings {
                 ? legacyIconPriority(editor.useSmallIconFallback, editor.showIslandIcon)
                 : normalizeIconPriority(editor.focusIconPriority);
         this.tintDeviceIcon = editor.tintDeviceIcon;
-        this.useSmallIconFallback = this.focusIconPriority == ICON_SMALL_FIRST;
+        this.useSmallIconFallback = FocusIconPriority.smallFirst(this.focusIconPriority);
         this.notificationRowClickFallback = editor.notificationRowClickFallback;
         this.independentFocusBanner = editor.independentFocusBanner;
         this.longPressNotificationRowClick = editor.longPressNotificationRowClick;
@@ -647,7 +648,7 @@ public final class FocusRestoreSettings {
         return Math.max(min, Math.min(max, value));
     }
     public static int normalizeIconPriority(int value) {
-        return value >= ICON_APP_FIRST && value <= ICON_SMALL_FIRST ? value : ICON_APP_FIRST;
+        return value >= ICON_APP_FIRST && value < ICON_ORDER_COUNT ? value : ICON_APP_FIRST;
     }
 
     static int legacyIconPriority(boolean small, boolean island) {

@@ -467,7 +467,13 @@ public class SettingsBackupCodecTest {
         assertEquals(0, explicit.focusIconPriority);
         assertFalse(explicit.useSmallIconFallback);
         assertFalse(explicit.tintDeviceIcon);
-        for (String invalid : new String[]{"-1", "3", "1.5", "true", "\"1\""}) {
+        for (int priority = 0; priority < FocusRestoreSettings.ICON_ORDER_COUNT; priority++) {
+            FocusRestoreSettings imported = decodeGroups("{\"icons\":{\"focus_icon_priority\":"
+                    + priority + ",\"use_small_icon_fallback\":true}}");
+            assertEquals(priority, imported.focusIconPriority);
+            assertEquals(priority == 2 || priority == 5, imported.useSmallIconFallback);
+        }
+        for (String invalid : new String[]{"-1", "6", "2147483647", "1.5", "true", "\"1\""}) {
             rejectGroups("{\"icons\":{\"focus_icon_priority\":" + invalid + "}}");
         }
     }

@@ -29,7 +29,7 @@ public class ExperimentalSettingsTest {
         assertEquals(0, FocusRestoreSettings.defaults().focusIconPriority);
         assertFalse(FocusRestoreSettings.defaults().showIslandIcon);
         assertTrue(FocusRestoreSettings.defaults().tintDeviceIcon);
-        for (int priority = 0; priority < 3; priority++) {
+        for (int priority = 0; priority < FocusRestoreSettings.ICON_ORDER_COUNT; priority++) {
             for (int mask = 0; mask < 8; mask++) {
                 FocusRestoreSettings settings = FocusRestoreSettings.edit().focusIconPriority(priority)
                         .showIslandIcon((mask & 1) != 0).tintIslandIcon((mask & 2) != 0)
@@ -41,7 +41,7 @@ public class ExperimentalSettingsTest {
                         FocusRestoreSettings.edit(settings).build(), FocusRestoreSettings.fromPreferences(store),
                         SettingsBackupCodec.decode(SettingsBackupCodec.encode(settings))}) {
                     assertEquals(priority, copy.focusIconPriority);
-                    assertEquals(priority == 2, copy.useSmallIconFallback);
+                    assertEquals(priority == 2 || priority == 5, copy.useSmallIconFallback);
                     assertEquals(settings.showIslandIcon, copy.showIslandIcon);
                     assertEquals(settings.tintIslandIcon, copy.tintIslandIcon);
                     assertEquals(settings.tintDeviceIcon, copy.tintDeviceIcon);
@@ -80,10 +80,29 @@ public class ExperimentalSettingsTest {
             }
         }
         assertEquals(0, FocusRestoreSettings.edit().focusIconPriority(-1).build().focusIconPriority);
-        assertEquals(0, FocusRestoreSettings.edit().focusIconPriority(3).build().focusIconPriority);
+        assertEquals(0, FocusRestoreSettings.edit().focusIconPriority(6).build().focusIconPriority);
         assertArrayEquals(new int[]{0, 1, 2}, FocusIconPriority.order(0));
         assertArrayEquals(new int[]{1, 0, 2}, FocusIconPriority.order(1));
         assertArrayEquals(new int[]{2, 0, 1}, FocusIconPriority.order(2));
+    }
+
+    @Test
+    public void allIconPermutationsKeepExactFallbackOrderAndAreIsolatedFromCallers() {
+        int[][] expected = {{0, 1, 2}, {1, 0, 2}, {2, 0, 1},
+                {0, 2, 1}, {1, 2, 0}, {2, 1, 0}};
+        for (int priority = 0; priority < expected.length; priority++) {
+            int[] order = FocusIconPriority.order(priority);
+            assertArrayEquals(expected[priority], order);
+            assertEquals(priority, FocusIconPriority.indexOf(order));
+            order[0] = -1;
+            assertArrayEquals(expected[priority], FocusIconPriority.order(priority));
+        }
+        assertEquals(-1, FocusIconPriority.indexOf(new int[]{0, 0, 2}));
+        assertEquals(-1, FocusIconPriority.indexOf(new int[]{0, 1}));
+        assertEquals(-1, FocusIconPriority.indexOf(null));
+        for (int invalid : new int[]{Integer.MIN_VALUE, -1, 6, Integer.MAX_VALUE}) {
+            assertArrayEquals(expected[0], FocusIconPriority.order(invalid));
+        }
     }
 
     @Test
