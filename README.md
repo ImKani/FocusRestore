@@ -243,11 +243,13 @@ gradle :app:clean :app:assembleDebug :app:assembleRelease
 
 构建脚本引用 ImKani 本地保存的固定签名证书，证书私钥不随仓库提供。其他人自行构建时需配置自己的签名；不同签名的 APK 不能直接覆盖官方发布包。
 
-构建产物位于 `app/build/outputs/apk/`，文件名为 `FocusRestore-<versionName>-<buildType>.apk`。ImKani 发布的各版本沿用同一固定测试证书，Debug 和 Release 签名一致，便于覆盖升级并保留配置。
+构建产物位于 `app/build/outputs/apk/`，文件名为 `FocusRestore-<versionName>-<buildType>.apk`。ImKani 发布的各版本沿用同一固定的作者签名证书，Debug 和 Release 签名一致，便于覆盖升级并保留配置。
 
 ## 安装与验证
 
 安装前确认设备已解锁、已启用 ADB，并已备份相关配置。安装不会自动启用 LSPosed 模块，也不会自动将作用域加入 SystemUI。
+
+> **签名变更（0.34.2 起）**：本项目自 0.34.2 起改用作者签名证书，与此前各版本使用的固定测试证书签名不同，无法直接覆盖安装。从旧版本升级请先在模块“关于”页导出配置，再卸载旧版本、安装本版本，最后导入配置；卸载会清除模块内保存的设置，未导出的配置无法恢复。
 
 ```powershell
 adb install -r '.\FocusRestore-0.34.2-debug.apk'
@@ -271,5 +273,6 @@ adb install -r '.\FocusRestore-0.34.2-release.apk'
 
 ## 版本发布说明
 
-- Debug 和 Release 均使用当前项目保留签名，便于测试包覆盖安装。
+- Debug 和 Release 均使用作者签名证书，便于测试包覆盖安装。
+- 0.34.2 起改用作者签名证书：旧测试证书版本需先导出配置，卸载后再安装本版本并导入配置。
 - Release 不代表已完成所有设备和 ROM 的真机兼容性验证。

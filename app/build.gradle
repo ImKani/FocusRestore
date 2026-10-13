@@ -7,6 +7,19 @@
 
 plugins { id 'com.android.application' }
 
+/*
+ * 作者签名密码：优先环境变量 FOCUSRESTORE_KEY_PASSWORD，其次读取被 .gitignore 忽略的本地密码文件。
+ * 正式签名密码不写进公开仓库；该密码文件与 focusrestore-author.p12 需一同备份。
+ */
+def authorSigningPassword = System.getenv('FOCUSRESTORE_KEY_PASSWORD')
+if (!authorSigningPassword) {
+    def authorPasswordFile = file('../.android/focusrestore-author.password.txt')
+    if (!authorPasswordFile.exists()) {
+        throw new GradleException("缺少作者签名密码：请设置 FOCUSRESTORE_KEY_PASSWORD，或恢复 ${authorPasswordFile}")
+    }
+    authorSigningPassword = authorPasswordFile.text.trim()
+}
+
 android {
     namespace 'com.hyperos3.focusrestore'
     compileSdk 35
@@ -24,22 +37,23 @@ android {
     }
 
     signingConfigs {
-        preservedDebug {
-            // ImKani 各版本沿用同一固定证书，Debug 与 Release 可覆盖升级并保留配置。
-            storeFile file('../.android/debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
+        authorSigning {
+            // ImKani 正式作者签名证书，替代原公开测试证书；证书与密码都在被 .gitignore 忽略的 .android 目录内。
+            storeFile file('../.android/focusrestore-author.p12')
+            storeType 'PKCS12'
+            storePassword authorSigningPassword
+            keyAlias 'focusrestore'
+            keyPassword authorSigningPassword
         }
     }
 
     buildTypes {
         debug {
-            signingConfig signingConfigs.preservedDebug
+            signingConfig signingConfigs.authorSigning
         }
         release {
             // Release 与 Debug 使用相同签名。
-            signingConfig signingConfigs.preservedDebug
+            signingConfig signingConfigs.authorSigning
         }
     }
 
