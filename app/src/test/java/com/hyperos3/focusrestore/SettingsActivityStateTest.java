@@ -120,7 +120,7 @@ public class SettingsActivityStateTest {
         }
         assertTrue(source.contains("bindValueReset((TextView) landscapeWidthRow.getChildAt(1),"));
         assertTrue(source.contains("val.setBackground(roundedBg(COLOR_PRIMARY_LIGHT, 12))"));
-        assertTrue(source.contains("val.setMinimumHeight(dp(48))"));
+        assertTrue(source.contains("val.setMinimumHeight(dp(40))"));
         assertTrue(source.contains("ViewConfiguration.getDoubleTapTimeout()"));
         assertTrue(source.contains("SystemClock.elapsedRealtime()"));
         assertTrue(source.contains("protected void onPause() {\n        valueResetTaps.clear();"));

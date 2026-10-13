@@ -2600,15 +2600,26 @@ public final class SettingsActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.addView(text(label, 15, COLOR_TEXT_PRIMARY),
                 new LinearLayout.LayoutParams(0, -2, 1f));
-        TextView val = text(value, 15, COLOR_PRIMARY);
-        val.setTypeface(val.getTypeface(), 1);
+        TextView val = text(value, 13, COLOR_PRIMARY);
         val.setId(View.generateViewId());
         val.setBackground(roundedBg(COLOR_PRIMARY_LIGHT, 12));
-        val.setPadding(dp(12), dp(6), dp(12), dp(6));
-        val.setMinimumHeight(dp(48));
+        val.setPadding(dp(10), 0, dp(10), 0);
+        val.setMinimumHeight(dp(40));
+        val.setSingleLine(true);
         val.setGravity(Gravity.CENTER);
-        row.addView(val);
+        row.addView(val, new LinearLayout.LayoutParams(numericValueWidth(val), dp(40)));
         return row;
+    }
+
+    private int numericValueWidth(TextView valueView) {
+        // 两页共用最长合法显示值的文字宽度，避免随数值变化跳动；按当前字号测量。
+        String[] widestValues = {"跟随系统", "不限制", "1600 dp", "-24 dp",
+                "10.0 秒", "3599.99 秒", "3600 秒"};
+        float textWidth = 0f;
+        for (String candidate : widestValues) {
+            textWidth = Math.max(textWidth, valueView.getPaint().measureText(candidate));
+        }
+        return (int) Math.ceil(textWidth) + valueView.getPaddingStart() + valueView.getPaddingEnd();
     }
 
     /** 单击不改配置，双击仅执行该标签的默认值回调；不排队延迟任务。 */
