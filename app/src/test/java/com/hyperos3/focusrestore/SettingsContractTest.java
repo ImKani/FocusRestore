@@ -172,7 +172,7 @@ public class SettingsContractTest {
         assertEquals(FocusRestoreSettings.DEFAULT_HOOK_MODE, sparse.hookMode);
         assertEquals(FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_PICKER, sparse.mediaFocusCastPicker);
         assertFalse(sparse.compatRetry);
-        assertFalse(sparse.islandCompat);
+        assertTrue(sparse.islandCompat);
         assertFalse(sparse.specialBannerNormalBackground);
         assertFalse(sparse.mediaFocusEnabled);
         assertEquals(FocusRestoreSettings.DEFAULT_MARQUEE_BOUNCE, sparse.marqueeBounce);
@@ -307,7 +307,7 @@ public class SettingsContractTest {
         assertEquals(4, hook.focusDividerWidthDp);
         assertEquals(3, hook.focusDividerStyle);
         HookSettings legacy = HookSettings.fromCursor(namedCursor(LEGACY_COLUMNS, SettingsContract.toRow(settings, "", LEGACY_COLUMNS)));
-        assertEquals(0, legacy.focusIconSizeDp);
+        assertEquals(8, legacy.focusIconSizeDp);
         assertEquals(-25, legacy.focusDividerStartDp);
         assertEquals(-25, legacy.focusDividerEndDp);
         assertEquals(0, legacy.focusDividerWidthDp);

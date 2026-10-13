@@ -82,7 +82,7 @@ public final class FocusRestoreSettings {
     public static final int MIN_WIDTH_DP = 80;
     public static final int MAX_WIDTH_DP = 400;
     public static final int MAX_LANDSCAPE_WIDTH_DP = 1600;
-    public static final int DEFAULT_WIDTH_LANDSCAPE_DP = DEFAULT_WIDTH_DP;
+    public static final int DEFAULT_WIDTH_LANDSCAPE_DP = 600;
     public static final boolean DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND = true;
     public static final boolean DEFAULT_MEDIA_FOCUS_ENABLED = false;
     public static final boolean DEFAULT_MEDIA_FOCUS_NATIVE_BANNER = false;
@@ -94,12 +94,12 @@ public final class FocusRestoreSettings {
     public static final int DEFAULT_MARQUEE_DELAY_MS = 200;
     public static final boolean DEFAULT_COMPAT_RETRY = false;
     public static final boolean DEFAULT_MARQUEE_BOUNCE = true;
-    public static final boolean DEFAULT_ISLAND_COMPAT = false;
+    public static final boolean DEFAULT_ISLAND_COMPAT = true;
     public static final boolean DEFAULT_DISABLE_ISLAND_PROPERTY = true;
     public static final boolean DEFAULT_DISABLE_ISLAND_FEATURE_CACHE = true;
     public static final boolean DEFAULT_ALLOW_FOCUS_CLICK = false;
     public static final boolean DEFAULT_HIDE_NOTIFICATION_ICONS = true;
-    public static final int DEFAULT_FOCUS_ICON_SIZE_DP = 0;
+    public static final int DEFAULT_FOCUS_ICON_SIZE_DP = 8;
     public static final int AUTO_FOCUS_DIVIDER_SPACING_DP = -25;
     public static final int DEFAULT_FOCUS_DIVIDER_START_DP = AUTO_FOCUS_DIVIDER_SPACING_DP;
     public static final int DEFAULT_FOCUS_DIVIDER_END_DP = AUTO_FOCUS_DIVIDER_SPACING_DP;
@@ -116,12 +116,12 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_TINT_DEVICE_ICON = true;
     public static final boolean DEFAULT_USE_SMALL_ICON_FALLBACK = false;
     public static final boolean DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK = false;
-    public static final boolean DEFAULT_INDEPENDENT_FOCUS_BANNER = false;
+    public static final boolean DEFAULT_INDEPENDENT_FOCUS_BANNER = true;
     public static final boolean DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK = false;
     public static final boolean DEFAULT_FOCUS_SWIPE_ENABLED = false;
     public static final boolean DEFAULT_CUSTOM_TOUCH_WIDTH = false;
-    public static final int DEFAULT_TOUCH_WIDTH_DP = 160;
-    public static final int DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP = 160;
+    public static final int DEFAULT_TOUCH_WIDTH_DP = DEFAULT_WIDTH_DP;
+    public static final int DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP = DEFAULT_WIDTH_LANDSCAPE_DP;
     public static final float DEFAULT_LONG_PRESS_SECONDS = 0.5f;
     public static final float MIN_LONG_PRESS_SECONDS = 0.2f;
     public static final float MAX_LONG_PRESS_SECONDS = 10f;
@@ -445,7 +445,7 @@ public final class FocusRestoreSettings {
                 .limitWidth(preferences.getBoolean(KEY_LIMIT_WIDTH, DEFAULT_LIMIT_WIDTH))
                 .widthDp(preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_DP))
                 .widthLandscapeDp(preferences.getInt(KEY_WIDTH_LANDSCAPE_DP,
-                        preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_DP)))
+                        preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_LANDSCAPE_DP)))
                 .specialBannerNormalBackground(preferences.getBoolean(KEY_SPECIAL_BANNER_NORMAL_BACKGROUND,
                         DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND))
                 .mediaFocusEnabled(preferences.getBoolean(KEY_MEDIA_FOCUS_ENABLED,
@@ -606,9 +606,9 @@ public final class FocusRestoreSettings {
                 .commit();
     }
 
-    // 0 保留 ROM 图标尺寸；非法小尺寸回退自动，避免保存 UI 无法表达的 1～7 dp。
+    // 0 继续表示跟随 ROM；新增 1～7dp 不改变已保存数值的单位和含义。
     static int normalizeFocusIconSizeDp(int value) {
-        return value < 8 ? DEFAULT_FOCUS_ICON_SIZE_DP : Math.min(32, value);
+        return value < 0 ? DEFAULT_FOCUS_ICON_SIZE_DP : Math.min(32, value);
     }
 
     static int normalizeFocusDividerSpacingDp(int value) { return clamp(value, AUTO_FOCUS_DIVIDER_SPACING_DP, 24); }
@@ -625,8 +625,8 @@ public final class FocusRestoreSettings {
     static int normalizeFocusDividerStyle(int value) { return value >= 0 && value <= 3 ? value : 0; }
 
     // 滑动条首格为自动，后续每格只对应可保存的实际尺寸。
-    static int focusIconSizeFromProgress(int progress) { return progress <= 0 ? 0 : clamp(progress, 1, 25) + 7; }
-    static int focusIconSizeToProgress(int value) { int size = normalizeFocusIconSizeDp(value); return size == 0 ? 0 : size - 7; }
+    static int focusIconSizeFromProgress(int progress) { return clamp(progress, 0, 32); }
+    static int focusIconSizeToProgress(int value) { return normalizeFocusIconSizeDp(value); }
 
     // 滑动条首格为自动，后续每格对应 -24～24 dp。
     static int focusDividerSpacingFromProgress(int progress) { return progress <= 0 ? AUTO_FOCUS_DIVIDER_SPACING_DP : clamp(progress, 1, 49) - 25; }

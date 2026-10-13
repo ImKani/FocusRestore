@@ -25,6 +25,59 @@ import static org.junit.Assert.assertTrue;
 
 public class ExperimentalSettingsTest {
     @Test
+    public void newDefaultsApplyOnlyToMissingFieldsAndKeepSavedChoices() throws Exception {
+        Map<String, Object> empty = new HashMap<>();
+        FocusRestoreSettings defaults = FocusRestoreSettings.fromPreferences(memoryPreferences(empty));
+        assertEquals(160, defaults.widthDp);
+        assertEquals(600, defaults.widthLandscapeDp);
+        assertTrue(defaults.islandCompat);
+        assertTrue(defaults.limitWidth);
+        assertTrue(defaults.independentFocusBanner);
+        assertEquals(8, defaults.focusIconSizeDp);
+        assertFalse(defaults.customTouchWidth);
+        assertEquals(defaults.widthDp, defaults.touchWidthDp);
+        assertEquals(defaults.widthLandscapeDp, defaults.touchWidthLandscapeDp);
+        assertTrue("loading defaults must not initialize storage", empty.isEmpty());
+
+        FocusRestoreSettings previous = FocusRestoreSettings.edit().widthLandscapeDp(160)
+                .touchWidthLandscapeDp(160).islandCompat(false).limitWidth(false)
+                .independentFocusBanner(false).focusIconSizeDp(0).hookMode(4).build();
+        SharedPreferences store = memoryPreferences(new HashMap<>());
+        assertTrue(previous.save(store));
+        for (FocusRestoreSettings restored : new FocusRestoreSettings[]{
+                FocusRestoreSettings.fromPreferences(store),
+                SettingsBackupCodec.decode(SettingsBackupCodec.encode(previous))}) {
+            assertEquals(160, restored.widthLandscapeDp);
+            assertEquals(160, restored.touchWidthLandscapeDp);
+            assertFalse(restored.islandCompat);
+            assertFalse(restored.limitWidth);
+            assertFalse(restored.independentFocusBanner);
+            assertEquals(0, restored.focusIconSizeDp);
+            assertEquals(4, restored.hookMode);
+        }
+        Map<String, Object> portraitOnly = new HashMap<>();
+        portraitOnly.put(FocusRestoreSettings.KEY_WIDTH_DP, 244);
+        assertEquals(244, FocusRestoreSettings.fromPreferences(memoryPreferences(portraitOnly)).widthLandscapeDp);
+    }
+
+    @Test
+    public void smallIconSizesRoundTripThroughPreferencesBackupAndProvider() throws Exception {
+        SharedPreferences store = memoryPreferences(new HashMap<>());
+        for (int size = 1; size < 8; size++) {
+            FocusRestoreSettings chosen = FocusRestoreSettings.edit().focusIconSizeDp(size).build();
+            assertTrue(chosen.save(store));
+            for (FocusRestoreSettings restored : new FocusRestoreSettings[]{
+                    FocusRestoreSettings.fromPreferences(store),
+                    SettingsBackupCodec.decode(SettingsBackupCodec.encode(chosen))}) {
+                assertEquals(size, restored.focusIconSizeDp);
+                HookSettings hook = HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                        SettingsContract.COLUMNS, SettingsContract.toRow(restored, "")));
+                assertEquals(size, hook.focusIconSizeDp);
+            }
+        }
+    }
+
+    @Test
     public void iconChoicesAndIndependentTintRoundTripWithoutChangingPriority() throws Exception {
         assertEquals(0, FocusRestoreSettings.defaults().focusIconPriority);
         assertFalse(FocusRestoreSettings.defaults().showIslandIcon);
@@ -111,11 +164,11 @@ public class ExperimentalSettingsTest {
         assertFalse(defaults.customTouchWidth);
         assertFalse(HookSettings.defaults().customTouchWidth);
         assertEquals(160, defaults.touchWidthDp);
-        assertEquals(160, defaults.touchWidthLandscapeDp);
+        assertEquals(600, defaults.touchWidthLandscapeDp);
         FocusRestoreSettings legacy = FocusRestoreSettings.fromPreferences(memoryPreferences(legacyPreferences()));
         assertFalse(legacy.customTouchWidth);
         assertEquals(160, legacy.touchWidthDp);
-        assertEquals(160, legacy.touchWidthLandscapeDp);
+        assertEquals(600, legacy.touchWidthLandscapeDp);
         Map<String, Object> first = new HashMap<>();
         Map<String, Object> second = new HashMap<>();
         for (boolean enabled : new boolean[]{true, false}) {
@@ -145,7 +198,7 @@ public class ExperimentalSettingsTest {
                     SettingsContractTest.LEGACY_COLUMNS)));
             assertFalse(old.customTouchWidth);
             assertEquals(160, old.touchWidthDp);
-            assertEquals(160, old.touchWidthLandscapeDp);
+            assertEquals(600, old.touchWidthLandscapeDp);
         }
     }
 
@@ -198,7 +251,7 @@ public class ExperimentalSettingsTest {
             }
         }
         FocusRestoreSettings legacy = FocusRestoreSettings.fromPreferences(memoryPreferences(legacyPreferences()));
-        assertEquals(0, legacy.focusIconSizeDp);
+        assertEquals(8, legacy.focusIconSizeDp);
         assertEquals(-25, legacy.focusDividerStartDp);
         assertEquals(-25, legacy.focusDividerEndDp);
         assertEquals(0, legacy.focusDividerWidthDp);
@@ -207,9 +260,9 @@ public class ExperimentalSettingsTest {
 
     @Test
     public void appearanceBoundsAndSliderStepsAlwaysProduceSaveableValues() {
-        for (int progress = 0; progress <= 25; progress++) {
+        for (int progress = 0; progress <= 32; progress++) {
             int size = FocusRestoreSettings.focusIconSizeFromProgress(progress);
-            assertEquals(progress == 0 ? 0 : progress + 7, size);
+            assertEquals(progress, size);
             assertEquals(progress, FocusRestoreSettings.focusIconSizeToProgress(size));
         }
         assertEquals(-25, FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP);
@@ -226,7 +279,7 @@ public class ExperimentalSettingsTest {
         }
         assertEquals(24, FocusRestoreSettings.focusDividerSpacingToProgress(-1));
         assertEquals(25, FocusRestoreSettings.focusDividerSpacingToProgress(0));
-        for (int invalid : new int[]{Integer.MIN_VALUE, -1, 1, 7}) assertEquals(0, FocusRestoreSettings.normalizeFocusIconSizeDp(invalid));
+        for (int invalid : new int[]{Integer.MIN_VALUE, -1}) assertEquals(8, FocusRestoreSettings.normalizeFocusIconSizeDp(invalid));
         assertEquals(32, FocusRestoreSettings.normalizeFocusIconSizeDp(Integer.MAX_VALUE));
         FocusRestoreSettings bounded = FocusRestoreSettings.edit().focusDividerStartDp(-26).focusDividerEndDp(25)
                 .focusDividerWidthDp(5).focusDividerStyle(4).build();
@@ -434,8 +487,8 @@ public class ExperimentalSettingsTest {
         assertTrue(settings.tintIslandIcon);
         assertFalse(settings.useSmallIconFallback);
         assertFalse(settings.notificationRowClickFallback);
-        assertFalse(settings.independentFocusBanner);
-        assertFalse(HookSettings.defaults().independentFocusBanner);
+        assertTrue(settings.independentFocusBanner);
+        assertTrue(HookSettings.defaults().independentFocusBanner);
     }
 
     @Test
@@ -480,7 +533,7 @@ public class ExperimentalSettingsTest {
             Map<String, Object> before = new HashMap<>(values);
             FocusRestoreSettings settings = FocusRestoreSettings.fromPreferences(
                     memoryPreferences(values));
-            assertFalse(settings.independentFocusBanner);
+            assertEquals(banner == null || banner, settings.independentFocusBanner);
             assertEquals(FocusRestoreSettings.HOOK_MODE_OS4, settings.hookMode);
             assertFalse(settings.limitWidth);
             assertEquals(244, settings.widthDp);
@@ -539,12 +592,12 @@ public class ExperimentalSettingsTest {
     }
 
     @Test
-    public void legacyShortCursorsDefaultBannerOff() {
+    public void legacyShortCursorsUseCurrentBannerDefault() {
         Object[] legacyRow = legacyWireRow();
         for (int count : new int[]{3, 7, 19, 20, 21}) {
             HookSettings settings = HookSettings.fromCursor(positionedCursor(
                     Arrays.copyOf(legacyRow, count)));
-            assertFalse("Legacy column count " + count, settings.independentFocusBanner);
+            assertTrue("Legacy column count " + count, settings.independentFocusBanner);
             assertEquals(244, settings.widthDp);
             assertEquals(1700, settings.marqueeDelayMs);
             assertEquals(count > 6, settings.allowFocusClick);
@@ -556,10 +609,10 @@ public class ExperimentalSettingsTest {
     public void bannerColumnReadsTrueFalseAndNullWithoutChangingLegacyClicks() {
         for (Object value : new Object[]{1, 0, null}) {
             Object[] row = Arrays.copyOf(legacyWireRow(), 22);
-            row[18] = 1; // Even a stale retired column must not opt in to the new banner.
+            row[18] = 1; // Retired values must not override the current banner column or default.
             row[21] = value;
             HookSettings settings = HookSettings.fromCursor(positionedCursor(row));
-            assertEquals(Integer.valueOf(1).equals(value), settings.independentFocusBanner);
+            assertEquals(value == null || Integer.valueOf(1).equals(value), settings.independentFocusBanner);
             assertTrue(settings.allowFocusClick);
             assertTrue(settings.notificationRowClickFallback);
             assertEquals("general", settings.generalSeparator);

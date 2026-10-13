@@ -32,7 +32,7 @@ final class FocusIconStyler {
 
     static int statusBarSizePx(Context context, int customSizeDp) {
         if (customSizeDp == 0) return statusBarSizePx(context);
-        int sizeDp = Math.max(8, Math.min(32, customSizeDp));
+        int sizeDp = Math.max(1, Math.min(32, customSizeDp));
         return Math.max(1, Math.min(256,
                 Math.round(sizeDp * context.getResources().getDisplayMetrics().density)));
     }

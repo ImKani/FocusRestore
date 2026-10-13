@@ -40,6 +40,16 @@ public class SettingsActivityStateTest {
     private static final String FIELD_BLOCK_END = "private Set<String> pendingTimeoutExemptPackages";
 
     @Test
+    public void initialDetectionIsLimitedToEmptyStoresAndExpandedGroupsAreUiState() throws Exception {
+        String source = readSettingsActivitySource();
+        assertTrue(source.contains("preferences.getAll().isEmpty() && hookPreferences.getAll().isEmpty()"));
+        assertEquals(1, source.split("InitialHookMode\\.detect\\(\\)", -1).length - 1);
+        assertTrue(source.contains("outState.putStringArrayList(\"ui.expandedSections\""));
+        assertTrue(source.contains("state.getStringArrayList(\"ui.expandedSections\")"));
+        assertTrue(source.contains("content.setVisibility(expanded ? View.VISIBLE : View.GONE)"));
+    }
+
+    @Test
     public void everyPendingSettingIsLoadedSavedAndRestored() throws Exception {
         String source = readSettingsActivitySource();
 
@@ -83,7 +93,7 @@ public class SettingsActivityStateTest {
         assertTrue(source.contains("setControlEnabled(longPressSecondsSeekBar, pendingLongPressNotificationRowClick)"));
         assertTrue(!source.contains("pendingLongPressNotificationRowClick = false"));
         assertTrue(source.contains("长按焦点通知模拟通知列表点击（实验性）"));
-        assertTrue(source.contains("默认关闭；长按直接走通知列表点击"));
+        assertTrue(source.contains("长按直接打开通知，独立于短按。"));
         assertTrue("focus text mode must survive a restart",
                 written.contains("m3.islandTextMode"));
     }
@@ -106,44 +116,78 @@ public class SettingsActivityStateTest {
         assertTrue(!source.contains("显示焦点分隔线（HyperOS 4）"));
         assertTrue(source.contains("focusIconOrderContainer.setPadding(0, dp(6), 0, dp(6))"));
         assertTrue(!source.contains("protected void onMeasure"));
-        assertTrue(source.contains("FocusRestoreSettings.focusIconSizeFromProgress(progress)"));
-        assertTrue(source.contains("FocusRestoreSettings.focusDividerSpacingFromProgress(progress)"));
-        assertTrue(source.contains("value == automatic ? \"跟随系统\""));
+        assertTrue(!source.contains("class DisclosureChevronDrawable"));
+        assertTrue(!source.contains("arrow.setText(expanded ? \"▲\" : \"▼\")"));
+        assertTrue(source.contains("arrow.setImageResource(R.drawable.ic_section_chevron)"));
+        assertTrue(source.contains("arrow.setRotation(expanded ? 180f : 0f)"));
+        assertTrue(source.contains("systemDimensionDp(\"focused_notif_icon_size\", 16f)"));
+        assertTrue(source.contains("FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP"));
+        assertTrue(source.contains("if (value != automatic) { label.setText(value + \" dp\"); return; }"));
+        assertTrue(source.contains("label.setText(number + \" dp\")"));
+        int start = source.indexOf("private SeekBar appearanceSlider(");
+        int end = source.indexOf("private void setAppearanceValue(", start);
+        assertTrue("appearance slider must exist", start >= 0 && end > start);
+        String appearance = source.substring(start, end);
+        assertTrue(appearance.contains("if (defaultValue != automatic)"));
+        assertTrue(appearance.contains("defaultAction(\"默认\", label, () -> {"));
+        assertTrue(appearance.contains("current[0] = defaultValue;\n                apply.accept(defaultValue);"));
+        assertTrue(appearance.contains("() -> current[0] == defaultValue, () -> slider.isEnabled()"));
+        assertTrue(appearance.contains("defaultAction(defaultValue == automatic ? \"跟随系统（默认）\" : \"跟随系统\""));
+        assertTrue(appearance.contains("current[0] = automatic; apply.accept(automatic);"));
+        assertTrue(appearance.contains("() -> current[0] == automatic, () -> slider.isEnabled()"));
+        // 程序设置进度不会触发 fromUser 分支，恢复必须显式同步 pending 和数值。
+        assertTrue(appearance.contains("update.accept(value);"));
+        assertTrue(appearance.contains("setAppearanceValue(valueLabel, value, automatic, systemDp)"));
     }
 
     @Test
     public void numericValueDefaultsStayIndividualAndCleanedUp() throws Exception {
         String source = readSettingsActivitySource();
-        for (String value : new String[]{"widthValue", "longPressSecondsValue", "touchWidthValue",
-                "touchWidthLandscapeValue", "delayValue", "focusMaxDisplayValue", "valueLabel"}) {
-            assertTrue(value + " has no individual default gesture", source.contains("bindValueReset(" + value + ","));
-        }
-        assertTrue(source.contains("bindValueReset((TextView) landscapeWidthRow.getChildAt(1),"));
-        assertTrue(source.contains("val.setBackground(roundedBg(COLOR_PRIMARY_LIGHT, 12))"));
-        assertTrue(source.contains("val.setMinimumHeight(dp(40))"));
-        assertTrue(source.contains("ViewConfiguration.getDoubleTapTimeout()"));
-        assertTrue(source.contains("SystemClock.elapsedRealtime()"));
-        assertTrue(source.contains("protected void onPause() {\n        valueResetTaps.clear();"));
-        assertTrue(source.contains("private void clearPageControls() {\n        valueResetTaps.clear();"));
+        int rowStart = source.indexOf("private LinearLayout valueRow(");
+        int rowEnd = source.indexOf("private int numericValueWidth(", rowStart);
+        assertTrue("numeric value row must exist", rowStart >= 0 && rowEnd > rowStart);
+        String row = source.substring(rowStart, rowEnd);
+        assertTrue(row.contains("val.setSingleLine(true)"));
+        assertTrue(row.contains("numericValueWidth(val), ViewGroup.LayoutParams.WRAP_CONTENT"));
+        assertTrue(!row.contains("setBackground"));
+        assertTrue(!row.contains("setMinimumHeight"));
+        assertTrue(!source.contains("bindValueReset("));
+        assertTrue(!source.contains("valueResetTaps"));
+        assertTrue(!source.contains("getDoubleTapTimeout()"));
+        assertTrue(source.contains("private void clearPageControls() {\n        defaultActionRefreshers.clear();"));
         assertTrue(source.contains("focusMaxDisplayValue = null;"));
-        // 程序设置进度不会触发fromUser分支，默认回调必须显式同步pending和值。
-        assertTrue(source.contains("update.accept(automatic);\n            slider.setProgress(0);"));
-        assertTrue(source.contains("valueLabel.setText(appearanceValue(automatic, automatic))"));
-        for (String assignment : new String[]{
-                "pendingWidthDp = DEFAULT_WIDTH_DP", "pendingWidthLandscapeDp = FocusRestoreSettings.DEFAULT_WIDTH_LANDSCAPE_DP",
-                "pendingTouchWidthDp = FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_DP",
-                "pendingTouchWidthLandscapeDp = FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP",
-                "pendingLongPressSeconds = FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS",
-                "pendingDelayMs = DEFAULT_MARQUEE_DELAY_MS",
-                "pendingFocusMaxDisplaySeconds = FocusRestoreSettings.DEFAULT_FOCUS_MAX_DISPLAY_SECONDS"}) {
-            assertTrue("default callback missing: " + assignment, source.contains(assignment));
+        String[] fields = {"pendingWidthDp", "pendingWidthLandscapeDp", "pendingTouchWidthDp",
+                "pendingTouchWidthLandscapeDp", "pendingLongPressSeconds", "pendingDelayMs",
+                "pendingFocusMaxDisplaySeconds"};
+        String[] defaults = {"DEFAULT_WIDTH_DP", "FocusRestoreSettings.DEFAULT_WIDTH_LANDSCAPE_DP",
+                "FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_DP", "FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP",
+                "FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS", "DEFAULT_MARQUEE_DELAY_MS",
+                "FocusRestoreSettings.DEFAULT_FOCUS_MAX_DISPLAY_SECONDS"};
+        String[] enabled = {"pendingManual", "pendingManual", "pendingCustomTouchWidth",
+                "pendingCustomTouchWidth", "pendingLongPressNotificationRowClick", "true", "true"};
+        for (int index = 0; index < fields.length; index++) {
+            String assignment = fields[index] + " = " + defaults[index];
+            assertTrue("individual default callback missing: " + fields[index], Pattern.compile(
+                    "addDefaultRange\\([^\\n]*, \\(\\) -> \\{\\s*" + Pattern.quote(assignment)
+                            + ";[^}]*\\}, \\(\\) -> " + Pattern.quote(fields[index] + " == " + defaults[index])
+                            + ", \\(\\) -> " + Pattern.quote(enabled[index]) + "\\);")
+                    .matcher(source).find());
         }
-        int start = source.indexOf("private void bindValueReset(");
+        int start = source.indexOf("private TextView defaultAction(");
         int end = source.indexOf("private LinearLayout rangeRow", start);
-        String gesture = source.substring(start, end);
-        assertTrue(gesture.contains("if (!view.isEnabled()) return"));
-        assertEquals("reset saves exactly once", 1, gesture.split("markPending\\(\\)", -1).length - 1);
-        assertTrue(!gesture.contains("postDelayed"));
+        assertTrue("default action must exist", start >= 0 && end > start);
+        String action = source.substring(start, end);
+        assertTrue(action.contains("if (!enabled.getAsBoolean()) return"));
+        assertTrue(action.contains("reset.run();"));
+        assertEquals("reset saves exactly once", 1, action.split("markPending\\(\\)", -1).length - 1);
+        assertTrue(action.contains("action.setTextColor(selected.getAsBoolean() ? COLOR_PRIMARY : COLOR_TEXT_PRIMARY)"));
+        assertTrue(action.contains("action.setSelected(selected.getAsBoolean())"));
+        assertTrue(action.contains("setControlEnabled(action, enabled.getAsBoolean())"));
+        assertTrue(action.contains("defaultActionRefreshers.add(refresh)"));
+        assertTrue(action.contains("for (Runnable refresh : defaultActionRefreshers) refresh.run()"));
+        assertTrue(action.contains("row.addView(defaultAction(\"默认\", label, reset, selected, enabled), 1)"));
+        assertTrue(source.contains("private void markPending() {\n        refreshDefaultActions();"));
+        assertTrue(!action.contains("postDelayed"));
         assertTrue(source.contains("setChildrenEnabled(touchWidthOptionsPanel, pendingCustomTouchWidth)"));
         assertTrue(source.contains("setChildrenEnabled(landscapeWidthValueRow, enabled)"));
         assertTrue(!source.contains("ic_reset"));
@@ -159,8 +203,8 @@ public class SettingsActivityStateTest {
         }
         assertTrue(source.contains("FocusRestoreSettings.migrateLegacyDividerSpacing("));
         assertTrue(!source.contains("outState.putInt(\"m3.focusDividerStartDp\""));
-        assertTrue(source.contains("\"分隔线前间距（时间侧）\", 49,"));
-        assertTrue(source.contains("\"分隔线后间距（焦点侧）\", 49,"));
+        assertTrue(source.contains("\"分隔线前间距（时间侧）\", -24, 24,"));
+        assertTrue(source.contains("\"分隔线后间距（焦点侧）\", -24, 24,"));
     }
 
     @Test

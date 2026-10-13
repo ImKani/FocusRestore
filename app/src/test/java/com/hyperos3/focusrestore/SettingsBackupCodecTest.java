@@ -169,11 +169,11 @@ public class SettingsBackupCodecTest {
         FocusRestoreSettings old = decodeGroups("{\"focus\":{\"text_width_dp\":244,\"text_width_landscape_dp\":1200}}");
         assertFalse(old.customTouchWidth);
         assertEquals(160, old.touchWidthDp);
-        assertEquals(160, old.touchWidthLandscapeDp);
+        assertEquals(600, old.touchWidthLandscapeDp);
         FocusRestoreSettings portraitOnly = decodeGroups("{\"interaction\":{\"custom_touch_width\":true,\"touch_width_dp\":240}}");
         assertTrue(portraitOnly.customTouchWidth);
         assertEquals(240, portraitOnly.touchWidthDp);
-        assertEquals(160, portraitOnly.touchWidthLandscapeDp);
+        assertEquals(600, portraitOnly.touchWidthLandscapeDp);
         assertEquals(160, portraitOnly.widthDp);
         FocusRestoreSettings bounded = decodeGroups("{\"interaction\":{\"touch_width_dp\":900,\"touch_width_landscape_dp\":2000}}");
         assertFalse(bounded.customTouchWidth);
@@ -434,12 +434,12 @@ public class SettingsBackupCodecTest {
         byte[] before = SettingsBackupCodec.encode(existing);
         rejectGroups("{\"focus\":{\"text_width_dp\":244},\"interaction\":{\"long_press_seconds\":\"bad\"}}");
         assertArrayEquals(before, SettingsBackupCodec.encode(existing));
-        assertFalse("defaults for a separate import must not inherit current settings", decodeGroups("{}") .islandCompat);
+        assertTrue("defaults for a separate import must not inherit current settings", decodeGroups("{}") .islandCompat);
     }
 
     @Test
     public void appearanceImportRejectsGapsBoundsAndWrongTypes() throws Exception {
-        for (String invalid : new String[]{"-1", "1", "7", "33", "1.0", "true", "\"8\""}) {
+        for (String invalid : new String[]{"-1", "33", "1.0", "true", "\"8\""}) {
             rejectGroups("{\"icons\":{\"focus_icon_size_dp\":" + invalid + "}}");
         }
         for (String key : new String[]{"focus_divider_start_dp", "focus_divider_end_dp"}) {
@@ -459,8 +459,8 @@ public class SettingsBackupCodecTest {
             rejectGroups("{\"focus\":{\"focus_divider_style\":" + invalid + "}}");
         }
         FocusRestoreSettings automatic = decodeGroups("{\"icons\":{\"focus_icon_size_dp\":0},\"focus\":{\"focus_divider_start_dp\":-1,\"focus_divider_end_dp\":-1,\"focus_divider_width_dp\":0,\"focus_divider_style\":0}}");
-        assertEverySettingEquals(FocusRestoreSettings.defaults(), automatic);
-        for (int size : new int[]{8, 32}) {
+        assertEverySettingEquals(FocusRestoreSettings.edit().focusIconSizeDp(0).build(), automatic);
+        for (int size : new int[]{1, 7, 8, 32}) {
             assertEquals(size, decodeGroups("{\"icons\":{\"focus_icon_size_dp\":" + size + "}}").focusIconSizeDp);
         }
     }

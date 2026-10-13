@@ -133,7 +133,7 @@ final class SettingsBackupCodec {
                 throw invalid("focus_icon_priority 必须为 0～5 的整数");
             }
             int iconSize = integer(icons, "focus_icon_size_dp", defaults.focusIconSizeDp);
-            if (iconSize != 0 && (iconSize < 8 || iconSize > 32)) throw invalid("focus_icon_size_dp 必须为 0 或 8～32");
+            if (iconSize < 0 || iconSize > 32) throw invalid("focus_icon_size_dp 必须为 0 或 1～32");
             int dividerStart = backupDivider(focus, "focus_divider_start_offset_dp", "focus_divider_start_dp", defaults.focusDividerStartDp);
             int dividerEnd = backupDivider(focus, "focus_divider_end_offset_dp", "focus_divider_end_dp", defaults.focusDividerEndDp);
             int dividerWidth = rangedInteger(focus, "focus_divider_width_dp", defaults.focusDividerWidthDp, 0, 4);
@@ -148,7 +148,8 @@ final class SettingsBackupCodec {
                     .hookMode(mode)
                     .limitWidth(bool(focus, "limit_text_width", defaults.limitWidth))
                     .widthDp(width)
-                    .widthLandscapeDp(integer(focus, "text_width_landscape_dp", width))
+                    .widthLandscapeDp(integer(focus, "text_width_landscape_dp",
+                            focus.has("text_width_dp") ? width : defaults.widthLandscapeDp))
                     .marqueeDelayMs(integer(marquee, "marquee_delay_ms", defaults.marqueeDelayMs))
                     .marqueeBounce(bool(marquee, "marquee_bounce", defaults.marqueeBounce))
                     .compatRetry(bool(compatibility, "compat_retry", defaults.compatRetry))

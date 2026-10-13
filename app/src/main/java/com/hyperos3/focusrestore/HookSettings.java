@@ -193,7 +193,7 @@ final class HookSettings {
                 readBoolean(cursor, SettingsContract.COMPAT_RETRY, false),
                 readBoolean(cursor, SettingsContract.MARQUEE_BOUNCE,
                         FocusRestoreSettings.DEFAULT_MARQUEE_BOUNCE),
-                readBoolean(cursor, SettingsContract.ISLAND_COMPAT, false),
+                readBoolean(cursor, SettingsContract.ISLAND_COMPAT, FocusRestoreSettings.DEFAULT_ISLAND_COMPAT),
                 readBoolean(cursor, SettingsContract.DISABLE_ISLAND_PROPERTY,
                         FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_PROPERTY),
                 readBoolean(cursor, SettingsContract.DISABLE_ISLAND_FEATURE_CACHE,
@@ -203,7 +203,7 @@ final class HookSettings {
                         FocusRestoreSettings.DEFAULT_HIDE_NOTIFICATION_ICONS),
                 readBoolean(cursor, SettingsContract.SHOW_FOCUS_DIVIDER,
                         FocusRestoreSettings.DEFAULT_SHOW_FOCUS_DIVIDER),
-                // 旧 Provider 缺外观列时使用系统默认，不推导自其他设置。
+                // 缺外观列时使用明确默认值，不推导自其他设置。
                 readInt(cursor, SettingsContract.FOCUS_ICON_SIZE_DP, FocusRestoreSettings.DEFAULT_FOCUS_ICON_SIZE_DP),
                 readDivider(cursor, true),
                 readDivider(cursor, false),
