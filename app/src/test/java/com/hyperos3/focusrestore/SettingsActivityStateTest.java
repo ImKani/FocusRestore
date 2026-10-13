@@ -60,6 +60,9 @@ public class SettingsActivityStateTest {
 
         Set<String> written = keys(BUNDLE_PUT, source);
         Set<String> restored = keys(BUNDLE_GET, source);
+        // 旧间距key只读取迁移，不再写入；其余所有字段仍必须严格三路径一致。
+        restored.remove("m3.focusDividerStartDp");
+        restored.remove("m3.focusDividerEndDp");
         assertTrue("saved activity state should carry keys", written.size() > 10);
         assertEquals("saved and restored activity state keys must match", written, restored);
 
@@ -91,8 +94,10 @@ public class SettingsActivityStateTest {
         for (String field : new String[]{"focusIconSizeDp", "focusDividerStartDp", "focusDividerEndDp",
                 "focusDividerWidthDp", "focusDividerStyle"}) {
             String pending = "pending" + Character.toUpperCase(field.charAt(0)) + field.substring(1);
-            assertTrue(source.contains("outState.putInt(\"m3." + field + "\", " + pending + ")"));
-            assertTrue(source.contains("state.getInt(\"m3." + field + "\", " + pending + ")"));
+            String wireField = field.equals("focusDividerStartDp") || field.equals("focusDividerEndDp")
+                    ? field.replace("Dp", "OffsetDp") : field;
+            assertTrue(source.contains("outState.putInt(\"m3." + wireField + "\", " + pending + ")"));
+            assertTrue(source.contains("state.getInt(\"m3." + wireField + "\", " + pending + ")"));
             assertTrue(source.contains("." + field + "(" + pending + ")"));
         }
         for (String control : new String[]{"focusIconSizeSeekBar", "focusDividerStartSeekBar", "focusDividerEndSeekBar",
@@ -104,6 +109,58 @@ public class SettingsActivityStateTest {
         assertTrue(source.contains("FocusRestoreSettings.focusIconSizeFromProgress(progress)"));
         assertTrue(source.contains("FocusRestoreSettings.focusDividerSpacingFromProgress(progress)"));
         assertTrue(source.contains("value == automatic ? \"跟随系统\""));
+    }
+
+    @Test
+    public void numericValueDefaultsStayIndividualAndCleanedUp() throws Exception {
+        String source = readSettingsActivitySource();
+        for (String value : new String[]{"widthValue", "longPressSecondsValue", "touchWidthValue",
+                "touchWidthLandscapeValue", "delayValue", "focusMaxDisplayValue", "valueLabel"}) {
+            assertTrue(value + " has no individual default gesture", source.contains("bindValueReset(" + value + ","));
+        }
+        assertTrue(source.contains("bindValueReset((TextView) landscapeWidthRow.getChildAt(1),"));
+        assertTrue(source.contains("val.setBackground(roundedBg(COLOR_PRIMARY_LIGHT, 12))"));
+        assertTrue(source.contains("val.setMinimumHeight(dp(48))"));
+        assertTrue(source.contains("ViewConfiguration.getDoubleTapTimeout()"));
+        assertTrue(source.contains("SystemClock.elapsedRealtime()"));
+        assertTrue(source.contains("protected void onPause() {\n        valueResetTaps.clear();"));
+        assertTrue(source.contains("private void clearPageControls() {\n        valueResetTaps.clear();"));
+        assertTrue(source.contains("focusMaxDisplayValue = null;"));
+        // 程序设置进度不会触发fromUser分支，默认回调必须显式同步pending和值。
+        assertTrue(source.contains("update.accept(automatic);\n            slider.setProgress(0);"));
+        assertTrue(source.contains("valueLabel.setText(appearanceValue(automatic, automatic))"));
+        for (String assignment : new String[]{
+                "pendingWidthDp = DEFAULT_WIDTH_DP", "pendingWidthLandscapeDp = FocusRestoreSettings.DEFAULT_WIDTH_LANDSCAPE_DP",
+                "pendingTouchWidthDp = FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_DP",
+                "pendingTouchWidthLandscapeDp = FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP",
+                "pendingLongPressSeconds = FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS",
+                "pendingDelayMs = DEFAULT_MARQUEE_DELAY_MS",
+                "pendingFocusMaxDisplaySeconds = FocusRestoreSettings.DEFAULT_FOCUS_MAX_DISPLAY_SECONDS"}) {
+            assertTrue("default callback missing: " + assignment, source.contains(assignment));
+        }
+        int start = source.indexOf("private void bindValueReset(");
+        int end = source.indexOf("private LinearLayout rangeRow", start);
+        String gesture = source.substring(start, end);
+        assertTrue(gesture.contains("if (!view.isEnabled()) return"));
+        assertEquals("reset saves exactly once", 1, gesture.split("markPending\\(\\)", -1).length - 1);
+        assertTrue(!gesture.contains("postDelayed"));
+        assertTrue(source.contains("setChildrenEnabled(touchWidthOptionsPanel, pendingCustomTouchWidth)"));
+        assertTrue(source.contains("setChildrenEnabled(landscapeWidthValueRow, enabled)"));
+        assertTrue(!source.contains("ic_reset"));
+    }
+
+    @Test
+    public void offsetBundleMigrationPreservesLegacyAutomaticAndNewNegativeOne() throws Exception {
+        String source = readSettingsActivitySource();
+        for (String side : new String[]{"Start", "End"}) {
+            assertTrue(source.contains("state.containsKey(\"m3.focusDivider" + side + "OffsetDp\")"));
+            assertTrue(source.contains("state.containsKey(\"m3.focusDivider" + side + "Dp\")"));
+            assertTrue(source.contains("state.getInt(\"m3.focusDivider" + side + "Dp\", -1)"));
+        }
+        assertTrue(source.contains("FocusRestoreSettings.migrateLegacyDividerSpacing("));
+        assertTrue(!source.contains("outState.putInt(\"m3.focusDividerStartDp\""));
+        assertTrue(source.contains("\"分隔线前间距（时间侧）\", 49,"));
+        assertTrue(source.contains("\"分隔线后间距（焦点侧）\", 49,"));
     }
 
     @Test

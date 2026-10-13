@@ -47,7 +47,7 @@ public class SettingsContractTest {
                 "island_compat", "island_text_mode", "island_general_separator", "island_side_separator",
                 "island_force_packages",
                 "hide_notification_icons", "show_focus_divider",
-                "focus_icon_size_dp", "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style",
+                "focus_icon_size_dp", "focus_divider_start_offset_dp", "focus_divider_end_offset_dp", "focus_divider_width_dp", "focus_divider_style",
                 "show_island_icon", "tint_island_icon",
                 "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon",
                 "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
@@ -83,6 +83,9 @@ public class SettingsContractTest {
                 SettingsContract.LEGACY_ISLAND_SEPARATOR, SettingsContract.EXPAND_ISLAND_ON_CLICK,
                 SettingsContract.NOTIFICATION_ICON_HIDE_MODE, SettingsContract.ISLAND_CUSTOM_RULES
         };
+        assertEquals(46, SettingsContract.COLUMNS.length);
+        assertEquals(SettingsContract.FOCUS_DIVIDER_START_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_START_DP);
+        assertEquals(SettingsContract.FOCUS_DIVIDER_END_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_END_DP);
         assertEquals(SettingsContract.COLUMNS.length, fields.length);
         for (int index = 0; index < fields.length; index++) assertEquals(index, fields[index]);
     }
@@ -294,8 +297,8 @@ public class SettingsContractTest {
     public void appearanceFieldsFollowNamesEvenWhenReorderedOrProjected() {
         FocusRestoreSettings settings = FocusRestoreSettings.edit().focusIconSizeDp(32)
                 .focusDividerStartDp(24).focusDividerEndDp(0).focusDividerWidthDp(4).focusDividerStyle(3).build();
-        String[] projection = {"focus_divider_style", "focus_icon_size_dp", "focus_divider_end_dp",
-                "focus_divider_start_dp", "focus_divider_width_dp", "focus_divider_style"};
+        String[] projection = {"focus_divider_style", "focus_icon_size_dp", "focus_divider_end_offset_dp",
+                "focus_divider_start_offset_dp", "focus_divider_width_dp", "focus_divider_style"};
         assertArrayEquals(new Object[]{3, 32, 0, 24, 4, 3}, SettingsContract.toRow(settings, "", projection));
         HookSettings hook = HookSettings.fromCursor(namedCursor(SettingsContract.COLUMNS, SettingsContract.toRow(settings, "")));
         assertEquals(32, hook.focusIconSizeDp);
@@ -305,10 +308,57 @@ public class SettingsContractTest {
         assertEquals(3, hook.focusDividerStyle);
         HookSettings legacy = HookSettings.fromCursor(namedCursor(LEGACY_COLUMNS, SettingsContract.toRow(settings, "", LEGACY_COLUMNS)));
         assertEquals(0, legacy.focusIconSizeDp);
-        assertEquals(-1, legacy.focusDividerStartDp);
-        assertEquals(-1, legacy.focusDividerEndDp);
+        assertEquals(-25, legacy.focusDividerStartDp);
+        assertEquals(-25, legacy.focusDividerEndDp);
         assertEquals(0, legacy.focusDividerWidthDp);
         assertEquals(0, legacy.focusDividerStyle);
+    }
+
+    @Test
+    public void dividerProjectionDowngradesNegativeOffsetsOnlyForLegacyNames() {
+        String[] projection = {"focus_divider_end_dp", "focus_divider_start_offset_dp",
+                "focus_divider_start_dp", "focus_divider_end_offset_dp", "focus_divider_start_dp"};
+        assertArrayEquals(projection, SettingsContract.columnsForProjection(projection));
+        for (int offset : new int[]{-25, -24, -1, 0, 24}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit()
+                    .focusDividerStartDp(offset).focusDividerEndDp(offset).build();
+            int legacy = offset < 0 ? -1 : offset;
+            assertArrayEquals(new Object[]{legacy, offset, legacy, offset, legacy},
+                    SettingsContract.toRow(settings, "", projection));
+            Object[] row = SettingsContract.toRow(settings, "");
+            assertEquals(offset, row[SettingsContract.FOCUS_DIVIDER_START_DP]);
+            assertEquals(offset, row[SettingsContract.FOCUS_DIVIDER_END_DP]);
+            HookSettings current = HookSettings.fromCursor(namedCursor(SettingsContract.COLUMNS, row));
+            assertEquals(offset, current.focusDividerStartDp);
+            assertEquals(offset, current.focusDividerEndDp);
+        }
+    }
+
+    @Test
+    public void dividerNamedCursorMigratesLegacyAutoAndPrefersCurrentOffsets() {
+        String[] legacyColumns = {"focus_divider_end_dp", "text_width_dp", "limit_text_width",
+                "focus_divider_start_dp", "marquee_delay_ms"};
+        for (int old : new int[]{-1, 0, 24}) {
+            HookSettings hook = HookSettings.fromCursor(namedCursor(legacyColumns,
+                    new Object[]{old, 160, 1, old, 1000}));
+            assertEquals(old == -1 ? -25 : old, hook.focusDividerStartDp);
+            assertEquals(old == -1 ? -25 : old, hook.focusDividerEndDp);
+        }
+        String[] mixedColumns = {"focus_divider_end_dp", "focus_divider_start_offset_dp",
+                "text_width_dp", "focus_divider_end_offset_dp", "limit_text_width",
+                "focus_divider_start_dp", "marquee_delay_ms"};
+        for (int offset : new int[]{-25, -24, -1, 0, 24}) {
+            HookSettings current = HookSettings.fromCursor(namedCursor(mixedColumns,
+                    new Object[]{24, offset, 160, offset, 1, -1, 1000}));
+            assertEquals(offset, current.focusDividerStartDp);
+            assertEquals(offset, current.focusDividerEndDp);
+        }
+        // 新列为 null 与缺列均允许旧列迁移，其他字段仍按列名读取。
+        HookSettings fallback = HookSettings.fromCursor(namedCursor(mixedColumns,
+                new Object[]{0, null, 160, null, 1, -1, 1000}));
+        assertEquals(-25, fallback.focusDividerStartDp);
+        assertEquals(0, fallback.focusDividerEndDp);
+        assertEquals(160, fallback.widthDp);
     }
 
     private static FocusRestoreSettings distinctiveSettings() {

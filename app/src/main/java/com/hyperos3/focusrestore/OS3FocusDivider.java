@@ -30,6 +30,7 @@ final class OS3FocusDivider {
     private static final String LINE_STATE = "focusRestoreDividerOriginal";
     private static final String PROMPT_STATE = "focusRestoreDividerPadding";
     private static final String DECORATION = "focusRestoreDividerDecoration";
+    private static final String CLIPPING = "focusRestoreDividerClipping";
 
     OS3FocusDivider(Supplier<HookSettings> settings, Logger logger) {
         this.settings = settings;
@@ -105,10 +106,10 @@ final class OS3FocusDivider {
             float density = line.getResources().getDisplayMetrics().density;
             int nativeWidth = dimension(line, "line_width", original.scaled(original.width, density));
             int height = dimension(line, "line_height", original.scaled(original.height, density));
-            int start = current.focusDividerStartDp < 0
+            int start = current.focusDividerStartDp == FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP
                     ? dimension(line, "status_bar_notification_padding_end", original.scaled(original.start, density))
                     : Math.round(current.focusDividerStartDp * density);
-            int end = current.focusDividerEndDp < 0
+            int end = current.focusDividerEndDp == FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP
                     ? original.scaled(original.end, density) : Math.round(current.focusDividerEndDp * density);
             int width = nativeWidth;
             if (current.focusDividerStyle != 0 || current.focusDividerWidthDp != 0) {
@@ -132,6 +133,7 @@ final class OS3FocusDivider {
             line.invalidate();
             if (line.getParent() instanceof ViewGroup) {
                 ViewGroup parent = (ViewGroup) line.getParent();
+                applyParentClipping(parent, current.showFocusDivider && (start < 0 || end < 0));
                 for (int index = 0; index < parent.getChildCount(); index++) {
                     View child = parent.getChildAt(index);
                     if ("com.android.systemui.statusbar.phone.FocusedNotifPromptView".equals(child.getClass().getName())) {
@@ -143,13 +145,31 @@ final class OS3FocusDivider {
         } catch (Throwable failure) { logger.error("OS3 divider layout; keeping native layout", failure); }
     }
 
+    private static void applyParentClipping(ViewGroup parent, boolean overlap) {
+        Object saved = XposedHelpers.getAdditionalInstanceField(parent, CLIPPING);
+        boolean[] original = saved instanceof boolean[] ? (boolean[]) saved : null;
+        if (overlap) {
+            if (original == null) {
+                original = new boolean[]{parent.getClipChildren(), parent.getClipToPadding()};
+                XposedHelpers.setAdditionalInstanceField(parent, CLIPPING, original);
+            }
+            // 用户明确允许负间距重叠，不让focused_parent裁掉移向时间侧的竖线。
+            parent.setClipChildren(false);
+            parent.setClipToPadding(false);
+        } else if (original != null) {
+            parent.setClipChildren(original[0]);
+            parent.setClipToPadding(original[1]);
+            XposedHelpers.removeAdditionalInstanceField(parent, CLIPPING);
+        }
+    }
+
     private void applyPromptPadding(View prompt) {
         Original original = original(prompt, PROMPT_STATE, 0, 0,
                 prompt.getPaddingStart(), prompt.getPaddingEnd());
         HookSettings current = settings.get();
         float density = prompt.getResources().getDisplayMetrics().density;
         // ROM已有6dp paddingStart；自定义后移到竖线marginEnd，只保留一次右侧间距。
-        int start = current.showFocusDivider && current.focusDividerEndDp < 0
+        int start = current.showFocusDivider && current.focusDividerEndDp == FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP
                 ? dimension(prompt, "focused_notif_view_padding_start", original.scaled(original.start, density)) : 0;
         int end = original.scaled(original.end, density);
         if (prompt.getPaddingStart() != start || prompt.getPaddingEnd() != end) {

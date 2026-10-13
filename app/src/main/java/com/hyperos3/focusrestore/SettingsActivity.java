@@ -26,6 +26,7 @@ import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.os.ParcelFileDescriptor;
 import java.io.Closeable;
 import java.io.IOException;
@@ -177,6 +178,8 @@ public final class SettingsActivity extends Activity {
     private Switch islandCompatSwitch;
     private SpinnerField islandTextModeField;
     private EditText focusMaxDisplayInput;
+    private TextView focusMaxDisplayValue;
+    private final ValueResetTap valueResetTaps = new ValueResetTap();
     private Switch disableIslandPropertySwitch;
     private Switch disableIslandFeatureCacheSwitch;
     private Switch allowFocusClickSwitch;
@@ -298,6 +301,7 @@ public final class SettingsActivity extends Activity {
 
     @Override
     protected void onPause() {
+        valueResetTaps.clear();
         backupUiResumed = false;
         if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
         super.onPause();
@@ -497,6 +501,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private void clearPageControls() {
+        valueResetTaps.clear();
         // 切页前捕获输入，随后解除旧监听和引用；导入时不能再次捕获旧 EditText。
         for (Runnable cleanup : pageListenerCleanup) cleanup.run();
         pageListenerCleanup.clear();
@@ -517,6 +522,7 @@ public final class SettingsActivity extends Activity {
         islandCompatSwitch = null;
         islandTextModeField = null;
         focusMaxDisplayInput = null;
+        focusMaxDisplayValue = null;
         disableIslandPropertySwitch = null;
         disableIslandFeatureCacheSwitch = null;
         allowFocusClickSwitch = null;
@@ -611,6 +617,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private void buildSettingsPage(LinearLayout root) {
+        root.addView(text("双击带背景的数值可恢复该项默认值", 13, COLOR_TEXT_SECONDARY), matchWrap(dp(4)));
         root.addView(sectionHeader("系统界面版本"), matchWrap(dp(8)));
         LinearLayout modePanel = panel();
         LinearLayout modeSelector = new LinearLayout(this);
@@ -677,6 +684,11 @@ public final class SettingsActivity extends Activity {
             public void onStopTrackingTouch(SeekBar bar) { }
         });
         focusPanel.addView(landscapeWidthSeekBar, matchWrap(dp(2)));
+        bindValueReset((TextView) landscapeWidthRow.getChildAt(1), "横屏最大宽度", () -> {
+            pendingWidthLandscapeDp = FocusRestoreSettings.DEFAULT_WIDTH_LANDSCAPE_DP;
+            landscapeWidthSeekBar.setProgress(pendingWidthLandscapeDp - MIN_WIDTH_DP);
+            ((TextView) landscapeWidthRow.getChildAt(1)).setText(pendingWidthLandscapeDp + " dp");
+        });
         mediaFocusSwitch = createSwitch("启用媒体焦点通知（实验性）");
         focusPanel.addView(mediaFocusSwitch, matchWrap(dp(4)));
         focusPanel.addView(text(
@@ -684,7 +696,13 @@ public final class SettingsActivity extends Activity {
                         + "已调整到“点击行为”页的“点击焦点通知展开横幅”开关之下。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
         hideNotificationIconsSwitch = createSwitch("隐藏其他通知图标（HyperOS 4）");
-                focusPanel.addView(text("最大显示时间（秒）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        LinearLayout maxDisplayRow = valueRow("最大显示时间（秒）", maxDisplayValue());
+        focusMaxDisplayValue = (TextView) maxDisplayRow.getChildAt(1);
+        focusPanel.addView(maxDisplayRow, matchWrap(dp(4)));
+        bindValueReset(focusMaxDisplayValue, "最大显示时间", () -> {
+            pendingFocusMaxDisplaySeconds = FocusRestoreSettings.DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
+            syncFocusMaxDisplayInput();
+        });
         focusMaxDisplayInput = input("0 = 不限制，2 - 3600 秒");
         focusMaxDisplayInput.setInputType(InputType.TYPE_CLASS_NUMBER
                 | InputType.TYPE_NUMBER_FLAG_DECIMAL);
@@ -714,6 +732,11 @@ public final class SettingsActivity extends Activity {
         manualWidthSwitch.setChecked(pendingManual);
         widthSeekBar.setProgress(pendingWidthDp - MIN_WIDTH_DP);
         widthValue.setText(pendingWidthDp + " dp");
+        bindValueReset(widthValue, "最大宽度", () -> {
+            pendingWidthDp = DEFAULT_WIDTH_DP;
+            widthSeekBar.setProgress(DEFAULT_WIDTH_DP - MIN_WIDTH_DP);
+            widthValue.setText(pendingWidthDp + " dp");
+        });
         islandCompatSwitch.setChecked(pendingIslandCompat);
         syncIslandTextModeField();
         hideNotificationIconsSwitch.setChecked(pendingHideNotificationIcons);
@@ -737,18 +760,18 @@ public final class SettingsActivity extends Activity {
                     markPending();
                 });
         panel.addView(focusDividerStyleField.spinner, matchWrap(dp(4)));
-        focusDividerStartSeekBar = appearanceSlider(panel, "分隔线前间距（时间侧）", 25,
+        focusDividerStartSeekBar = appearanceSlider(panel, "分隔线前间距（时间侧）", 49,
                 FocusRestoreSettings.focusDividerSpacingToProgress(pendingFocusDividerStartDp),
                 progress -> FocusRestoreSettings.focusDividerSpacingFromProgress(progress),
-                value -> pendingFocusDividerStartDp = value, -1);
-        focusDividerEndSeekBar = appearanceSlider(panel, "分隔线后间距（焦点侧）", 25,
+                value -> pendingFocusDividerStartDp = value, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_START_DP);
+        focusDividerEndSeekBar = appearanceSlider(panel, "分隔线后间距（焦点侧）", 49,
                 FocusRestoreSettings.focusDividerSpacingToProgress(pendingFocusDividerEndDp),
                 progress -> FocusRestoreSettings.focusDividerSpacingFromProgress(progress),
-                value -> pendingFocusDividerEndDp = value, -1);
+                value -> pendingFocusDividerEndDp = value, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_END_DP);
         focusDividerWidthSeekBar = appearanceSlider(panel, "分隔线粗细", 4,
                 pendingFocusDividerWidthDp, progress -> progress,
                 value -> pendingFocusDividerWidthDp = value, 0);
-        panel.addView(text("间距可跟随系统或设为 0～24 dp；宽度可跟随系统或设为 1～4 dp。关闭分隔线后保留这些选择。",
+        panel.addView(text("间距可跟随系统或设为 −24～24 dp，负值允许重叠；粗细可跟随系统或设为 1～4 dp。关闭分隔线后保留这些选择。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(4)));
     }
 
@@ -762,6 +785,11 @@ public final class SettingsActivity extends Activity {
         slider.setMax(max);
         slider.setProgress(progress);
         slider.setContentDescription(label);
+        bindValueReset(valueLabel, label, () -> {
+            update.accept(automatic);
+            slider.setProgress(0);
+            valueLabel.setText(appearanceValue(automatic, automatic));
+        });
         slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar bar, int position, boolean fromUser) {
                 if (!fromUser) return;
@@ -781,6 +809,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private void buildAdvancedPage(LinearLayout root) {
+        root.addView(text("双击带背景的数值可恢复该项默认值", 13, COLOR_TEXT_SECONDARY), matchWrap(dp(4)));
         root.addView(sectionHeader("焦点图标"), matchWrap(dp(8)));
         LinearLayout iconPanel = panel();
         iconPanel.addView(text("焦点图标优先级（按住拖动排序）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
@@ -876,6 +905,11 @@ public final class SettingsActivity extends Activity {
         // 与宽度限制共用控件样式；每格 0.1 秒，端点严格对应 0.2 和 10 秒。
         longPressSecondsSeekBar.setMax(98);
         longPressSecondsSeekBar.setProgress(Math.round(pendingLongPressSeconds * 10f) - 2);
+        bindValueReset(longPressSecondsValue, "长按时间", () -> {
+            pendingLongPressSeconds = FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS;
+            longPressSecondsSeekBar.setProgress(Math.round(pendingLongPressSeconds * 10f) - 2);
+            longPressSecondsValue.setText(String.format(Locale.US, "%.1f 秒", pendingLongPressSeconds));
+        });
         interactionPanel.addView(longPressSecondsSeekBar, matchWrap(dp(2)));
         interactionPanel.addView(rangeRow("最小 0.2 秒", "最大 10 秒"), matchWrap(dp(8)));
         focusSwipeEnabledSwitch = createSwitch("左右滑动切换和收起焦点通知（实验性）");
@@ -908,6 +942,11 @@ public final class SettingsActivity extends Activity {
         styleSeekBar(touchWidthSeekBar);
         touchWidthSeekBar.setMax(MAX_WIDTH_DP - MIN_WIDTH_DP);
         touchWidthSeekBar.setProgress(pendingTouchWidthDp - MIN_WIDTH_DP);
+        bindValueReset(touchWidthValue, "竖屏触控宽度", () -> {
+            pendingTouchWidthDp = FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_DP;
+            touchWidthSeekBar.setProgress(pendingTouchWidthDp - MIN_WIDTH_DP);
+            touchWidthValue.setText(pendingTouchWidthDp + " dp");
+        });
         touchWidthOptionsPanel.addView(touchWidthSeekBar, matchWrap(dp(2)));
         touchWidthOptionsPanel.addView(rangeRow("80 dp", "400 dp"), matchWrap(dp(8)));
         LinearLayout touchLandscapeRow = valueRow("横屏触控宽度", pendingTouchWidthLandscapeDp + " dp");
@@ -917,6 +956,11 @@ public final class SettingsActivity extends Activity {
         styleSeekBar(touchWidthLandscapeSeekBar);
         touchWidthLandscapeSeekBar.setMax(MAX_LANDSCAPE_WIDTH_DP - MIN_WIDTH_DP);
         touchWidthLandscapeSeekBar.setProgress(pendingTouchWidthLandscapeDp - MIN_WIDTH_DP);
+        bindValueReset(touchWidthLandscapeValue, "横屏触控宽度", () -> {
+            pendingTouchWidthLandscapeDp = FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP;
+            touchWidthLandscapeSeekBar.setProgress(pendingTouchWidthLandscapeDp - MIN_WIDTH_DP);
+            touchWidthLandscapeValue.setText(pendingTouchWidthLandscapeDp + " dp");
+        });
         touchWidthOptionsPanel.addView(touchWidthLandscapeSeekBar, matchWrap(dp(2)));
         touchWidthOptionsPanel.addView(rangeRow("80 dp", "1600 dp"), matchWrap(0));
         touchPanel.addView(touchWidthOptionsPanel, matchWrap(0));
@@ -966,6 +1010,11 @@ public final class SettingsActivity extends Activity {
         marqueeBounceSwitch.setChecked(pendingMarqueeBounce);
         compatRetrySwitch.setChecked(pendingCompatRetry);
         delaySeekBar.setProgress(pendingDelayMs / 100);
+        bindValueReset(delayValue, "滚动启动延迟", () -> {
+            pendingDelayMs = DEFAULT_MARQUEE_DELAY_MS;
+            delaySeekBar.setProgress(pendingDelayMs / 100);
+            delayValue.setText(String.format(Locale.US, "%.1f 秒", pendingDelayMs / 1000f));
+        });
         delayValue.setText(String.format(Locale.US, "%.1f 秒", pendingDelayMs / 1000f));
 
         if (BuildConfig.DEBUG) {
@@ -1362,8 +1411,8 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.hide", pendingHideNotificationIcons);
         outState.putBoolean("m3.divider", pendingShowFocusDivider);
         outState.putInt("m3.focusIconSizeDp", pendingFocusIconSizeDp);
-        outState.putInt("m3.focusDividerStartDp", pendingFocusDividerStartDp);
-        outState.putInt("m3.focusDividerEndDp", pendingFocusDividerEndDp);
+        outState.putInt("m3.focusDividerStartOffsetDp", pendingFocusDividerStartDp);
+        outState.putInt("m3.focusDividerEndOffsetDp", pendingFocusDividerEndDp);
         outState.putInt("m3.focusDividerWidthDp", pendingFocusDividerWidthDp);
         outState.putInt("m3.focusDividerStyle", pendingFocusDividerStyle);
 
@@ -1433,10 +1482,18 @@ public final class SettingsActivity extends Activity {
         // 旧 Bundle 缺外观字段时保留已加载值；恢复数据也须遵守可保存范围。
         pendingFocusIconSizeDp = FocusRestoreSettings.normalizeFocusIconSizeDp(
                 state.getInt("m3.focusIconSizeDp", pendingFocusIconSizeDp));
-        pendingFocusDividerStartDp = FocusRestoreSettings.normalizeFocusDividerSpacingDp(
-                state.getInt("m3.focusDividerStartDp", pendingFocusDividerStartDp));
-        pendingFocusDividerEndDp = FocusRestoreSettings.normalizeFocusDividerSpacingDp(
-                state.getInt("m3.focusDividerEndDp", pendingFocusDividerEndDp));
+        pendingFocusDividerStartDp = state.containsKey("m3.focusDividerStartOffsetDp")
+                ? FocusRestoreSettings.normalizeFocusDividerSpacingDp(
+                        state.getInt("m3.focusDividerStartOffsetDp", pendingFocusDividerStartDp))
+                : state.containsKey("m3.focusDividerStartDp")
+                        ? FocusRestoreSettings.migrateLegacyDividerSpacing(
+                                state.getInt("m3.focusDividerStartDp", -1)) : pendingFocusDividerStartDp;
+        pendingFocusDividerEndDp = state.containsKey("m3.focusDividerEndOffsetDp")
+                ? FocusRestoreSettings.normalizeFocusDividerSpacingDp(
+                        state.getInt("m3.focusDividerEndOffsetDp", pendingFocusDividerEndDp))
+                : state.containsKey("m3.focusDividerEndDp")
+                        ? FocusRestoreSettings.migrateLegacyDividerSpacing(
+                                state.getInt("m3.focusDividerEndDp", -1)) : pendingFocusDividerEndDp;
         pendingFocusDividerWidthDp = FocusRestoreSettings.normalizeFocusDividerWidthDp(
                 state.getInt("m3.focusDividerWidthDp", pendingFocusDividerWidthDp));
         pendingFocusDividerStyle = FocusRestoreSettings.normalizeFocusDividerStyle(
@@ -1565,6 +1622,7 @@ public final class SettingsActivity extends Activity {
                             s.toString(), pendingFocusMaxDisplaySeconds);
                     if (parsed == pendingFocusMaxDisplaySeconds) return;
                     pendingFocusMaxDisplaySeconds = parsed;
+                    updateMaxDisplayValue();
                     if (focusMaxDisplayInput.hasFocus()) markPending();
                 }
                 public void afterTextChanged(Editable s) { }
@@ -1937,6 +1995,7 @@ public final class SettingsActivity extends Activity {
         pendingFocusMaxDisplaySeconds =
                 FocusRestoreSettings.normalizeMaxDisplaySeconds(pendingFocusMaxDisplaySeconds);
         String text = FocusRestoreSettings.formatMaxDisplaySeconds(pendingFocusMaxDisplaySeconds);
+        updateMaxDisplayValue();
         if (text.contentEquals(focusMaxDisplayInput.getText().toString())) return;
         focusMaxDisplaySyncing = true;
         try {
@@ -1945,6 +2004,15 @@ public final class SettingsActivity extends Activity {
         } finally {
             focusMaxDisplaySyncing = false;
         }
+    }
+
+    private String maxDisplayValue() {
+        return pendingFocusMaxDisplaySeconds <= 0f ? "不限制"
+                : FocusRestoreSettings.formatMaxDisplaySeconds(pendingFocusMaxDisplaySeconds) + " 秒";
+    }
+
+    private void updateMaxDisplayValue() {
+        if (focusMaxDisplayValue != null) focusMaxDisplayValue.setText(maxDisplayValue());
     }
 
     private void syncIslandTextModeField() {
@@ -1974,6 +2042,7 @@ public final class SettingsActivity extends Activity {
 
     private void updateTouchWidthControls() {
         setControlEnabled(touchWidthOptionsPanel, pendingCustomTouchWidth);
+        if (touchWidthOptionsPanel != null) setChildrenEnabled(touchWidthOptionsPanel, pendingCustomTouchWidth);
         if (touchWidthSeekBar != null) touchWidthSeekBar.setEnabled(pendingCustomTouchWidth);
         if (touchWidthLandscapeSeekBar != null) touchWidthLandscapeSeekBar.setEnabled(pendingCustomTouchWidth);
     }
@@ -1985,6 +2054,8 @@ public final class SettingsActivity extends Activity {
         if (landscapeWidthSeekBar != null) { landscapeWidthSeekBar.setEnabled(enabled); landscapeWidthSeekBar.setAlpha(enabled ? 1f : 0.38f); }
         if (widthValueRow != null) { widthValueRow.setEnabled(enabled); widthValueRow.setAlpha(enabled ? 1f : 0.38f); }
         if (landscapeWidthValueRow != null) { landscapeWidthValueRow.setEnabled(enabled); landscapeWidthValueRow.setAlpha(enabled ? 1f : 0.38f); }
+        if (widthValueRow != null) setChildrenEnabled(widthValueRow, enabled);
+        if (landscapeWidthValueRow != null) setChildrenEnabled(landscapeWidthValueRow, enabled);
         if (widthRangeRow != null) { widthRangeRow.setEnabled(enabled); widthRangeRow.setAlpha(enabled ? 1f : 0.38f); }
         if (widthValue != null) { widthValue.setEnabled(enabled); widthValue.setAlpha(enabled ? 1f : 0.38f); }
     }
@@ -2531,8 +2602,26 @@ public final class SettingsActivity extends Activity {
                 new LinearLayout.LayoutParams(0, -2, 1f));
         TextView val = text(value, 15, COLOR_PRIMARY);
         val.setTypeface(val.getTypeface(), 1);
+        val.setId(View.generateViewId());
+        val.setBackground(roundedBg(COLOR_PRIMARY_LIGHT, 12));
+        val.setPadding(dp(12), dp(6), dp(12), dp(6));
+        val.setMinimumHeight(dp(48));
+        val.setGravity(Gravity.CENTER);
         row.addView(val);
         return row;
+    }
+
+    /** 单击不改配置，双击仅执行该标签的默认值回调；不排队延迟任务。 */
+    private void bindValueReset(TextView valueLabel, String label, Runnable reset) {
+        valueLabel.setContentDescription(label + "，双击显示值恢复默认");
+        valueLabel.setOnClickListener(view -> {
+            if (!view.isEnabled()) return;
+            if (valueResetTaps.click(view.getId(), SystemClock.elapsedRealtime(),
+                    ViewConfiguration.getDoubleTapTimeout())) {
+                reset.run();
+                markPending();
+            }
+        });
     }
 
     private LinearLayout rangeRow(String left, String right) {
@@ -2745,15 +2834,15 @@ public final class SettingsActivity extends Activity {
     private void updateFocusDividerControls() {
         if (focusDividerOptionsPanel == null) return;
         focusDividerOptionsPanel.setAlpha(pendingShowFocusDivider ? 1f : 0.42f);
-        setFocusDividerChildrenEnabled(focusDividerOptionsPanel, pendingShowFocusDivider);
+        setChildrenEnabled(focusDividerOptionsPanel, pendingShowFocusDivider);
     }
 
-    private void setFocusDividerChildrenEnabled(View view, boolean enabled) {
+    private void setChildrenEnabled(View view, boolean enabled) {
         view.setEnabled(enabled);
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int index = 0; index < group.getChildCount(); index++) {
-                setFocusDividerChildrenEnabled(group.getChildAt(index), enabled);
+                setChildrenEnabled(group.getChildAt(index), enabled);
             }
         }
     }

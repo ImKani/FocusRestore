@@ -50,8 +50,8 @@ final class SettingsBackupCodec {
     private static final Set<String> INTEGER_FIELDS = new HashSet<>(Arrays.asList("formatVersion",
             "hook_mode", "island_text_mode", "text_width_dp", "text_width_landscape_dp",
             "marquee_delay_ms", "media_focus_cast_picker", "focus_icon_priority", "touch_width_dp", "touch_width_landscape_dp",
-            "focus_icon_size_dp", "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style"));
-
+            "focus_icon_size_dp", "focus_divider_start_offset_dp", "focus_divider_end_offset_dp",
+            "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style"));
     private SettingsBackupCodec() { }
 
     static final class InvalidBackupException extends IOException {
@@ -106,7 +106,7 @@ final class SettingsBackupCodec {
             JSONObject focus = group(groups, "focus", "limit_text_width", "text_width_dp",
                     "text_width_landscape_dp", "focus_max_display_seconds",
                     "focus_timeout_exempt_packages", "hide_notification_icons", "show_focus_divider",
-                    "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style");
+                    "focus_divider_start_offset_dp", "focus_divider_end_offset_dp", "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style");
             JSONObject media = group(groups, "media", "media_focus_enabled", "media_focus_native_banner",
                     "media_focus_cast_picker", "media_focus_cast_direct");
             JSONObject interaction = group(groups, "interaction", "independent_focus_banner",
@@ -134,8 +134,8 @@ final class SettingsBackupCodec {
             }
             int iconSize = integer(icons, "focus_icon_size_dp", defaults.focusIconSizeDp);
             if (iconSize != 0 && (iconSize < 8 || iconSize > 32)) throw invalid("focus_icon_size_dp 必须为 0 或 8～32");
-            int dividerStart = rangedInteger(focus, "focus_divider_start_dp", defaults.focusDividerStartDp, -1, 24);
-            int dividerEnd = rangedInteger(focus, "focus_divider_end_dp", defaults.focusDividerEndDp, -1, 24);
+            int dividerStart = backupDivider(focus, "focus_divider_start_offset_dp", "focus_divider_start_dp", defaults.focusDividerStartDp);
+            int dividerEnd = backupDivider(focus, "focus_divider_end_offset_dp", "focus_divider_end_dp", defaults.focusDividerEndDp);
             int dividerWidth = rangedInteger(focus, "focus_divider_width_dp", defaults.focusDividerWidthDp, 0, 4);
             int dividerStyle = rangedInteger(focus, "focus_divider_style", defaults.focusDividerStyle, 0, 3);
             int width = integer(focus, "text_width_dp", defaults.widthDp);
@@ -208,8 +208,8 @@ final class SettingsBackupCodec {
                         "focus_timeout_exempt_packages", new TreeSet<>(settings.focusTimeoutExemptPackages),
                         "hide_notification_icons", settings.hideNotificationIcons,
                         "show_focus_divider", settings.showFocusDivider,
-                         "focus_divider_start_dp", settings.focusDividerStartDp,
-                         "focus_divider_end_dp", settings.focusDividerEndDp,
+                         "focus_divider_start_offset_dp", settings.focusDividerStartDp,
+                         "focus_divider_end_offset_dp", settings.focusDividerEndDp,
                          "focus_divider_width_dp", settings.focusDividerWidthDp,
                          "focus_divider_style", settings.focusDividerStyle),
                 "media", entries("media_focus_enabled", settings.mediaFocusEnabled,
@@ -355,6 +355,17 @@ final class SettingsBackupCodec {
         if (!Double.isFinite(number) || number < Integer.MIN_VALUE || number > Integer.MAX_VALUE
                 || number != Math.rint(number)) throw invalid(key + " 不是有效整数");
         return (int) number;
+    }
+
+    private static int backupDivider(JSONObject object, String currentKey, String legacyKey,
+                                     int fallback) throws IOException {
+        // 新字段优先，但两种编码并存时仍逐项校验，不能绕过严格导入。
+        int legacy = rangedInteger(object, legacyKey, -1, -1, 24);
+        if (object.has(currentKey)) {
+            return rangedInteger(object, currentKey, fallback,
+                    FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP, 24);
+        }
+        return object.has(legacyKey) ? FocusRestoreSettings.migrateLegacyDividerSpacing(legacy) : fallback;
     }
 
     private static int rangedInteger(JSONObject object, String key, int fallback, int min, int max) throws IOException {

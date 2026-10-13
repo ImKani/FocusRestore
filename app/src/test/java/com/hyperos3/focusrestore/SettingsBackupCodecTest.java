@@ -69,7 +69,8 @@ public class SettingsBackupCodecTest {
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
         assertEquals(42, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
-                "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules"}) {
+                "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules",
+                "focus_divider_start_dp", "focus_divider_end_dp"}) {
             assertFalse(excluded, text.contains("\"" + excluded + "\""));
         }
     }
@@ -446,6 +447,11 @@ public class SettingsBackupCodecTest {
                 rejectGroups("{\"focus\":{\"" + key + "\":" + invalid + "}}");
             }
         }
+        for (String key : new String[]{"focus_divider_start_offset_dp", "focus_divider_end_offset_dp"}) {
+            for (String invalid : new String[]{"-26", "25", "0.5", "1.0", "false", "\"0\"", "null", "[]", "{}"}) {
+                rejectGroups("{\"focus\":{\"" + key + "\":" + invalid + "}}");
+            }
+        }
         for (String invalid : new String[]{"-1", "5", "1.5", "true", "\"1\""}) {
             rejectGroups("{\"focus\":{\"focus_divider_width_dp\":" + invalid + "}}");
         }
@@ -456,6 +462,55 @@ public class SettingsBackupCodecTest {
         assertEverySettingEquals(FocusRestoreSettings.defaults(), automatic);
         for (int size : new int[]{8, 32}) {
             assertEquals(size, decodeGroups("{\"icons\":{\"focus_icon_size_dp\":" + size + "}}").focusIconSizeDp);
+        }
+    }
+
+    @Test
+    public void dividerBackupExportsOnlyOffsetsAndRoundTripsActualNegativeOne() throws Exception {
+        for (int offset : new int[]{-25, -24, -1, 0, 24}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit()
+                    .focusDividerStartDp(offset).focusDividerEndDp(offset).build();
+            byte[] encoded = SettingsBackupCodec.encode(settings);
+            JSONObject focus = new JSONObject(utf8(encoded)).getJSONObject("settings").getJSONObject("focus");
+            assertEquals(offset, focus.getInt("focus_divider_start_offset_dp"));
+            assertEquals(offset, focus.getInt("focus_divider_end_offset_dp"));
+            assertFalse(focus.has("focus_divider_start_dp"));
+            assertFalse(focus.has("focus_divider_end_dp"));
+            assertEverySettingEquals(settings, SettingsBackupCodec.decode(encoded));
+            FocusRestoreSettings imported = decodeGroups("{\"focus\":{\"focus_divider_start_offset_dp\":"
+                    + offset + ",\"focus_divider_end_offset_dp\":" + offset + "}}");
+            assertEquals(offset, imported.focusDividerStartDp);
+            assertEquals(offset, imported.focusDividerEndDp);
+        }
+    }
+
+    @Test
+    public void dividerBackupMigratesOldValuesAndNewOffsetsWinRegardlessOfKeyOrder() throws Exception {
+        for (int old : new int[]{-1, 0, 24}) {
+            FocusRestoreSettings migrated = decodeGroups("{\"focus\":{\"focus_divider_start_dp\":"
+                    + old + ",\"focus_divider_end_dp\":" + old + "}}");
+            assertEquals(old == -1 ? -25 : old, migrated.focusDividerStartDp);
+            assertEquals(old == -1 ? -25 : old, migrated.focusDividerEndDp);
+            assertEverySettingEquals(migrated, SettingsBackupCodec.decode(SettingsBackupCodec.encode(migrated)));
+        }
+        for (String fields : new String[]{
+                "\"focus_divider_start_dp\":24,\"focus_divider_start_offset_dp\":-1,\"focus_divider_end_dp\":-1,\"focus_divider_end_offset_dp\":0",
+                "\"focus_divider_end_offset_dp\":0,\"focus_divider_end_dp\":-1,\"focus_divider_start_offset_dp\":-1,\"focus_divider_start_dp\":24"}) {
+            FocusRestoreSettings preferred = decodeGroups("{\"focus\":{" + fields + "}}");
+            assertEquals(-1, preferred.focusDividerStartDp);
+            assertEquals(0, preferred.focusDividerEndDp);
+        }
+        for (String side : new String[]{"start", "end"}) {
+            String oldKey = "focus_divider_" + side + "_dp";
+            String newKey = "focus_divider_" + side + "_offset_dp";
+            // 新键优先只决定采用值，不能让另一份非法配置绕过完整校验。
+            for (String invalid : new String[]{"-2", "25", "0.5", "1.0", "false", "\"0\"", "null", "[]", "{}"}) {
+                rejectGroups("{\"focus\":{\"" + newKey + "\":-1,\"" + oldKey + "\":" + invalid + "}}");
+                rejectGroups("{\"focus\":{\"" + oldKey + "\":" + invalid + ",\"" + newKey + "\":-1}}");
+            }
+            for (String invalid : new String[]{"-26", "25", "0.5", "1.0", "false", "\"0\"", "null", "[]", "{}"}) {
+                rejectGroups("{\"focus\":{\"" + oldKey + "\":-1,\"" + newKey + "\":" + invalid + "}}");
+            }
         }
     }
 

@@ -870,6 +870,11 @@ final class HyperOS4FocusController {
         private Icon currentIcon;
         private int currentIconSizePx;
         private int contentInsetPx;
+        private int overlapStartPx;
+        private boolean dividerOverlap;
+        private ViewGroup overlapParent;
+        private boolean parentClipChildren;
+        private boolean parentClipToPadding;
         private int maxWidthPx = Integer.MAX_VALUE;
         private int touchWidthPx;
         private int displayWidthPx;
@@ -949,11 +954,14 @@ final class HyperOS4FocusController {
             if (settings.showFocusDivider) {
                 FocusDividerDrawable decoration = new FocusDividerDrawable(density,
                         settings.focusDividerStyle, settings.focusDividerWidthDp, currentTint);
-                int start = Math.round((settings.focusDividerStartDp < 0
+                int start = Math.round((settings.focusDividerStartDp == FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP
                         ? 0 : settings.focusDividerStartDp) * density);
-                int end = Math.round((settings.focusDividerEndDp < 0
+                int end = Math.round((settings.focusDividerEndDp == FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP
                         ? 6 : settings.focusDividerEndDp) * density);
                 contentInsetPx = start + decoration.getIntrinsicWidth() + end;
+                dividerOverlap = start < 0 || end < 0;
+                overlapStartPx = Math.min(0, Math.min(start, contentInsetPx));
+                applyOverlapClipping(dividerOverlap);
                 divider = new View(getContext());
                 divider.setBackground(decoration);
                 divider.setAlpha(0.45f);
@@ -1028,6 +1036,23 @@ final class HyperOS4FocusController {
                     & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
         }
 
+        private void applyOverlapClipping(boolean overlap) {
+            setClipChildren(!overlap);
+            setClipToPadding(!overlap);
+            if (overlap && overlapParent == null && getParent() instanceof ViewGroup) {
+                overlapParent = (ViewGroup) getParent();
+                parentClipChildren = overlapParent.getClipChildren();
+                parentClipToPadding = overlapParent.getClipToPadding();
+                // 负间距由用户明确选择，允许在时间与焦点之间重叠，不改变外层状态栏裁切。
+                overlapParent.setClipChildren(false);
+                overlapParent.setClipToPadding(false);
+            } else if (!overlap && overlapParent != null) {
+                overlapParent.setClipChildren(parentClipChildren);
+                overlapParent.setClipToPadding(parentClipToPadding);
+                overlapParent = null;
+            }
+        }
+
         void clearContent() {
             clearContent(false);
         }
@@ -1057,6 +1082,9 @@ final class HyperOS4FocusController {
             currentIcon = null;
             currentIconSizePx = 0;
             contentInsetPx = 0;
+            overlapStartPx = 0;
+            dividerOverlap = false;
+            applyOverlapClipping(false);
             bannerClicks = false;
             notificationRowClicks = false;
             longPressClicks = false;
@@ -1128,7 +1156,7 @@ final class HyperOS4FocusController {
 
         @Override
         protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
-            if (child != content || contentInsetPx <= 0) {
+            if (child != content || contentInsetPx <= 0 || dividerOverlap) {
                 return super.drawChild(canvas, child, drawingTime);
             }
             int saveCount = canvas.save();
@@ -1267,9 +1295,9 @@ final class HyperOS4FocusController {
             try {
                 int width = Math.min(getWidth(), displayWidthPx);
                 if (getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
-                    canvas.clipRect(getWidth() - width, 0, getWidth(), getHeight());
+                    canvas.clipRect(getWidth() - width, 0, getWidth() - overlapStartPx, getHeight());
                 } else {
-                    canvas.clipRect(0, 0, width, getHeight());
+                    canvas.clipRect(overlapStartPx, 0, width, getHeight());
                 }
                 super.dispatchDraw(canvas);
             } finally {

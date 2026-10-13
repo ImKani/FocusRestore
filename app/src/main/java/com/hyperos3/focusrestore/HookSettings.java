@@ -205,8 +205,8 @@ final class HookSettings {
                         FocusRestoreSettings.DEFAULT_SHOW_FOCUS_DIVIDER),
                 // 旧 Provider 缺外观列时使用系统默认，不推导自其他设置。
                 readInt(cursor, SettingsContract.FOCUS_ICON_SIZE_DP, FocusRestoreSettings.DEFAULT_FOCUS_ICON_SIZE_DP),
-                readInt(cursor, SettingsContract.FOCUS_DIVIDER_START_DP, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_START_DP),
-                readInt(cursor, SettingsContract.FOCUS_DIVIDER_END_DP, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_END_DP),
+                readDivider(cursor, true),
+                readDivider(cursor, false),
                 readInt(cursor, SettingsContract.FOCUS_DIVIDER_WIDTH_DP, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_WIDTH_DP),
                 readInt(cursor, SettingsContract.FOCUS_DIVIDER_STYLE, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_STYLE),
                 readBoolean(cursor, SettingsContract.SHOW_ISLAND_ICON,
@@ -302,6 +302,20 @@ final class HookSettings {
         }
     }
 
+    private static int readDivider(Cursor cursor, boolean start) {
+        String current = start ? "focus_divider_start_offset_dp" : "focus_divider_end_offset_dp";
+        int index = cursor.getColumnIndex(current);
+        if (index >= 0 && !cursor.isNull(index)) {
+            return FocusRestoreSettings.normalizeFocusDividerSpacingDp(cursor.getInt(index));
+        }
+        String legacy = start ? "focus_divider_start_dp" : "focus_divider_end_dp";
+        index = cursor.getColumnIndex(legacy);
+        if (index >= 0 && !cursor.isNull(index)) {
+            return FocusRestoreSettings.migrateLegacyDividerSpacing(cursor.getInt(index));
+        }
+        return start ? FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_START_DP
+                : FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_END_DP;
+    }
     private static int valueColumn(Cursor cursor, int field) {
         int index = cursor.getColumnIndex(SettingsContract.COLUMNS[field]);
         return index >= 0 && !cursor.isNull(index) ? index : -1;

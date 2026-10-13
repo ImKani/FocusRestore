@@ -33,8 +33,10 @@ final class SettingsContract {
     static final int HIDE_NOTIFICATION_ICONS = 14;
     static final int SHOW_FOCUS_DIVIDER = 15;
     static final int FOCUS_ICON_SIZE_DP = 16;
-    static final int FOCUS_DIVIDER_START_DP = 17;
-    static final int FOCUS_DIVIDER_END_DP = 18;
+    static final int FOCUS_DIVIDER_START_OFFSET_DP = 17;
+    static final int FOCUS_DIVIDER_END_OFFSET_DP = 18;
+    static final int FOCUS_DIVIDER_START_DP = FOCUS_DIVIDER_START_OFFSET_DP;
+    static final int FOCUS_DIVIDER_END_DP = FOCUS_DIVIDER_END_OFFSET_DP;
     static final int FOCUS_DIVIDER_WIDTH_DP = 19;
     static final int FOCUS_DIVIDER_STYLE = 20;
 
@@ -79,7 +81,7 @@ final class SettingsContract {
             "island_compat", "island_text_mode", "island_general_separator", "island_side_separator",
             "island_force_packages",
             "hide_notification_icons", "show_focus_divider",
-            "focus_icon_size_dp", "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style",
+            "focus_icon_size_dp", "focus_divider_start_offset_dp", "focus_divider_end_offset_dp", "focus_divider_width_dp", "focus_divider_style",
             "show_island_icon", "tint_island_icon",
             "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon",
             "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
@@ -99,6 +101,8 @@ final class SettingsContract {
     }
 
     private static int columnIndex(String column) {
+        if ("focus_divider_start_dp".equals(column)) return FOCUS_DIVIDER_START_OFFSET_DP;
+        if ("focus_divider_end_dp".equals(column)) return FOCUS_DIVIDER_END_OFFSET_DP;
         for (int index = 0; index < COLUMNS.length; index++) {
             if (COLUMNS[index].equals(column)) return index;
         }
@@ -171,7 +175,14 @@ final class SettingsContract {
         Object[] projectedRow = new Object[columns.length];
         // 覆盖升级后旧 Hook 仍按位置读取；按它发来的列名顺序返回，不能强塞新顺序。
         for (int index = 0; index < columns.length; index++) {
-            projectedRow[index] = currentRow[columnIndex(columns[index])];
+            String column = columns[index];
+            if ("focus_divider_start_dp".equals(column)) {
+                projectedRow[index] = FocusRestoreSettings.legacyDividerSpacing(settings.focusDividerStartDp);
+            } else if ("focus_divider_end_dp".equals(column)) {
+                projectedRow[index] = FocusRestoreSettings.legacyDividerSpacing(settings.focusDividerEndDp);
+            } else {
+                projectedRow[index] = currentRow[columnIndex(column)];
+            }
         }
         return projectedRow;
     }

@@ -171,8 +171,8 @@ public class ExperimentalSettingsTest {
         // 先保存自定义再恢复自动，防止关闭或归零后只更新 UI 而存储仍残留旧值。
         for (boolean custom : new boolean[]{true, false}) {
             FocusRestoreSettings settings = FocusRestoreSettings.edit().hookMode(3).showFocusDivider(false)
-                    .focusIconSizeDp(custom ? 8 : 0).focusDividerStartDp(custom ? 0 : -1)
-                    .focusDividerEndDp(custom ? 24 : -1).focusDividerWidthDp(custom ? 4 : 0)
+                    .focusIconSizeDp(custom ? 8 : 0).focusDividerStartDp(custom ? -1 : -25)
+                    .focusDividerEndDp(custom ? 24 : -25).focusDividerWidthDp(custom ? 4 : 0)
                     .focusDividerStyle(custom ? 2 : 0).build();
             for (SharedPreferences store : new SharedPreferences[]{first, second}) {
                 assertTrue(settings.save(store));
@@ -199,8 +199,8 @@ public class ExperimentalSettingsTest {
         }
         FocusRestoreSettings legacy = FocusRestoreSettings.fromPreferences(memoryPreferences(legacyPreferences()));
         assertEquals(0, legacy.focusIconSizeDp);
-        assertEquals(-1, legacy.focusDividerStartDp);
-        assertEquals(-1, legacy.focusDividerEndDp);
+        assertEquals(-25, legacy.focusDividerStartDp);
+        assertEquals(-25, legacy.focusDividerEndDp);
         assertEquals(0, legacy.focusDividerWidthDp);
         assertEquals(0, legacy.focusDividerStyle);
     }
@@ -211,19 +211,80 @@ public class ExperimentalSettingsTest {
             int size = FocusRestoreSettings.focusIconSizeFromProgress(progress);
             assertEquals(progress == 0 ? 0 : progress + 7, size);
             assertEquals(progress, FocusRestoreSettings.focusIconSizeToProgress(size));
-            int spacing = FocusRestoreSettings.focusDividerSpacingFromProgress(progress);
-            assertEquals(progress - 1, spacing);
-            assertEquals(progress, FocusRestoreSettings.focusDividerSpacingToProgress(spacing));
         }
+        assertEquals(-25, FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP);
+        for (int progress = 0; progress <= 49; progress++) {
+            int spacing = FocusRestoreSettings.focusDividerSpacingFromProgress(progress);
+            assertEquals(progress == 0 ? -25 : progress - 25, spacing);
+            assertEquals(progress, FocusRestoreSettings.focusDividerSpacingToProgress(spacing));
+            FocusRestoreSettings settings = FocusRestoreSettings.edit()
+                    .focusDividerStartDp(spacing).focusDividerEndDp(spacing).build();
+            SharedPreferences store = memoryPreferences(new HashMap<>());
+            assertTrue(settings.save(store));
+            assertEquals(spacing, FocusRestoreSettings.fromPreferences(store).focusDividerStartDp);
+            assertEquals(spacing, FocusRestoreSettings.fromPreferences(store).focusDividerEndDp);
+        }
+        assertEquals(24, FocusRestoreSettings.focusDividerSpacingToProgress(-1));
+        assertEquals(25, FocusRestoreSettings.focusDividerSpacingToProgress(0));
         for (int invalid : new int[]{Integer.MIN_VALUE, -1, 1, 7}) assertEquals(0, FocusRestoreSettings.normalizeFocusIconSizeDp(invalid));
         assertEquals(32, FocusRestoreSettings.normalizeFocusIconSizeDp(Integer.MAX_VALUE));
-        FocusRestoreSettings bounded = FocusRestoreSettings.edit().focusDividerStartDp(-2).focusDividerEndDp(25)
+        FocusRestoreSettings bounded = FocusRestoreSettings.edit().focusDividerStartDp(-26).focusDividerEndDp(25)
                 .focusDividerWidthDp(5).focusDividerStyle(4).build();
-        assertEquals(-1, bounded.focusDividerStartDp);
+        assertEquals(-25, bounded.focusDividerStartDp);
         assertEquals(24, bounded.focusDividerEndDp);
         assertEquals(4, bounded.focusDividerWidthDp);
         assertEquals(0, bounded.focusDividerStyle);
         assertEquals(0, FocusRestoreSettings.edit().focusDividerWidthDp(-1).build().focusDividerWidthDp);
+    }
+
+    @Test
+    public void dividerOffsetsMigrateLegacyPreferencesAndNewKeysWinWithoutRewritingOnRead() throws Exception {
+        for (int old : new int[]{-1, 0, 24}) {
+            Map<String, Object> values = legacyPreferences();
+            values.put("focus_divider_start_dp", old);
+            values.put("focus_divider_end_dp", old);
+            Map<String, Object> before = new HashMap<>(values);
+            SharedPreferences store = memoryPreferences(values);
+            FocusRestoreSettings migrated = FocusRestoreSettings.fromPreferences(store);
+            int expected = old == -1 ? -25 : old;
+            assertEquals(expected, migrated.focusDividerStartDp);
+            assertEquals(expected, migrated.focusDividerEndDp);
+            assertEquals(before, values);
+            assertTrue(migrated.save(store));
+            assertEquals(expected, values.get("focus_divider_start_offset_dp"));
+            assertEquals(expected, values.get("focus_divider_end_offset_dp"));
+            assertEquals(old, values.get("focus_divider_start_dp"));
+            assertEquals(old, values.get("focus_divider_end_dp"));
+        }
+        SharedPreferences store = memoryPreferences(new HashMap<>());
+        for (int offset : new int[]{-24, -1, 0, 24, -25}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit()
+                    .focusDividerStartDp(offset).focusDividerEndDp(offset).build();
+            assertTrue(settings.save(store));
+            assertEquals(offset, store.getInt("focus_divider_start_offset_dp", 99));
+            assertEquals(offset, store.getInt("focus_divider_end_offset_dp", 99));
+            assertEquals(offset < 0 ? -1 : offset, store.getInt("focus_divider_start_dp", 99));
+            assertEquals(offset < 0 ? -1 : offset, store.getInt("focus_divider_end_dp", 99));
+            // 新旧键并存时，旧 Hook 的自动降级值不能吞掉真实负间距。
+            for (FocusRestoreSettings copy : new FocusRestoreSettings[]{FocusRestoreSettings.fromPreferences(store),
+                    FocusRestoreSettings.edit(settings).build(),
+                    SettingsBackupCodec.decode(SettingsBackupCodec.encode(settings))}) {
+                assertEquals(offset, copy.focusDividerStartDp);
+                assertEquals(offset, copy.focusDividerEndDp);
+                HookSettings hook = HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                        SettingsContract.COLUMNS, SettingsContract.toRow(copy, "")));
+                assertEquals(offset, hook.focusDividerStartDp);
+                assertEquals(offset, hook.focusDividerEndDp);
+            }
+        }
+        Map<String, Object> mixed = legacyPreferences();
+        mixed.put("focus_divider_start_dp", 24);
+        mixed.put("focus_divider_end_dp", -1);
+        mixed.put("focus_divider_start_offset_dp", -1);
+        mixed.put("focus_divider_end_offset_dp", 0);
+        FocusRestoreSettings preferred = FocusRestoreSettings.fromPreferences(memoryPreferences(mixed));
+        assertEquals(-1, preferred.focusDividerStartDp);
+        assertEquals(0, preferred.focusDividerEndDp);
     }
 
     private static void assertTouchWidths(FocusRestoreSettings settings, boolean enabled) {
@@ -718,6 +779,8 @@ public class ExperimentalSettingsTest {
                         case "getString":
                         case "getStringSet":
                             return values.containsKey(args[0]) ? values.get(args[0]) : args[1];
+                        case "contains":
+                            return values.containsKey(args[0]);
                         case "getAll":
                             return new HashMap<>(values);
                         case "edit":

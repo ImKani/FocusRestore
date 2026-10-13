@@ -48,6 +48,8 @@ public final class FocusRestoreSettings {
     public static final String KEY_FOCUS_ICON_SIZE_DP = "focus_icon_size_dp";
     public static final String KEY_FOCUS_DIVIDER_START_DP = "focus_divider_start_dp";
     public static final String KEY_FOCUS_DIVIDER_END_DP = "focus_divider_end_dp";
+    public static final String KEY_FOCUS_DIVIDER_START_OFFSET_DP = "focus_divider_start_offset_dp";
+    public static final String KEY_FOCUS_DIVIDER_END_OFFSET_DP = "focus_divider_end_offset_dp";
     public static final String KEY_FOCUS_DIVIDER_WIDTH_DP = "focus_divider_width_dp";
     public static final String KEY_FOCUS_DIVIDER_STYLE = "focus_divider_style";
     public static final String KEY_SHOW_FOCUS_DIVIDER = "show_focus_divider";
@@ -98,8 +100,9 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_ALLOW_FOCUS_CLICK = false;
     public static final boolean DEFAULT_HIDE_NOTIFICATION_ICONS = true;
     public static final int DEFAULT_FOCUS_ICON_SIZE_DP = 0;
-    public static final int DEFAULT_FOCUS_DIVIDER_START_DP = -1;
-    public static final int DEFAULT_FOCUS_DIVIDER_END_DP = -1;
+    public static final int AUTO_FOCUS_DIVIDER_SPACING_DP = -25;
+    public static final int DEFAULT_FOCUS_DIVIDER_START_DP = AUTO_FOCUS_DIVIDER_SPACING_DP;
+    public static final int DEFAULT_FOCUS_DIVIDER_END_DP = AUTO_FOCUS_DIVIDER_SPACING_DP;
     public static final int DEFAULT_FOCUS_DIVIDER_WIDTH_DP = 0;
     public static final int DEFAULT_FOCUS_DIVIDER_STYLE = 0;
     public static final boolean DEFAULT_SHOW_FOCUS_DIVIDER = true;
@@ -429,6 +432,14 @@ public final class FocusRestoreSettings {
 
     public static FocusRestoreSettings fromPreferences(SharedPreferences preferences) {
         String legacy = preferences.getString(KEY_ISLAND_SEPARATOR, DEFAULT_ISLAND_SEPARATOR);
+        int legacyStart = preferences.getInt(KEY_FOCUS_DIVIDER_START_DP, -1);
+        int legacyEnd = preferences.getInt(KEY_FOCUS_DIVIDER_END_DP, -1);
+        int startOffset = preferences.contains(KEY_FOCUS_DIVIDER_START_OFFSET_DP)
+                ? preferences.getInt(KEY_FOCUS_DIVIDER_START_OFFSET_DP, DEFAULT_FOCUS_DIVIDER_START_DP)
+                : migrateLegacyDividerSpacing(legacyStart);
+        int endOffset = preferences.contains(KEY_FOCUS_DIVIDER_END_OFFSET_DP)
+                ? preferences.getInt(KEY_FOCUS_DIVIDER_END_OFFSET_DP, DEFAULT_FOCUS_DIVIDER_END_DP)
+                : migrateLegacyDividerSpacing(legacyEnd);
         return edit()
                 .hookMode(preferences.getInt(KEY_HOOK_MODE, DEFAULT_HOOK_MODE))
                 .limitWidth(preferences.getBoolean(KEY_LIMIT_WIDTH, DEFAULT_LIMIT_WIDTH))
@@ -458,8 +469,8 @@ public final class FocusRestoreSettings {
                 .hideNotificationIcons(preferences.getBoolean(KEY_HIDE_NOTIFICATION_ICONS,
                         DEFAULT_HIDE_NOTIFICATION_ICONS))
                 .focusIconSizeDp(preferences.getInt(KEY_FOCUS_ICON_SIZE_DP, DEFAULT_FOCUS_ICON_SIZE_DP))
-                .focusDividerStartDp(preferences.getInt(KEY_FOCUS_DIVIDER_START_DP, DEFAULT_FOCUS_DIVIDER_START_DP))
-                .focusDividerEndDp(preferences.getInt(KEY_FOCUS_DIVIDER_END_DP, DEFAULT_FOCUS_DIVIDER_END_DP))
+                .focusDividerStartDp(startOffset)
+                .focusDividerEndDp(endOffset)
                 .focusDividerWidthDp(preferences.getInt(KEY_FOCUS_DIVIDER_WIDTH_DP, DEFAULT_FOCUS_DIVIDER_WIDTH_DP))
                 .focusDividerStyle(preferences.getInt(KEY_FOCUS_DIVIDER_STYLE, DEFAULT_FOCUS_DIVIDER_STYLE))
                 .showFocusDivider(preferences.getBoolean(KEY_SHOW_FOCUS_DIVIDER,
@@ -563,8 +574,10 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_HIDE_NOTIFICATION_ICONS, hideNotificationIcons)
                 .putBoolean(KEY_SHOW_FOCUS_DIVIDER, showFocusDivider)
                 .putInt(KEY_FOCUS_ICON_SIZE_DP, focusIconSizeDp)
-                .putInt(KEY_FOCUS_DIVIDER_START_DP, focusDividerStartDp)
-                .putInt(KEY_FOCUS_DIVIDER_END_DP, focusDividerEndDp)
+                .putInt(KEY_FOCUS_DIVIDER_START_OFFSET_DP, focusDividerStartDp)
+                 .putInt(KEY_FOCUS_DIVIDER_START_DP, legacyDividerSpacing(focusDividerStartDp))
+                .putInt(KEY_FOCUS_DIVIDER_END_OFFSET_DP, focusDividerEndDp)
+                 .putInt(KEY_FOCUS_DIVIDER_END_DP, legacyDividerSpacing(focusDividerEndDp))
                 .putInt(KEY_FOCUS_DIVIDER_WIDTH_DP, focusDividerWidthDp)
                 .putInt(KEY_FOCUS_DIVIDER_STYLE, focusDividerStyle)
                 .putBoolean(KEY_SHOW_ISLAND_ICON, showIslandIcon)
@@ -598,15 +611,29 @@ public final class FocusRestoreSettings {
         return value < 8 ? DEFAULT_FOCUS_ICON_SIZE_DP : Math.min(32, value);
     }
 
-    static int normalizeFocusDividerSpacingDp(int value) { return clamp(value, -1, 24); }
+    static int normalizeFocusDividerSpacingDp(int value) { return clamp(value, AUTO_FOCUS_DIVIDER_SPACING_DP, 24); }
+    static int migrateLegacyDividerSpacing(int value) {
+        // 旧范围只有-1（自动）和0～24；越界负值也沿用旧版回退自动的语义。
+        return value < 0 ? AUTO_FOCUS_DIVIDER_SPACING_DP : Math.min(24, value);
+    }
+
+    static int legacyDividerSpacing(int value) {
+        return value < 0 ? -1 : Math.min(24, value);
+    }
+
     static int normalizeFocusDividerWidthDp(int value) { return clamp(value, 0, 4); }
     static int normalizeFocusDividerStyle(int value) { return value >= 0 && value <= 3 ? value : 0; }
 
     // 滑动条首格为自动，后续每格只对应可保存的实际尺寸。
     static int focusIconSizeFromProgress(int progress) { return progress <= 0 ? 0 : clamp(progress, 1, 25) + 7; }
     static int focusIconSizeToProgress(int value) { int size = normalizeFocusIconSizeDp(value); return size == 0 ? 0 : size - 7; }
-    static int focusDividerSpacingFromProgress(int progress) { return clamp(progress, 0, 25) - 1; }
-    static int focusDividerSpacingToProgress(int value) { return normalizeFocusDividerSpacingDp(value) + 1; }
+
+    // 滑动条首格为自动，后续每格对应 -24～24 dp。
+    static int focusDividerSpacingFromProgress(int progress) { return progress <= 0 ? AUTO_FOCUS_DIVIDER_SPACING_DP : clamp(progress, 1, 49) - 25; }
+    static int focusDividerSpacingToProgress(int value) {
+        int normalized = normalizeFocusDividerSpacingDp(value);
+        return normalized == AUTO_FOCUS_DIVIDER_SPACING_DP ? 0 : normalized + 25;
+    }
 
     // 非有限值不能进入手势计时；有限越界值夹紧，避免立即触发或永不触发。
     static float normalizeLongPressSeconds(float seconds) {
