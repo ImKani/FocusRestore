@@ -495,7 +495,17 @@ final class HyperOS4FocusController {
             String selected;
             if (itemFactory.settings().focusSwipeEnabled) selected = swipeSelection.reconcile(keys, automatic);
             else { swipeSelection.clear(); selected = automatic; }
-            best = selected == null ? null : items.get(selected);
+            // 过期淘汰只作用于 eligible；手动选择可能仍停在这个 key 上，
+            // 未复检就会把刚过期的候选重新渲染并再次 onDisplayed，显示窗口被错误重启。
+            DisplayItem resolved = selected == null ? null : items.get(selected);
+            if (resolved != null) {
+                boolean stillEligible = false;
+                for (DisplayItem candidate : eligible) {
+                    if (candidate == resolved) { stillEligible = true; break; }
+                }
+                if (!stillEligible) resolved = null;
+            }
+            best = resolved;
         }
         if (BuildConfig.DEBUG) logger.log("DIAG device stage=os4-select key="
                 + (best == null ? "none" : best.key) + " candidates=" + items.size()

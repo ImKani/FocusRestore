@@ -149,6 +149,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private volatile FocusBannerController bannerController;
     private NativeFocusTemplateRenderer nativeBannerRenderer;
     private final Set<View> os3PromptViews = Collections.newSetFromMap(new WeakHashMap<>());
+    /** 长按成立后同一次手势内的短按抑制；只有 OS3 提示视图需要，见 hookOS3TouchEntry。 */
+    private final FocusShortPressSuppression suppression = new FocusShortPressSuppression();
     private Handler mainHandler;
     private TextView pendingMarqueeText;
     private Runnable pendingMarqueeRunnable;
@@ -348,6 +350,31 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }).install(classLoader, installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4);
     }
 
+    /**
+     * 补装因设置读取失败而跳过的 Hook。
+     *
+     * <p>{@code Application.attach} 阶段只尝试一次同步读取；开机早期 provider 未就绪或模块进程被杀时
+     * 会失败，此后所有焦点/媒体/滑动/横幅 Hook 都不安装，而后续读取成功也不会补装，用户只能重启
+     * 系统界面。这里在任一后续读取成功后补装一次，依赖 {@link #installConfiguredModeHooks()} 自带的
+     * 幂等守卫；安装必须在主线程进行，与 attach 路径保持一致。
+     */
+    private void installHooksAfterDeferredSettings() {
+        if (modeHooksInstalled) return;
+        Handler handler = mainHandler;
+        if (handler == null) {
+            // attach 钩子本身失败时没有主线程 Handler，也就没有可补装的安装时机。
+            debug("mode hooks still uninstalled: main handler unavailable");
+            return;
+        }
+        handler.post(() -> {
+            synchronized (HyperOS3FocusRestoreHook.this) {
+                if (modeHooksInstalled) return;
+                log("installing configured mode hooks after a successful settings read");
+                installConfiguredModeHooks();
+            }
+        });
+    }
+
     private boolean isVisibleFocusRegion(float x, float y, int displayId) {
         if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4) {
             return os4Controller != null && os4Controller.isVisibleFocusRegion(x, y, displayId);
@@ -364,6 +391,186 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
         }
         return false;
+    }
+
+    /**
+     * 在 OS3 提示视图唯一可用的手势入口上做三件事：短按抑制、点击命中诊断，以及入口归因。
+     *
+     * <p>拦截点选 {@code handleTouchEvent} 的依据是 0.37.5/0.37.6/0.37.7 三轮真机日志：它每次都正常
+     * 命中，而挂在 {@code onFocusNotifPromptClicked} 上的钩子（抑制与"屏蔽已转换焦点点击"）在该 ROM 上
+     * 一次都没有执行；0.37.8 把安装方式换成 {@code hookMethod} 后仍然不执行，因此点击判定只能改在
+     * 这个已验证可用的入口上做。
+     *
+     * <p>点击命中诊断读 ROM 自己的 {@code mShouldPerformClick}：它就是 ROM 在 {@code ACTION_UP} 分支
+     * 用来决定是否调用 {@code onFocusNotifPromptClicked} 的那个字段（DOWN 分支按命中范围置位）。
+     *
+     * <p>0.37.11 补齐几何证据：只报 {@code shouldPerformClick=false} 无法区分"手指落在胶囊命中范围外"
+     * 和"点中胶囊但 ROM 判定不点"，早期日志里连续出现的 false（上一轮记录为 31 次）就是卡在这一点。
+     * 因此抬手诊断同时输出本次手势的按下坐标、抬手位移、胶囊当前的全局可见矩形，以及 ROM 自己的
+     * {@code mRect}（该字段用途未确认，只原样输出，不复刻 ROM 的矩形判定）。
+     *
+     * <p>{@code onFocusNotifPromptClicked} 是类内声明的 final 方法，只由 {@code handleTouchEvent}、
+     * {@code ExternalSyntheticLambda4.onClick} 与 {@code MiuiStatusBarHoverHelper.onGenericMotion}
+     * 调用；{@code handleTouchEvent} 不经过 {@code dispatchTouchEvent}，所以在它自己身上拦。
+     */
+    private void hookOS3TouchEntry() {
+        try {
+            Class<?> promptView = FocusReflection.findClass(classLoader,
+                    "com.android.systemui.statusbar.phone.FocusedNotifPromptView");
+            if (promptView == null) {
+                log("OS3 touch entry skipped: FocusedNotifPromptView missing");
+                return;
+            }
+            // 命中诊断所需的 ROM 字段：取不到时只跳过诊断，不影响下面的手势与抑制。
+            java.lang.reflect.Field shouldPerformClick = FocusReflection.findField(
+                    promptView, "mShouldPerformClick");
+            // mRect 是同类的 final Rect（类内另有 mNeedUpdateRect 标记），用途未确认，只用于诊断输出。
+            java.lang.reflect.Field promptRect = FocusReflection.findField(promptView, "mRect");
+            // handleTouchEvent 只在该视图所属的 UI 线程手势流程里执行，按下坐标用一个局部数组跨
+            // DOWN/UP 传递就够了，不需要同步。
+            final float[] downRaw = new float[2];
+            final boolean[] downSeen = new boolean[1];
+            XposedBridge.hookMethod(promptView.getDeclaredMethod("handleTouchEvent",
+                            MotionEvent.class), new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            MotionEvent event = param.args != null && param.args.length > 0
+                                    && param.args[0] instanceof MotionEvent
+                                    ? (MotionEvent) param.args[0] : null;
+                            if (event == null) return;
+                            int action = event.getActionMasked();
+                            if (action == MotionEvent.ACTION_DOWN) {
+                                downRaw[0] = event.getRawX();
+                                downRaw[1] = event.getRawY();
+                                downSeen[0] = true;
+                            }
+                            boolean gestureEnded = action == MotionEvent.ACTION_UP
+                                    || action == MotionEvent.ACTION_CANCEL;
+                            // 长按成立后的抬手：整方法置空返回，跳过 ROM 的短按判定。该方法只改
+                            // mShouldPerformClick 与矩形缓存，跳过不会留下跨手势脏状态；下一次按下的
+                            // ACTION_DOWN 会重新按命中测试置位。
+                            if (suppression.consume()) {
+                                param.setResult(null);
+                                log("OS3 short press suppressed within long press gesture action=" + action);
+                            }
+                            // 长按已提示但那次抬手没走到这里（例如取消分支）时复位，避免标记跨手势泄漏。
+                            if (gestureEnded) {
+                                suppression.clear();
+                            }
+                            // 只在抬手时打一条命中诊断，避免按住期间被 MOVE 刷屏。除了 ROM 自己的
+                            // mShouldPerformClick，还输出按下坐标、位移与两个矩形，让 false 能归因到
+                            // "落在命中范围外"还是"点中但不点"。三个点击设置项一并输出：配置快照只在
+                            // 进程启动/配置变更时打印，核对"当时走了哪个分支"不必再回头翻进程启动日志。
+                            if (action == MotionEvent.ACTION_UP) {
+                                String downSummary = downSeen[0]
+                                        ? " downX=" + Math.round(downRaw[0])
+                                                + " downY=" + Math.round(downRaw[1])
+                                                + " dx=" + Math.round(Math.abs(event.getRawX() - downRaw[0]))
+                                                + " dy=" + Math.round(Math.abs(event.getRawY() - downRaw[1]))
+                                        : " down=none";
+                                debug("OS3 probe touch-up shouldPerformClick="
+                                        + readBoolean(shouldPerformClick, param.thisObject)
+                                        + " rawX=" + Math.round(event.getRawX())
+                                        + " rawY=" + Math.round(event.getRawY())
+                                        + downSummary
+                                        + " prompt=" + visibleRectSummary(param.thisObject instanceof View
+                                                ? (View) param.thisObject : null)
+                                        + " romRect=" + readRectSummary(promptRect, param.thisObject)
+                                        + " suppressed=" + (param.getResult() != null)
+                                        + " suppressionArmed=" + suppression.armed()
+                                        + " " + clickSettingsSummary());
+                            }
+                            // 本次手势已经结束，按下坐标不再代表后续事件。
+                            if (gestureEnded) {
+                                downSeen[0] = false;
+                            }
+                        }
+                    });
+            log("OS3 touch entry hooked; short press gated at the gesture entry");
+        } catch (Throwable throwable) {
+            error("hookOS3TouchEntry", throwable);
+        }
+    }
+
+    /**
+     * 生成"谁调用了这个 ROM 入口"的短指纹。
+     *
+     * <p>只取栈顶上方几帧：{@code handleTouchEvent} 的正常调用方是
+     * {@code FocusedNotifPromptController$$ExternalSyntheticLambda2.run()}，而
+     * {@code onFocusNotifPromptClicked} 的调用方区分点击监听、手势入口与悬停链，帧名足以归因。
+     */
+    private static String callerFingerprint() {
+        StackTraceElement[] frames = new Throwable().getStackTrace();
+        StringBuilder text = new StringBuilder("caller=");
+        int appended = 0;
+        for (StackTraceElement frame : frames) {
+            String owner = frame.getClassName();
+            if (owner.startsWith("com.hyperos3.focusrestore")) continue;
+            if (owner.startsWith("de.robv.android.xposed")) continue;
+            if (appended > 0) text.append('<');
+            text.append(owner).append('#').append(frame.getMethodName());
+            if (++appended >= 3) break;
+        }
+        return appended == 0 ? "caller=none" : text.toString();
+    }
+
+    /**
+     * 读取 ROM 私有 boolean 字段用于诊断，字段缺失或读取失败时返回 {@code "missing"}。
+     *
+     * <p>诊断不能影响手势：这里吞掉异常并把失败显式写进日志，而不是伪装成 false。
+     */
+    private static String readBoolean(java.lang.reflect.Field field, Object target) {
+        if (field == null || target == null) return "missing";
+        try {
+            return String.valueOf(field.getBoolean(target));
+        } catch (Throwable failure) {
+            return "unreadable:" + failure.getClass().getSimpleName();
+        }
+    }
+
+    /**
+     * 读取 ROM 私有 {@code Rect} 字段用于诊断：缺失、非 Rect、为空或读取失败都显式写进日志，不猜矩形。
+     */
+    private static String readRectSummary(java.lang.reflect.Field field, Object target) {
+        if (field == null || target == null) return "missing";
+        try {
+            Object value = field.get(target);
+            if (!(value instanceof Rect)) return "not-rect";
+            Rect rect = (Rect) value;
+            return rect.isEmpty() ? "empty" : rect.toShortString();
+        } catch (Throwable failure) {
+            return "unreadable:" + failure.getClass().getSimpleName();
+        }
+    }
+
+    /**
+     * 焦点胶囊当前的全局可见矩形，用于判断一次"没点中"是落在胶囊外还是 ROM 判定不点。
+     *
+     * <p>诊断不能影响手势：视图缺失或读取失败时返回可读文本，不向 ROM 的手势流程抛异常。
+     */
+    private static String visibleRectSummary(View view) {
+        if (view == null) return "none";
+        try {
+            Rect visible = new Rect();
+            boolean globalVisible = view.getGlobalVisibleRect(visible);
+            return "visible=" + globalVisible + " rect=" + visible.toShortString();
+        } catch (Throwable failure) {
+            return "unreadable:" + failure.getClass().getSimpleName();
+        }
+    }
+
+    /**
+     * 决定点击行为的三个设置项当前值，供诊断日志与交互事件自证配置。
+     *
+     * <p>三者决定 {@code hookDisableConvertedFocusClick} 走哪条分支：独立横幅优先，其次是旧版
+     * 打开通知内容，最后是通知行点击兜底。当前设置尚未加载时报告 {@code unloaded}，不猜默认值。
+     */
+    private String clickSettingsSummary() {
+        HookSettings settings = currentSettings;
+        if (settings == null) return "clickSettings=unloaded";
+        return "clickSettings independentFocusBanner=" + settings.independentFocusBanner
+                + " allowFocusClick=" + settings.allowFocusClick
+                + " notificationRowClickFallback=" + settings.notificationRowClickFallback;
     }
 
     private void installOS3Hooks() {
@@ -384,6 +591,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         os3FocusDivider.install(classLoader);
         hookOS3DeviceIconTint();
         hookPromptShouldShow();
+        hookOS3TouchEntry();
         hookDisableConvertedFocusClick();
         hookFocusLongPress();
         hookRemoteViewsErrors();
@@ -1456,7 +1664,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                                String mode) {
         // 媒体焦点仅在“启用媒体焦点通知”开启时才算数：关闭开关后
         // activeMediaNotificationKeys 里可能仍留有旧 key，不应再走媒体横幅或直接流转。
-        boolean mediaFocus = isMediaFocus(data) && currentSettings.mediaFocusEnabled;
+        boolean isMedia = isMediaFocus(data);
+        boolean mediaFocus = isMedia && currentSettings.mediaFocusEnabled;
         if (currentSettings.mediaFocusCastDirect && mediaFocus) {
             // 点击媒体焦点直接展开流转界面，替代媒体横幅。
             return openMediaCast(data.key, anchor);
@@ -1464,7 +1673,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         // 媒体焦点始终可点击：未选“直接展开流转界面”时点击即展开媒体横幅，不再回退到
         // 普通通知的原生模板（媒体通知没有原生 V3 焦点参数，回退必然失败、表现为无反应）。
         boolean mediaBanner = mediaFocus;
-        if (!mediaBanner && !currentSettings.independentFocusBanner) return false;
+        if (!mediaBanner && !currentSettings.independentFocusBanner) {
+            // 0.37.12：这条早退原来完全无声，会让"独立横幅没弹出来"无法归因；带上媒体判定与开关值。
+            debug(mode + " independent banner skipped key=" + key + " reason=independent-banner-off"
+                    + " isMedia=" + isMedia + " mediaFocusEnabled=" + currentSettings.mediaFocusEnabled);
+            return false;
+        }
         if (mainHandler == null || Looper.myLooper() != mainHandler.getLooper()) {
             log(mode + " independent banner rejected key=" + key + " reason=thread");
             return false;
@@ -1489,7 +1703,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     log(mode + " media banner rejected key=" + key + " reason=no-remote-views");
                     return false;
                 }
-                log(mode + " media banner click key=" + key + " source=notification-remote-views");
+                log(mode + " media banner click key=" + key + " source=notification-remote-views "
+                        + callerFingerprint() + " " + clickSettingsSummary());
                 return sharedBannerController().show(anchor, key, sbn, true);
             }
             if (nativeBannerRenderer == null) {
@@ -1507,7 +1722,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     + " " + FocusParamKeys.describe(bannerValues)
                     + " " + focusExtrasInventory(bannerExtras));
             log(mode + " native banner click key=" + key + " version="
-                    + BuildConfig.VERSION_NAME);
+                    + BuildConfig.VERSION_NAME + " " + callerFingerprint() + " "
+                    + clickSettingsSummary());
             return sharedBannerController().show(anchor, key, sbn);
         } catch (Throwable throwable) {
             error(mode + " independent banner key=" + key, throwable);
@@ -3007,6 +3223,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
             hasSuccessfulProviderSettings = true;
             logProviderSettingsState(true, null);
+            installHooksAfterDeferredSettings();
             return true;
         } catch (Throwable t) {
             logProviderSettingsState(false, t.getClass().getSimpleName());
@@ -3872,9 +4089,19 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         XposedHelpers.setAdditionalInstanceField(prompt, "focusRestoreLongPress",
                                 new WeakReference<>(gesture));
                     }
-                    if (gesture.onEvent((MotionEvent) param.args[0],
-                            currentSettings.longPressNotificationRowClick,
-                            Math.round(currentSettings.longPressSeconds * 1000f))) param.setResult(true);
+                    // 走到这里 gesture 必然非空：上面的 null 分支要么已在长按开关关闭时返回，
+                    // 要么刚刚创建成功（构造失败会抛出，不会落到这里）。判空只作防御。
+                    if (gesture != null) {
+                        int action = ((MotionEvent) param.args[0]).getActionMasked();
+                        boolean releasedAfterLongPress =
+                                (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)
+                                        && gesture.consumeRelease();
+                        if (gesture.onEvent((MotionEvent) param.args[0],
+                                currentSettings.longPressNotificationRowClick,
+                                Math.round(currentSettings.longPressSeconds * 1000f))) param.setResult(true);
+                        // 长按成立后必须吞掉抬手，否则原短按/点击会照常触发，表现为"长按和点击一起触发"。
+                        if (releasedAfterLongPress) param.setResult(true);
+                    }
                 }
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     if (!promptClass.isInstance(param.thisObject)) return;
@@ -3893,14 +4120,38 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * OS3 短按判定入口。
+     *
+     * <p>安装方式必须与已验证可用的 {@code handleTouchEvent} 一致：{@code XposedBridge.hookMethod} 配
+     * {@code getDeclaredMethod}。0.37.5–0.37.7 三轮真机日志里 {@code findAndHookMethod} 装的同一个方法
+     * 一次都没有执行，而同一时刻 {@code handleTouchEvent} 的钩子每次都命中，所以这里不再用
+     * {@code findAndHookMethod}。
+     *
+     * <p>{@code hookOS3TouchEntry} 会在本次手势的抬手前把 {@link FocusShortPressSuppression} 置位，
+     * 长按之后那记抬手触发的短按在这里被拦掉。
+     */
     private void hookDisableConvertedFocusClick() {
         try {
             Class<?> promptView = FocusReflection.findClass(
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptView", classLoader);
-            XposedHelpers.findAndHookMethod(promptView, "onFocusNotifPromptClicked",
+            if (promptView == null) {
+                log("focus click handling skipped: FocusedNotifPromptView missing");
+                return;
+            }
+            // 长按成立的通知走 FocusBannerController.onLongPressFired（静态），先把抑制对象交给它。
+            FocusBannerController.useShortPressSuppression(suppression);
+            XposedBridge.hookMethod(promptView.getDeclaredMethod("onFocusNotifPromptClicked"),
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
+                            // 长按成立后的抬手不得再走短按：拦截点已前移到 handleTouchEvent，
+                            // 这里再判一次，覆盖点击监听与悬停链。
+                            if (suppression.consume()) {
+                                param.setResult(null);
+                                log("OS3 short press suppressed within long press gesture source=click-entry");
+                                return;
+                            }
                             Object bean = getField(param.thisObject, "mData");
                             FocusData data = inspectBean(bean);
                             if (isMediaFocus(data)) {
@@ -3933,10 +4184,18 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 return;
                             }
                             if (currentSettings.allowFocusClick) {
-                                if (currentSettings.notificationRowClickFallback
+                                boolean clickedRow = currentSettings.notificationRowClickFallback
                                         && data != null
-                                        && performNotificationRowClick(null, data.key, "OS3")) {
+                                        && performNotificationRowClick(null, data.key, "OS3");
+                                if (clickedRow) {
                                     param.setResult(null);
+                                } else {
+                                    // 0.37.12：允许焦点点击但没走通知行兜底时，模块按设计把点击交回
+                                    // ROM，原来不留任何日志，无法区分"没接管"和"这个钩子没执行"。
+                                    log("OS3 focus click deferred to rom key="
+                                            + (data == null ? null : data.key)
+                                            + " reason=" + (currentSettings.notificationRowClickFallback
+                                                    ? "row-click-failed" : "no-row-click-fallback"));
                                 }
                                 return;
                             }

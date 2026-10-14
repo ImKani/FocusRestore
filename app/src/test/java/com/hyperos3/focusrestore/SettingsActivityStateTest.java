@@ -8,6 +8,7 @@
 package com.hyperos3.focusrestore;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -47,6 +48,23 @@ public class SettingsActivityStateTest {
         assertTrue(source.contains("outState.putStringArrayList(\"ui.expandedSections\""));
         assertTrue(source.contains("state.getStringArrayList(\"ui.expandedSections\")"));
         assertTrue(source.contains("content.setVisibility(expanded ? View.VISIBLE : View.GONE)"));
+    }
+
+    /**
+     * 未解锁时凭据存储不可读，两份存储会同时读成空；此时"两库都空即视为首次安装"的判断会把
+     * 默认值写进两份存储并覆盖真实配置。0.37.1 真机日志出现过该顺序：同一进程先记录
+     * provider ready=false，紧接着 settings initialized 写入全默认值，所以初始化必须先判解锁。
+     */
+    @Test
+    public void settingsInitializationIsGatedOnUserUnlock() throws Exception {
+        String source = readSettingsActivitySource();
+        assertTrue(source.contains("private boolean userUnlocked()"));
+        assertTrue(source.contains("isUserUnlocked()"));
+        assertTrue(source.contains("settings init deferred: user locked"));
+        int guard = source.indexOf("if (!userUnlocked())");
+        int initialization = source.indexOf("preferences.getAll().isEmpty()");
+        assertTrue("unlock guard must exist before the store initialization", guard >= 0);
+        assertTrue("store initialization must follow the unlock guard", initialization > guard);
     }
 
     @Test
@@ -240,6 +258,25 @@ public class SettingsActivityStateTest {
         Matcher matcher = pattern.matcher(source);
         while (matcher.find()) result.add(matcher.group(1));
         return result;
+    }
+
+    /**
+     * 文本框输入必须合并保存。真机 0.37.1 日志逐字符提交（7 秒窗口内最多 57 次保存，共 66 次），
+     * 并逐字符把 islandSideSeparator 落盘成 `'的*@&@*…` 这类半截值；守卫要求 debounce 与
+     * "离开页面前冲刷"同时存在，否则最后一次输入会丢。
+     */
+    @Test
+    public void textFieldInputIsCoalescedAndFlushed() throws Exception {
+        String source = readSettingsActivitySource();
+        assertTrue(source.contains("private void scheduleTextSave()"));
+        assertTrue(source.contains("postDelayed(textSaveRunnable, TEXT_SAVE_DEBOUNCE_MS)"));
+        assertTrue(source.contains("private void flushTextSave()"));
+        assertTrue(source.contains("focusMaxDisplayInput.hasFocus()) scheduleTextSave()"));
+        // 暂停与销毁两条路径都不能丢最后一次输入。
+        assertTrue(source.contains("flushTextSave();"));
+        assertTrue(source.contains("textSaveHandler.removeCallbacks(textSaveRunnable);"));
+        // 逐字符直接保存是本次修复前的形态，不得回归。
+        assertFalse(source.contains("if (field.hasFocus()) markPending();"));
     }
 
     private static String readSettingsActivitySource() throws Exception {

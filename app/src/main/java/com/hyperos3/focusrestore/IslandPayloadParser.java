@@ -26,6 +26,10 @@ final class IslandPayloadParser {
             "chatInfo", "iconTextInfo", "animTextInfo", "coverInfo", "hintInfo", "progressInfo",
             "multiProgressInfo", "stepInfo", "param_island"};
 
+    /** 图片引用只接受标识符；Pattern 复用，避免每次候选重新编译。 */
+    private static final java.util.regex.Pattern PICTURE_REFERENCE =
+            java.util.regex.Pattern.compile("[A-Za-z0-9_.-]+");
+
     private IslandPayloadParser() {
     }
 
@@ -316,7 +320,8 @@ final class IslandPayloadParser {
         // 仅接受标识符字符串，避免把 URL、对象或空值当成图标；资源名兜底仍单独限制前缀。
         if (!(value instanceof String)) return null;
         String reference = ((String) value).trim();
-        return reference.matches("[A-Za-z0-9_.-]+") ? reference : null;
+        // 每次候选项都 matches() 会重复编译同一个 Pattern；一次图标解析可命中数十次。
+        return PICTURE_REFERENCE.matcher(reference).matches() ? reference : null;
     }
 
     static ParsedText parseCompact(String payload, String sideSeparator) {

@@ -63,7 +63,9 @@ final class FocusScrollToTopGuard {
             target.setAccessible(true);
             XposedBridge.hookMethod(target, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {
-                    if (!(param.args[0] instanceof MotionEvent)) return;
+                    // 参数缺失时不进入自身 try，索引越界会污染诊断日志；先做与手势通路一致的防护。
+                    if (param.args == null || param.args.length == 0
+                            || !(param.args[0] instanceof MotionEvent)) return;
                     MotionEvent event = (MotionEvent) param.args[0];
                     if (event.getActionMasked() != MotionEvent.ACTION_DOWN) return;
                     try {
@@ -92,7 +94,8 @@ final class FocusScrollToTopGuard {
             target.setAccessible(true);
             XposedBridge.hookMethod(target, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {
-                    if (!(param.args[0] instanceof MotionEvent)) return;
+                    if (param.args == null || param.args.length == 0
+                            || !(param.args[0] instanceof MotionEvent)) return;
                     MotionEvent event = (MotionEvent) param.args[0];
                     try {
                         boolean blocked;

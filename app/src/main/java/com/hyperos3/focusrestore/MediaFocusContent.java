@@ -14,8 +14,21 @@ import android.media.session.PlaybackState;
 import android.os.Bundle;
 import android.text.TextUtils;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 /** Small, side-effect-free adapter for platform MediaStyle notifications. */
 final class MediaFocusContent {
+    private static final String TAG = "HyperOS3FocusRestore";
+    /** 会话数很少；上限只用于防止异常情况下无界增长。 */
+    private static final int MAX_CONTROLLERS = 16;
+    private static final Map<String, MediaController> CONTROLLERS =
+            new LinkedHashMap<String, MediaController>(8, 0.75f, true) {
+                @Override protected boolean removeEldestEntry(Map.Entry<String, MediaController> eldest) {
+                    return size() > MAX_CONTROLLERS;
+                }
+            };
+
     final String text;
     final MediaSession.Token token;
     final boolean playing;
@@ -55,12 +68,30 @@ final class MediaFocusContent {
         return new MediaFocusContent(text + (nowPlaying ? "  ▶" : "  ❚❚"), token, nowPlaying);
     }
 
+    /**
+     * 每个媒体会话复用一个控制器。
+     *
+     * <p>{@code MediaController} 的构造会向会话注册自己的回调，而
+     * {@code MediaController#release()} 在 Android 15 上是 @hide，反射也会被隐藏 API 策略
+     * 拒绝（真机 0.37.1 日志：{@code NoSuchMethodException: ...MediaController.release []}），
+     * 无法在本模块内释放。因此不再每次判读新建：同一 token 复用同一实例，缓存按会话数封顶，
+     * 既避免每次焦点判读累积一个对象，也不依赖任何私有接口。
+     */
     static MediaController controller(android.content.Context context, MediaSession.Token token) {
         if (context == null || token == null) return null;
-        try {
-            return new MediaController(context, token);
-        } catch (Throwable ignored) {
-            return null;
+        String tokenKey = String.valueOf(System.identityHashCode(token));
+        synchronized (CONTROLLERS) {
+            MediaController cached = CONTROLLERS.get(tokenKey);
+            if (cached != null) return cached;
+            MediaController created;
+            try {
+                created = new MediaController(context, token);
+            } catch (Throwable failure) {
+                android.util.Log.w(TAG, "media controller unavailable token=" + tokenKey, failure);
+                return null;
+            }
+            CONTROLLERS.put(tokenKey, created);
+            return created;
         }
     }
 

@@ -172,6 +172,14 @@ public final class SettingsActivity extends Activity {
     private ScrollView pageScroll;
     private final int[] scrollPositions = new int[3];
     private final Set<String> expandedSections = new HashSet<>();
+    /** 文本框输入合并保存；字段与 Handler 同生命周期，onDestroy 时清空回调。 */
+    private static final long TEXT_SAVE_DEBOUNCE_MS = 400L;
+    private final Handler textSaveHandler = new Handler(Looper.getMainLooper());
+    private boolean textSavePending;
+    private final Runnable textSaveRunnable = () -> {
+        textSavePending = false;
+        saveSettings();
+    };
     private boolean appearanceResourceFailureLogged;
 
     private Button os3ModeButton;
@@ -314,6 +322,8 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onPause() {
         backupUiResumed = false;
+        // 合并保存的文本框输入必须在离开页面前落盘，否则最后一次输入会丢。
+        flushTextSave();
         if (sectionTransitionRoot != null) TransitionManager.endTransitions(sectionTransitionRoot);
         sectionAnimating = false;
         if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
@@ -344,6 +354,9 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onDestroy() {
         destroyed = true;
+        // 未冲刷的合并保存不可能再提交；清掉回调避免 Activity 销毁后触发。
+        textSaveHandler.removeCallbacks(textSaveRunnable);
+        textSavePending = false;
         cancelBackupIo();
         backupExecutor.shutdownNow();
         if (importDialog != null) importDialog.dismiss();
@@ -365,6 +378,13 @@ public final class SettingsActivity extends Activity {
             if (!FocusRestoreSettings.hasHookSettings(hookPreferences)) {
                 FocusRestoreSettings initial = FocusRestoreSettings.fromPreferences(preferences);
                 // 只在两份存储都没有用户设置时探测；旧配置缺模式键也保留原 OS3 语义。
+                // 但"两份都读成空"也可能是用户尚未解锁时的瞬时状态（凭据存储此时不可读），
+                // 真机 0.37.1 日志已出现：同一进程先 provider ready=false，随后 settings initialized
+                // 把默认值写进两份存储。未解锁时一律不初始化，避免默认值覆盖真实配置。
+                if (!userUnlocked()) {
+                    android.util.Log.i(TAG, "settings init deferred: user locked; keeping stored settings");
+                    return;
+                }
                 if (preferences.getAll().isEmpty() && hookPreferences.getAll().isEmpty()) {
                     initial = FocusRestoreSettings.edit(initial).hookMode(InitialHookMode.detect()).build();
                 }
@@ -388,6 +408,21 @@ public final class SettingsActivity extends Activity {
                     ? "deviceProtected" : "credential")
                     + " credential=" + credentialSaved + " deviceProtected=" + hookSaved
                     + " " + newest.describe());
+        }
+    }
+
+    /**
+     * 用户是否已解锁。未解锁时凭据存储不可读，两份存储都可能读成空，
+     * 此时任何"两库都空即视为首次安装"的判断都不成立。
+     */
+    private boolean userUnlocked() {
+        try {
+            android.os.UserManager users =
+                    (android.os.UserManager) getSystemService(android.content.Context.USER_SERVICE);
+            return users == null || users.isUserUnlocked();
+        } catch (Throwable unsupported) {
+            // 查询失败时按已解锁处理，保持原有行为，不因新增守卫改变旧 ROM 的初始化。
+            return true;
         }
     }
 
@@ -761,6 +796,8 @@ public final class SettingsActivity extends Activity {
         widthSeekBar = new SeekBar(this);
         styleSeekBar(widthSeekBar);
         widthSeekBar.setMax(MAX_WIDTH_DP - MIN_WIDTH_DP);
+        // 与 appearanceSlider 一致，读屏需要可区分的用途标签。
+        widthSeekBar.setContentDescription("最大宽度");
         focusPanel.addView(widthSeekBar, matchWrap(dp(2)));
         addDefaultRange(focusPanel, "80 dp", "400 dp", "最大宽度", () -> {
             pendingWidthDp = DEFAULT_WIDTH_DP;
@@ -773,6 +810,7 @@ public final class SettingsActivity extends Activity {
         landscapeWidthSeekBar = new SeekBar(this);
         styleSeekBar(landscapeWidthSeekBar);
         landscapeWidthSeekBar.setMax(MAX_LANDSCAPE_WIDTH_DP - MIN_WIDTH_DP);
+        landscapeWidthSeekBar.setContentDescription("横屏最大宽度");
         landscapeWidthSeekBar.setProgress(pendingWidthLandscapeDp - MIN_WIDTH_DP);
         landscapeWidthSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             public void onProgressChanged(SeekBar bar, int value, boolean fromUser) {
@@ -1042,6 +1080,7 @@ public final class SettingsActivity extends Activity {
         // 与宽度限制共用控件样式；每格 0.1 秒，端点严格对应 0.2 和 10 秒。
         longPressSecondsSeekBar.setMax(98);
         longPressSecondsSeekBar.setProgress(Math.round(pendingLongPressSeconds * 10f) - 2);
+        longPressSecondsSeekBar.setContentDescription("长按时间");
         interactionPanel.addView(longPressSecondsSeekBar, matchWrap(dp(2)));
         addDefaultRange(interactionPanel, "0.2 秒", "10 秒", "长按时间", () -> {
             pendingLongPressSeconds = FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS;
@@ -1073,6 +1112,7 @@ public final class SettingsActivity extends Activity {
         styleSeekBar(touchWidthSeekBar);
         touchWidthSeekBar.setMax(MAX_WIDTH_DP - MIN_WIDTH_DP);
         touchWidthSeekBar.setProgress(pendingTouchWidthDp - MIN_WIDTH_DP);
+        touchWidthSeekBar.setContentDescription("竖屏触控宽度");
         touchWidthOptionsPanel.addView(touchWidthSeekBar, matchWrap(dp(2)));
         addDefaultRange(touchWidthOptionsPanel, "80 dp", "400 dp", "竖屏触控宽度", () -> {
             pendingTouchWidthDp = FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_DP;
@@ -1086,6 +1126,7 @@ public final class SettingsActivity extends Activity {
         styleSeekBar(touchWidthLandscapeSeekBar);
         touchWidthLandscapeSeekBar.setMax(MAX_LANDSCAPE_WIDTH_DP - MIN_WIDTH_DP);
         touchWidthLandscapeSeekBar.setProgress(pendingTouchWidthLandscapeDp - MIN_WIDTH_DP);
+        touchWidthLandscapeSeekBar.setContentDescription("横屏触控宽度");
         touchWidthOptionsPanel.addView(touchWidthLandscapeSeekBar, matchWrap(dp(2)));
         addDefaultRange(touchWidthOptionsPanel, "80 dp", "1600 dp", "横屏触控宽度", () -> {
             pendingTouchWidthLandscapeDp = FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP;
@@ -1108,6 +1149,7 @@ public final class SettingsActivity extends Activity {
         delaySeekBar = new SeekBar(this);
         styleSeekBar(delaySeekBar);
         delaySeekBar.setMax(50);
+        delaySeekBar.setContentDescription("滚动启动延迟");
         delayPanel.addView(delaySeekBar, matchWrap(dp(2)));
         addDefaultRange(delayPanel, "0 秒", "5 秒", "滚动启动延迟", () -> {
             pendingDelayMs = DEFAULT_MARQUEE_DELAY_MS;
@@ -1753,7 +1795,7 @@ public final class SettingsActivity extends Activity {
                     if (parsed == pendingFocusMaxDisplaySeconds) return;
                     pendingFocusMaxDisplaySeconds = parsed;
                     updateMaxDisplayValue();
-                    if (focusMaxDisplayInput.hasFocus()) markPending();
+                    if (focusMaxDisplayInput.hasFocus()) scheduleTextSave();
                 }
                 public void afterTextChanged(Editable s) { }
             });
@@ -2496,17 +2538,39 @@ public final class SettingsActivity extends Activity {
         pageListenerCleanup.add(() -> field.removeTextChangedListener(watcher));
     }
 
-    /** Keeps a separator field's pending value in sync and saves while the user types. */
+    /** Keeps a separator field's pending value in sync and saves after typing settles. */
     private TextWatcher separatorWatcher(EditText field, boolean general) {
         return new TextWatcher() {
             public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
             public void onTextChanged(CharSequence s, int start, int before, int count) {
                 if (general) pendingGeneralSeparator = s.toString();
                 else pendingSideSeparator = s.toString();
-                if (field.hasFocus()) markPending();
+                if (field.hasFocus()) scheduleTextSave();
             }
             public void afterTextChanged(Editable s) { }
         };
+    }
+
+    /**
+     * 文本输入合并保存。
+     *
+     * <p>真机 0.37.1 日志显示逐字符提交：7 秒窗口内最多 57 次 {@code settings save queued}（本次日志
+     * 共 66 次），并逐字符把 {@code islandSideSeparator} 落盘成 {@code '的*@&@*…} 这类半截值。
+     * 这里把文本框输入合并成停止输入后 400ms 提交一次；{@code onPause} 强制冲刷，保证离开页面前
+     * 最后一次输入不会丢，{@code onDestroy} 丢弃已不可能再提交的回调。
+     */
+    private void scheduleTextSave() {
+        textSavePending = true;
+        textSaveHandler.removeCallbacks(textSaveRunnable);
+        textSaveHandler.postDelayed(textSaveRunnable, TEXT_SAVE_DEBOUNCE_MS);
+    }
+
+    /** 立即提交尚未落盘的文本输入；无待提交内容时不做任何事。 */
+    private void flushTextSave() {
+        if (!textSavePending) return;
+        textSaveHandler.removeCallbacks(textSaveRunnable);
+        textSavePending = false;
+        saveSettings();
     }
 
     private void loadSettings() {

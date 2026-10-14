@@ -237,9 +237,10 @@ final class SettingsBackupCodec {
                 "compatibility", entries("compat_retry", settings.compatRetry,
                         "disable_island_property", settings.disableIslandProperty,
                         "disable_island_feature_cache", settings.disableIslandFeatureCache));
+        String appVersion = encodedAppVersion();
         StringBuilder text = new StringBuilder();
         append(text, entries("format", FORMAT, "formatVersion", FORMAT_VERSION,
-                "appVersion", BuildConfig.VERSION_NAME + "(" + BuildConfig.VERSION_CODE + ")",
+                "appVersion", appVersion,
                 "settings", groups), 0);
         text.append('\n');
         final byte[] bytes;
@@ -272,6 +273,32 @@ final class SettingsBackupCodec {
         for (int index = 0; index < version.length(); index++) {
             if (Character.isISOControl(version.charAt(index))) throw invalid("appVersion 不能包含控制符");
         }
+    }
+
+    /**
+     * 导出必须满足自己的导入校验（非空、≤64 字符、无控制符），否则一次版本名改动就会
+     * 导出自己无法读回的备份。当前版本名合法时行为与原来完全一致；越界时降级为版本号文本，
+     * 不因诊断字段使整次导出失败。
+     */
+    private static String encodedAppVersion() {
+        String name = BuildConfig.VERSION_NAME;
+        // 校验对象必须是最终写进备份的文本：名称本身合法、但拼上 "(versionCode)" 后超过上限时，
+        // 同样会被自己的导入校验拒绝，所以这里先拼再判长度与控制符。
+        String encoded = name == null || name.trim().isEmpty()
+                ? null : name + "(" + BuildConfig.VERSION_CODE + ")";
+        if (encoded != null && encoded.length() <= 64) {
+            boolean clean = true;
+            for (int index = 0; index < encoded.length(); index++) {
+                if (Character.isISOControl(encoded.charAt(index))) {
+                    clean = false;
+                    break;
+                }
+            }
+            if (clean) return encoded;
+        }
+        android.util.Log.w("HyperOS3FocusRestore",
+                "backup appVersion fallback to versionCode=" + BuildConfig.VERSION_CODE);
+        return String.valueOf(BuildConfig.VERSION_CODE);
     }
 
     private static Map<String, Object> entries(Object... pairs) {

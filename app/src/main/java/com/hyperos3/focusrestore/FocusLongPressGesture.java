@@ -23,6 +23,8 @@ final class FocusLongPressGesture implements View.OnAttachStateChangeListener {
     private final int slop;
     private Runnable action;
     private long downTime;
+    private float downX;
+    private float downY;
     private boolean sendingCancel;
     private final Runnable timeout = this::fire;
 
@@ -44,6 +46,8 @@ final class FocusLongPressGesture implements View.OnAttachStateChangeListener {
                 catch (Throwable failure) { failures.error("long press capture", failure); }
                 if (action != null) {
                     downTime = event.getDownTime();
+                    downX = event.getX();
+                    downY = event.getY();
                     state.begin(event.getX(), event.getY());
                     if (!host.postDelayed(timeout, Math.max(200L, Math.min(10000L, timeoutMillis)))) {
                         reset();
@@ -64,6 +68,15 @@ final class FocusLongPressGesture implements View.OnAttachStateChangeListener {
     boolean tracking() { return state.pending() || state.consumed(); }
     boolean consumed() { return state.consumed(); }
 
+    /**
+     * 长按成立后的第一次抬手取走"吞掉"标记。
+     *
+     * <p>调用方必须用返回值消费这次 ACTION_UP：否则长按已执行，ROM/子视图仍会把同一次抬手当成
+     * 短按，出现"长按和点击一起触发"。标记由 {@link FocusLongPressState#consumeRelease()} 一次性取走，
+     * 不会影响下一次手势。
+     */
+    boolean consumeRelease() { return state.consumeRelease(); }
+
     private void fire() {
         Runnable captured = action;
         if (!host.isAttachedToWindow() || !host.isShown() || captured == null) {
@@ -73,8 +86,9 @@ final class FocusLongPressGesture implements View.OnAttachStateChangeListener {
         if (!state.fire()) return;
         action = null;
         // 给已收到 DOWN 的 ROM/RemoteViews 子视图发 CANCEL，避免抬手打开横幅或执行其按钮。
+        // 坐标沿用本次按下的位置：部分子视图按坐标判定手势归属，原地 (0,0) 的取消可能被它们忽略。
         MotionEvent cancel = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(),
-                MotionEvent.ACTION_CANCEL, 0f, 0f, 0);
+                MotionEvent.ACTION_CANCEL, downX, downY, 0);
         sendingCancel = true;
         try { host.dispatchTouchEvent(cancel); }
         catch (Throwable failure) { failures.error("long press cancel dispatch", failure); }
@@ -84,6 +98,8 @@ final class FocusLongPressGesture implements View.OnAttachStateChangeListener {
         }
         try { host.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); }
         catch (Throwable failure) { failures.error("long press haptic feedback", failure); }
+        // 记录长按成立时刻：调用方随后会吞掉这次抬手，日志可用于确认"抬手的点击没有发生"。
+        FocusBannerController.onLongPressFired();
         try { captured.run(); }
         catch (Throwable failure) { failures.error("long press action", failure); }
     }

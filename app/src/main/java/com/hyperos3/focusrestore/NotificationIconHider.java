@@ -121,6 +121,9 @@ final class NotificationIconHider {
     private void apply() {
         ViewGroup container = root;
         if (container == null || !requested) return;
+        // 布局回调会在每次布局时调用这里；已经 GONE 时重复写入既触发无谓的重新布局，
+        // 也按布局帧刷屏日志，因此先判定实际可见性再写。
+        if (container.getVisibility() == View.GONE) return;
         write(container, View.GONE);
         logger.log("notificationIcons hide container class=" + container.getClass().getName());
     }

@@ -64,6 +64,23 @@ final class FocusReflection {
         }
     }
 
+    /**
+     * 取 ROM 私有字段用于诊断读取，找不到时返回 null 由调用方降级。
+     *
+     * <p>只沿当前类与被 hook 的类自身查找，不做父类回溯：诊断失败必须安静降级，不能因此影响
+     * 手势与抑制逻辑。
+     */
+    static Field findField(Class<?> owner, String name) {
+        if (owner == null || name == null) return null;
+        try {
+            Field field = owner.getDeclaredField(name);
+            field.setAccessible(true);
+            return field;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     static String capability(Class<?> owner, String name, Class<?>... parameterTypes) {
         boolean available = parameterTypes.length == 0 ? hasAnyMethod(owner, name)
                 : hasMethod(owner, name, parameterTypes);

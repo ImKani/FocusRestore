@@ -13,6 +13,10 @@ import android.database.Cursor;
 
 /** Reads one complete settings snapshot from the module provider. */
 final class HookSettingsReader {
+    private static final String TAG = "HyperOS3FocusRestore";
+    /** 读取失败只需定位一次原因，避免每次设置刷新都重复同一条诊断。 */
+    private static boolean failureLogged;
+
     private HookSettingsReader() {
     }
 
@@ -25,7 +29,12 @@ final class HookSettingsReader {
             cursor = resolver.query(SettingsProvider.URI, null, null, null, null);
             if (cursor == null || !cursor.moveToFirst()) return null;
             return HookSettings.fromCursor(cursor);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException failure) {
+            // 不静默吞掉：缺列或类型不符时保留可定位原因，只记录一次。
+            if (!failureLogged) {
+                failureLogged = true;
+                android.util.Log.w(TAG, "provider settings read failed", failure);
+            }
             return null;
         } finally {
             if (cursor != null) {

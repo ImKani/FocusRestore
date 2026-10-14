@@ -59,6 +59,11 @@ final class FocusSwipeTouchHandler implements View.OnAttachStateChangeListener {
         try {
             Class<?> type = FocusReflection.findClass(loader,
                     "com.android.systemui.statusbar.phone.MiuiPhoneStatusBarView");
+            if (type == null) {
+                // 类缺失与后续方法缺失用不同阶段名记录，避免统一报成 install 失败而无法定位。
+                logger.log("focus horizontal swipe unavailable: MiuiPhoneStatusBarView missing");
+                return;
+            }
             Method dispatch = type.getMethod("dispatchTouchEvent", MotionEvent.class);
             XposedBridge.hookMethod(dispatch, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {

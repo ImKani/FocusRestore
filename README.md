@@ -20,7 +20,14 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-当前版本：`0.37.0`（versionCode 286），高级页区块展开/收起时卡片和后续区块平滑过渡，箭头同步旋转；初始化、切页恢复及系统关闭动画时直接同步状态。最低Android版本仍为8.1（API 27），无新增第三方运行时依赖。已完成clean Debug/Release构建、37类/293项单元测试及双包版本与作者签名核验；Release按本地JDK25环境约定跳过`lintVitalAnalyzeRelease`。Android/ROM视觉仍待设备确认。
+当前版本：`0.37.12`（versionCode 298），修复长按弹出横幅后同一次抬手又被当成短按点击的问题，并让焦点点击行为的设置在 OS3 上真正生效。文本框输入改为停止输入后统一保存，未解锁时不再写入默认配置；媒体焦点读取复用会话控制器，不再反复报错。最低Android版本仍为8.1（API 27），无新增第三方运行时依赖。已完成clean Debug/Release构建、38类/301项单元测试及双包版本与作者签名核验；Release按本地JDK25环境约定跳过`lintVitalAnalyzeRelease`。长按与点击手感、输入保存及媒体焦点仍待设备确认。
+
+- 长按弹出横幅后，同一次手势的抬手不再触发短按点击，修复"长按和点击一起触发"。
+- 标题、分隔线等文本框改为停止输入后保存一次，离开设置页面前强制落盘，不再逐字符写入半截值。
+- 设备未解锁时不再把默认配置写入存储，避免覆盖已有设置；OS3 焦点点击处理的安装方式与 ROM 对齐，点击行为设置不再失效。
+- 媒体焦点读取复用同一会话的控制器并有上限，不再在日志里反复出现 MediaController 报错。
+
+当前默认值：
 
 - 横屏显示与触控宽度默认600dp，超级岛转换和点击横幅默认开启；自定义触控范围仍默认关闭。
 - 焦点图标默认8dp，可调整至1dp；跟随系统的外观数值显示实际尺寸与小字说明。
@@ -156,7 +163,7 @@ HyperOS 4 媒体焦点使用原生媒体卡片选出的当前媒体：首次加�
 
 导入先完整检查文件，再确认覆盖全部当前设置；文件中缺少的设置恢复兼容默认值，不与当前配置混合。旧显示横屏宽度缺失时继承所导入的显示竖屏宽度，旧连接符可作为两种连接符的回退；新增触控开关缺失时关闭，两种触控宽度缺失时分别使用160dp／600dp，不继承自定义显示宽度。取消或文件校验失败不写设置；保存失败会提示，双存储写入不保证跨存储事务。恢复后仍需手动重启系统界面完整生效。
 
-配置文件带格式版本 `formatVersion` 和导出软件版本 `appVersion`（例如 `0.36.1(282)`），软件版本随实际导出构建自动填写，仅说明来源，不决定能否导入。手工编辑时 `appVersion` 必须保留为非空、最多64字符且不含控制符的文本；设置仍按字段类型、范围和结构校验。兼容基线为0.30.4的持久设置，不为0.31.0～0.31.3测试期间缺少软件版本字段的旧JSON增加迁移；旧版不保证能导入新增字段的新版备份。文件最多16 MiB，两份应用名单的包名文本合计最多64 Ki字符，避免页面状态保存超限；导入和导出使用相同限制。冲突的点击选项按设置界面现有优先级处理。文件包含应用名单等个人设置，请妥善保管。
+配置文件带格式版本 `formatVersion` 和导出软件版本 `appVersion`（例如 `0.37.12(298)`），软件版本随实际导出构建自动填写，仅说明来源，不决定能否导入。手工编辑时 `appVersion` 必须保留为非空、最多64字符且不含控制符的文本；设置仍按字段类型、范围和结构校验。兼容基线为0.30.4的持久设置，不为0.31.0～0.31.3测试期间缺少软件版本字段的旧JSON增加迁移；旧版不保证能导入新增字段的新版备份。文件最多16 MiB，两份应用名单的包名文本合计最多64 Ki字符，避免页面状态保存超限；导入和导出使用相同限制。冲突的点击选项按设置界面现有优先级处理。文件包含应用名单等个人设置，请妥善保管。
 
 ### 高级：Debug 测试版内部兼容开关
 
@@ -190,13 +197,13 @@ Debug 和 Release 均保留模块加载版本、横幅点击与失败原因等�
 ```sh
 su
 /system/bin/logcat -c
-/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.36.1.log
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.37.12.log
 ```
 
 保持命令运行，然后通过设备上的方式手动重启系统界面。完成复现后回到 MT 终端，按 `Ctrl+C` 停止抓取。日志保存在：
 
 ```text
-/sdcard/focus-restore-0.36.1.log
+/sdcard/focus-restore-0.37.12.log
 ```
 
 ### 电脑端：ADB + PowerShell
@@ -273,13 +280,13 @@ gradle :app:clean :app:assembleDebug :app:assembleRelease
 > **签名变更（0.34.2 起）**：本项目自 0.34.2 起改用作者签名证书，与此前各版本使用的固定测试证书签名不同，无法直接覆盖安装。从旧版本升级请先在模块“关于”页导出配置，再卸载旧版本、安装本版本，最后导入配置；卸载会清除模块内保存的设置，未导出的配置无法恢复。
 
 ```powershell
-adb install -r '.\FocusRestore-0.36.1-debug.apk'
+adb install -r '.\FocusRestore-0.37.12-debug.apk'
 ```
 
 或安装 Release：
 
 ```powershell
-adb install -r '.\FocusRestore-0.36.1-release.apk'
+adb install -r '.\FocusRestore-0.37.12-release.apk'
 ```
 
 安装后：

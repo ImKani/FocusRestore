@@ -546,6 +546,7 @@ final class FocusBannerModel {
     }
 
     private static String firstKey(JSONObject object, String... names) {
+        if (object == null) return null;
         for (String name : names) {
             String value = cleanKey(object.opt(name));
             if (value != null) return value;

@@ -59,9 +59,48 @@ public final class FocusBannerController {
     private static final long UPDATE_MS = 80L;
     private static final long NATIVE_RETRY_MS = 250L;
     private static final long NATIVE_GRACE_MS = 1_500L;
+    /**
+     * 同一条横幅上，长按成立后这么久内的正文点击记为同一手势，仅用于机会性归因。
+     *
+     * <p>它只能采样"长按发生时这条横幅已经显示"的情况：模块长按的动作是模拟通知行点击，自己不开横幅，
+     * 所以长按那一刻没有横幅在显示时不会记录任何东西（0.37.1～0.37.12 的日志里这条诊断一次都没命中）。
+     * 判断"长按后 ROM 是否又触发了一次短按"要看手势入口的
+     * {@code OS3 short press suppressed within long press gesture action=} 与随后的点击分支日志。
+     */
+    private static final long DOUBLE_TRIGGER_WINDOW_MS = 1_500L;
     private static final String USER_SWITCHED = "android.intent.action.USER_SWITCHED";
     private static final String USER_STOPPED = "android.intent.action.USER_STOPPED";
     private static final String COLLAPSE_ISLAND = "com.miui.action.ACTION_COLLAPSE_ISLAND";
+
+    /** 模块长按成立时由 {@link FocusLongPressGesture} 通知一次，仅用于短按归因诊断。 */
+    private static volatile Runnable longPressDiagnostic = () -> { };
+
+    /**
+     * 长按成立后、同一次手势内的短按抑制。由 {@link HyperOS3FocusRestoreHook} 在长按成立时置位，
+     * 在 OS3 提示视图的手势入口消费。这里只做转发，判定逻辑与生命周期都在抑制对象里。
+     */
+    private static volatile FocusShortPressSuppression shortPressSuppression;
+
+    /** 由 Hook 安装时注入一次，使长按成立能置位 OS3 手势入口的短按抑制。 */
+    static void useShortPressSuppression(FocusShortPressSuppression suppression) {
+        shortPressSuppression = suppression;
+    }
+
+    /**
+     * 长按成立时置位本次手势的短按抑制，并把这一刻交给当前横幅记录。
+     *
+     * <p>记录的时刻供短按归因诊断比对时间差，用来区分"长按与短按被同一手势同时触发"和
+     * "长按结束后用户又点了一次"。
+     */
+    public static void onLongPressFired() {
+        FocusShortPressSuppression suppression = shortPressSuppression;
+        if (suppression != null) suppression.arm();
+        try {
+            longPressDiagnostic.run();
+        } catch (Throwable ignored) {
+            // 诊断失败不影响手势；这里刻意不写日志，避免刷屏。
+        }
+    }
 
     private final Logger logger;
     private final NativeFocusTemplateRenderer renderer;
@@ -161,6 +200,12 @@ public final class FocusBannerController {
         this.logger = logger;
         this.renderer = renderer;
         this.notificationOpener = notificationOpener;
+        // 长按来自 prompt 侧的手势对象，与本控制器没有直接引用；用一次性的静态回调把
+        // "长按已成立"这一刻交给当前横幅记录，供短按归因诊断比对时间差。
+        longPressDiagnostic = () -> {
+            BannerFrame current = banner;
+            if (current != null) current.recordLongPress();
+        };
     }
 
     private Handler mainHandler() {
@@ -809,6 +854,8 @@ public final class FocusBannerController {
         private boolean bodyClickInProgress;
         private boolean drawnLogged;
         private boolean renderingFailed;
+        /** 长按与短按双触发诊断：最近一次模块长按的时刻。 */
+        private long lastLongPressAt;
         private final Runnable attachedCallback = this::notifyNativeAttached;
 
         BannerFrame(Context context) {
@@ -830,6 +877,7 @@ public final class FocusBannerController {
                     || !render.isCurrent(currentSbn)) return;
             String blocked = displayBlockedReason();
             if (blocked != null) { dismiss(blocked); return; }
+            logBodyClickOrigin();
             FocusBannerSource clicked = render;
             bodyClickInProgress = true;
             try {
@@ -840,6 +888,26 @@ public final class FocusBannerController {
             } finally {
                 bodyClickInProgress = false;
             }
+        }
+
+        /** 当前横幅显示期间模块长按成立时记录时刻，供正文点击归因比对时间差。 */
+        void recordLongPress() {
+            lastLongPressAt = SystemClock.uptimeMillis();
+            event(notificationKey, "long press fired; watching for a following short press");
+        }
+
+        /**
+         * 记录本次正文点击与"这条横幅显示期间最近一次长按"的时间差。
+         *
+         * <p>只能回答"同一条横幅上、长按后 1.5 秒内又点了正文"这一种情况；长按后 ROM 是否仍触发短按，
+         * 要看手势入口的抑制日志与随后的点击分支日志（见 {@link #DOUBLE_TRIGGER_WINDOW_MS}）。
+         */
+        private void logBodyClickOrigin() {
+            long delta = lastLongPressAt == 0L ? -1L : SystemClock.uptimeMillis() - lastLongPressAt;
+            boolean sameGesture = delta >= 0L && delta <= DOUBLE_TRIGGER_WINDOW_MS;
+            event(notificationKey, "body click origin=short-press sinceLongPressMs="
+                    + (delta < 0L ? "none" : delta)
+                    + " sameGestureAsLongPress=" + sameGesture);
         }
 
         /** 打开当前通知条目；{@code currentSbn == null} 时保持空操作，绝不把 null 交给点击通路。 */
