@@ -20,7 +20,7 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-当前版本：`0.36.12`（versionCode 285），包含指定 SVG 折叠箭头及协调标题大小的20dp图标。已完成clean Debug/Release构建、37类/293项单元测试及两包版本与作者签名核验。Release按本地JDK25环境约定跳过`lintVitalAnalyzeRelease`；首次OS探测、设置交互与ROM视觉仍待设备确认。
+当前版本：`0.37.0`（versionCode 286），高级页区块展开/收起时卡片和后续区块平滑过渡，箭头同步旋转；初始化、切页恢复及系统关闭动画时直接同步状态。最低Android版本仍为8.1（API 27），无新增第三方运行时依赖。已完成clean Debug/Release构建、37类/293项单元测试及双包版本与作者签名核验；Release按本地JDK25环境约定跳过`lintVitalAnalyzeRelease`。Android/ROM视觉仍待设备确认。
 
 - 横屏显示与触控宽度默认600dp，超级岛转换和点击横幅默认开启；自定义触控范围仍默认关闭。
 - 焦点图标默认8dp，可调整至1dp；跟随系统的外观数值显示实际尺寸与小字说明。

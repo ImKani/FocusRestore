@@ -7,6 +7,13 @@
 
 package com.hyperos3.focusrestore;
 
+import android.animation.ValueAnimator;
+import android.transition.ChangeBounds;
+import android.transition.Transition;
+import android.transition.TransitionListenerAdapter;
+import android.transition.TransitionManager;
+import android.view.animation.AnimationUtils;
+import android.view.animation.Interpolator;
 import android.app.Activity;
 import android.app.Dialog;
 import android.content.ContentResolver;
@@ -78,6 +85,9 @@ import java.util.concurrent.TimeoutException;
 
 public final class SettingsActivity extends Activity {
     private static final String TAG = "HyperOS3FocusRestore";
+    private static final long SECTION_ANIM_MS = 220L;
+    private LinearLayout sectionTransitionRoot;
+    private boolean sectionAnimating;
     // Deprecated aliases retained for the existing Hook source/API surface.
     static final String PREFS_NAME = FocusRestoreSettings.PREFS_NAME;
     static final String KEY_LIMIT_WIDTH = FocusRestoreSettings.KEY_LIMIT_WIDTH;
@@ -304,6 +314,8 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onPause() {
         backupUiResumed = false;
+        if (sectionTransitionRoot != null) TransitionManager.endTransitions(sectionTransitionRoot);
+        sectionAnimating = false;
         if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
         super.onPause();
     }
@@ -507,6 +519,10 @@ public final class SettingsActivity extends Activity {
 
     private void clearPageControls() {
         defaultActionRefreshers.clear();
+        // 挂起过渡也可能尚未触发结束回调，切页/导入/销毁统一释放页面闸门。
+        if (sectionTransitionRoot != null) TransitionManager.endTransitions(sectionTransitionRoot);
+        sectionTransitionRoot = null;
+        sectionAnimating = false;
         // 切页前捕获输入，随后解除旧监听和引用；导入时不能再次捕获旧 EditText。
         for (Runnable cleanup : pageListenerCleanup) cleanup.run();
         pageListenerCleanup.clear();
@@ -611,6 +627,9 @@ public final class SettingsActivity extends Activity {
         return header;
     }
 
+    // Android framework（AOSP，Apache-2.0）公共接口，独立组合调用，未复制实现：
+    // https://developer.android.com/reference/android/transition/TransitionManager
+    // beginDelayedTransition/ChangeBounds 为 API 19，endTransitions 为 API 23；本项目最低 API 27。
     private void addCollapsibleSection(LinearLayout root, String title, LinearLayout content) {
         LinearLayout card = panel();
         card.setPadding(dp(16), dp(4), dp(16), dp(4));
@@ -626,6 +645,8 @@ public final class SettingsActivity extends Activity {
         header.addView(arrow, new LinearLayout.LayoutParams(dp(32), dp(40)));
         content.setBackground(null);
         content.setPadding(0, dp(8), 0, dp(12));
+        // API 27 下限可直接使用 framework transition；初次构建仍直接同步状态。
+        card.setClipChildren(true);
         Runnable refresh = () -> {
             boolean expanded = expandedSections.contains(title);
             content.setVisibility(expanded ? View.VISIBLE : View.GONE);
@@ -633,8 +654,47 @@ public final class SettingsActivity extends Activity {
             header.setContentDescription(title + (expanded ? "，已展开，点击收起" : "，已收起，点击展开"));
         };
         header.setOnClickListener(view -> {
+            if (sectionAnimating) return;
             if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
-            if (!expandedSections.remove(title)) expandedSections.add(title);
+            boolean expanded = !expandedSections.remove(title);
+            if (expanded) expandedSections.add(title);
+            arrow.animate().cancel();
+            if (!root.isLaidOut() || !root.isAttachedToWindow() || !ValueAnimator.areAnimatorsEnabled()) {
+                refresh.run();
+                return;
+            }
+            Interpolator interpolator = AnimationUtils.loadInterpolator(this,
+                    android.R.interpolator.fast_out_slow_in);
+            ChangeBounds bounds = new ChangeBounds();
+            bounds.setDuration(SECTION_ANIM_MS);
+            bounds.setInterpolator(interpolator);
+            // 同级卡片一起移动；只捕获页面直接子项，避免扫描 Spinner 等内部控件。
+            for (int index = 0; index < root.getChildCount(); index++) {
+                bounds.addTarget(root.getChildAt(index));
+            }
+            bounds.addListener(new TransitionListenerAdapter() {
+                @Override
+                public void onTransitionEnd(Transition transition) {
+                    sectionAnimating = false;
+                    transition.removeListener(this);
+                }
+
+                @Override
+                public void onTransitionCancel(Transition transition) {
+                    sectionAnimating = false;
+                }
+            });
+            sectionTransitionRoot = root;
+            // 下一帧捕获结束布局前也拦截连点，避免多个区块争用同一布局过渡。
+            sectionAnimating = true;
+            TransitionManager.beginDelayedTransition(root, bounds);
+            content.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            arrow.animate().rotation(expanded ? 180f : 0f).setDuration(SECTION_ANIM_MS)
+                    .setInterpolator(interpolator).start();
+            header.setContentDescription(title + (expanded ? "，已展开，点击收起" : "，已收起，点击展开"));
+        });
+        pageListenerCleanup.add(() -> {
+            arrow.animate().cancel();
             refresh.run();
         });
         card.addView(header, matchWrap(0));
