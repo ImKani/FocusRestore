@@ -232,7 +232,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             hideDisplayCutoutPainting();
             hideStrongToastMask();
             hookDeviceNotificationConversion();
-            hookStatusBarTreeDump();
+            if (BuildConfig.DEBUG) hookStatusBarTreeDump();
         }
         log("loading in " + lpparam.packageName + "/" + lpparam.processName
                 + " awaiting persisted hook mode; default=OS"
@@ -2433,6 +2433,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
         suppressStrongToastShow(toast, "showCustomStrongToast");
         suppressStrongToastShow(toast, "showStrongToast");
+        if (!BuildConfig.DEBUG) return;
         XposedBridge.hookAllMethods(toast, "onAttachedToWindow", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
@@ -3003,6 +3004,23 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private void applyOS3IconSize(Object prompt) {
         try {
+            // 原生mContent为mIcon后的兄弟容器，已核实marginStart引用focused_notif_content_start。
+            // 只改容器外侧间距，不扫描或修改通知RemoteViews内部的图标/文字布局。
+            Object content = getField(prompt, "mContent");
+            if (content instanceof View) {
+                View view = (View) content;
+                ViewGroup.LayoutParams raw = view.getLayoutParams();
+                if (raw instanceof ViewGroup.MarginLayoutParams) {
+                    ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) raw;
+                    int gap = FocusSystemDimensions.iconTextGapPx(view.getContext(),
+                            currentSettings.focusIconTextGapDp, FocusRestoreSettings.HOOK_MODE_OS3);
+                    if (margins.getMarginStart() != gap) {
+                        margins.setMarginStart(gap);
+                        view.setLayoutParams(margins);
+                        XposedHelpers.callMethod(prompt, "setNeedUpdateRect", true);
+                    }
+                }
+            }
             Object image = getField(prompt, "mIcon");
             if (!(image instanceof View)) return;
             View icon = (View) image;
@@ -3234,6 +3252,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private static boolean sameFocusAppearance(HookSettings first, HookSettings second) {
         return first.focusIconSizeDp == second.focusIconSizeDp
+                && first.focusIconTextGapDp == second.focusIconTextGapDp
                 && first.showFocusDivider == second.showFocusDivider
                 && first.focusDividerStartDp == second.focusDividerStartDp
                 && first.focusDividerEndDp == second.focusDividerEndDp
@@ -3368,6 +3387,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) icon.getLayoutParams();
                     decoration += margins.leftMargin + margins.rightMargin;
                 }
+            }
+            if (content.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) content.getLayoutParams();
+                // 起止值在RTL和尚未完成新一轮layout时也反映刚应用的图文间距。
+                decoration += margins.getMarginStart() + margins.getMarginEnd();
             }
             int width = Math.max(original.minimumWidth, focusTouchWidthPx(prompt) - decoration);
             if (content.getMinimumWidth() != width) content.setMinimumWidth(width);

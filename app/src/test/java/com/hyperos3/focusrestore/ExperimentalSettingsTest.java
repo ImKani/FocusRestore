@@ -33,7 +33,7 @@ public class ExperimentalSettingsTest {
         assertTrue(defaults.islandCompat);
         assertTrue(defaults.limitWidth);
         assertTrue(defaults.independentFocusBanner);
-        assertEquals(8, defaults.focusIconSizeDp);
+        assertEquals(0, defaults.focusIconSizeDp);
         assertFalse(defaults.customTouchWidth);
         assertEquals(defaults.widthDp, defaults.touchWidthDp);
         assertEquals(defaults.widthLandscapeDp, defaults.touchWidthLandscapeDp);
@@ -41,7 +41,7 @@ public class ExperimentalSettingsTest {
 
         FocusRestoreSettings previous = FocusRestoreSettings.edit().widthLandscapeDp(160)
                 .touchWidthLandscapeDp(160).islandCompat(false).limitWidth(false)
-                .independentFocusBanner(false).focusIconSizeDp(0).hookMode(4).build();
+                .independentFocusBanner(false).focusIconSizeDp(8).hookMode(4).build();
         SharedPreferences store = memoryPreferences(new HashMap<>());
         assertTrue(previous.save(store));
         for (FocusRestoreSettings restored : new FocusRestoreSettings[]{
@@ -52,7 +52,7 @@ public class ExperimentalSettingsTest {
             assertFalse(restored.islandCompat);
             assertFalse(restored.limitWidth);
             assertFalse(restored.independentFocusBanner);
-            assertEquals(0, restored.focusIconSizeDp);
+            assertEquals(8, restored.focusIconSizeDp);
             assertEquals(4, restored.hookMode);
         }
         Map<String, Object> portraitOnly = new HashMap<>();
@@ -224,7 +224,7 @@ public class ExperimentalSettingsTest {
         // 先保存自定义再恢复自动，防止关闭或归零后只更新 UI 而存储仍残留旧值。
         for (boolean custom : new boolean[]{true, false}) {
             FocusRestoreSettings settings = FocusRestoreSettings.edit().hookMode(3).showFocusDivider(false)
-                    .focusIconSizeDp(custom ? 8 : 0).focusDividerStartDp(custom ? -1 : -25)
+                    .focusIconSizeDp(custom ? 8 : 0).focusIconTextGapDp(custom ? 24 : -1).focusDividerStartDp(custom ? -1 : -25)
                     .focusDividerEndDp(custom ? 24 : -25).focusDividerWidthDp(custom ? 4 : 0)
                     .focusDividerStyle(custom ? 2 : 0).build();
             for (SharedPreferences store : new SharedPreferences[]{first, second}) {
@@ -234,6 +234,8 @@ public class ExperimentalSettingsTest {
                         FocusRestoreSettings.edit(loaded).build(), SettingsBackupCodec.decode(SettingsBackupCodec.encode(loaded))}) {
                     HookSettings hook = HookSettings.fromCursor(SettingsContractTest.namedCursor(SettingsContract.COLUMNS, SettingsContract.toRow(copy, "")));
                     assertEquals(settings.focusIconSizeDp, copy.focusIconSizeDp);
+                    assertEquals(settings.focusIconTextGapDp, copy.focusIconTextGapDp);
+                    assertEquals(settings.focusIconTextGapDp, hook.focusIconTextGapDp);
                     assertEquals(settings.focusDividerStartDp, copy.focusDividerStartDp);
                     assertEquals(settings.focusDividerEndDp, copy.focusDividerEndDp);
                     assertEquals(settings.focusDividerWidthDp, copy.focusDividerWidthDp);
@@ -251,11 +253,38 @@ public class ExperimentalSettingsTest {
             }
         }
         FocusRestoreSettings legacy = FocusRestoreSettings.fromPreferences(memoryPreferences(legacyPreferences()));
-        assertEquals(8, legacy.focusIconSizeDp);
+        assertEquals(0, legacy.focusIconSizeDp);
         assertEquals(-25, legacy.focusDividerStartDp);
         assertEquals(-25, legacy.focusDividerEndDp);
         assertEquals(0, legacy.focusDividerWidthDp);
         assertEquals(0, legacy.focusDividerStyle);
+    }
+
+    @Test
+    public void iconTextGapAllValuesRoundTripWithoutChangingIconSizeOrDivider() throws Exception {
+        SharedPreferences first = memoryPreferences(new HashMap<>());
+        SharedPreferences second = memoryPreferences(new HashMap<>());
+        assertEquals(-1, FocusRestoreSettings.defaults().focusIconTextGapDp);
+        assertEquals(-1, HookSettings.defaults().focusIconTextGapDp);
+        for (int gap = -1; gap <= 24; gap++) {
+            FocusRestoreSettings chosen = FocusRestoreSettings.edit().focusIconSizeDp(8)
+                    .focusIconTextGapDp(gap).focusDividerEndDp(12).build();
+            for (SharedPreferences store : new SharedPreferences[]{first, second}) {
+                assertTrue(chosen.save(store));
+                assertEquals(gap, store.getInt(FocusRestoreSettings.KEY_FOCUS_ICON_TEXT_GAP_DP, -99));
+                for (FocusRestoreSettings copy : new FocusRestoreSettings[]{FocusRestoreSettings.fromPreferences(store),
+                        FocusRestoreSettings.edit(chosen).build(), SettingsBackupCodec.decode(SettingsBackupCodec.encode(chosen))}) {
+                    assertEquals(gap, copy.focusIconTextGapDp);
+                    assertEquals(8, copy.focusIconSizeDp);
+                    assertEquals(12, copy.focusDividerEndDp);
+                    assertEquals(gap, HookSettings.fromSettings(copy).focusIconTextGapDp);
+                    assertEquals(gap, HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                            SettingsContract.COLUMNS, SettingsContract.toRow(copy, ""))).focusIconTextGapDp);
+                }
+            }
+        }
+        assertEquals(-1, FocusRestoreSettings.normalizeFocusIconTextGapDp(Integer.MIN_VALUE));
+        assertEquals(24, FocusRestoreSettings.normalizeFocusIconTextGapDp(Integer.MAX_VALUE));
     }
 
     @Test
@@ -279,7 +308,7 @@ public class ExperimentalSettingsTest {
         }
         assertEquals(24, FocusRestoreSettings.focusDividerSpacingToProgress(-1));
         assertEquals(25, FocusRestoreSettings.focusDividerSpacingToProgress(0));
-        for (int invalid : new int[]{Integer.MIN_VALUE, -1}) assertEquals(8, FocusRestoreSettings.normalizeFocusIconSizeDp(invalid));
+        for (int invalid : new int[]{Integer.MIN_VALUE, -1}) assertEquals(0, FocusRestoreSettings.normalizeFocusIconSizeDp(invalid));
         assertEquals(32, FocusRestoreSettings.normalizeFocusIconSizeDp(Integer.MAX_VALUE));
         FocusRestoreSettings bounded = FocusRestoreSettings.edit().focusDividerStartDp(-26).focusDividerEndDp(25)
                 .focusDividerWidthDp(5).focusDividerStyle(4).build();

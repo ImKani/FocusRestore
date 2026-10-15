@@ -11,11 +11,18 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /** Centralized persisted settings and compatibility defaults. */
 public final class FocusRestoreSettings {
+    private static final String LOG_TAG = "HyperOS3FocusRestore";
+    private static final Object PREFERENCE_DIAGNOSTIC_LOCK = new Object();
+    /** 每个字段只记录首次类型异常，避免刷新/Provider轮询反复刷日志。 */
+    private static final Set<String> DIAGNOSED_PREFERENCE_KEYS = new HashSet<>();
+
     public static final String PREFS_NAME = "com.hyperos3.focusrestore_preferences";
 
     public static final String KEY_LIMIT_WIDTH = "limit_text_width";
@@ -46,6 +53,7 @@ public final class FocusRestoreSettings {
     public static final String KEY_HOOK_MODE = "hook_mode";
     public static final String KEY_HIDE_NOTIFICATION_ICONS = "hide_notification_icons";
     public static final String KEY_FOCUS_ICON_SIZE_DP = "focus_icon_size_dp";
+    public static final String KEY_FOCUS_ICON_TEXT_GAP_DP = "focus_icon_text_gap_dp";
     public static final String KEY_FOCUS_DIVIDER_START_DP = "focus_divider_start_dp";
     public static final String KEY_FOCUS_DIVIDER_END_DP = "focus_divider_end_dp";
     public static final String KEY_FOCUS_DIVIDER_START_OFFSET_DP = "focus_divider_start_offset_dp";
@@ -99,7 +107,10 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_DISABLE_ISLAND_FEATURE_CACHE = true;
     public static final boolean DEFAULT_ALLOW_FOCUS_CLICK = false;
     public static final boolean DEFAULT_HIDE_NOTIFICATION_ICONS = true;
-    public static final int DEFAULT_FOCUS_ICON_SIZE_DP = 8;
+    public static final int DEFAULT_FOCUS_ICON_SIZE_DP = 0;
+    /** -1 follows the system; non-negative values set the icon-to-text gap in dp. */
+    public static final int DEFAULT_FOCUS_ICON_TEXT_GAP_DP = -1;
+    public static final int MAX_FOCUS_ICON_TEXT_GAP_DP = 24;
     public static final int AUTO_FOCUS_DIVIDER_SPACING_DP = -25;
     public static final int DEFAULT_FOCUS_DIVIDER_START_DP = AUTO_FOCUS_DIVIDER_SPACING_DP;
     public static final int DEFAULT_FOCUS_DIVIDER_END_DP = AUTO_FOCUS_DIVIDER_SPACING_DP;
@@ -153,6 +164,7 @@ public final class FocusRestoreSettings {
     public final boolean hideNotificationIcons;
     public final boolean showFocusDivider;
     public final int focusIconSizeDp;
+    public final int focusIconTextGapDp;
     public final int focusDividerStartDp;
     public final int focusDividerEndDp;
     public final int focusDividerWidthDp;
@@ -200,6 +212,7 @@ public final class FocusRestoreSettings {
         this.hideNotificationIcons = editor.hideNotificationIcons;
         this.showFocusDivider = editor.showFocusDivider;
         this.focusIconSizeDp = normalizeFocusIconSizeDp(editor.focusIconSizeDp);
+        this.focusIconTextGapDp = normalizeFocusIconTextGapDp(editor.focusIconTextGapDp);
         this.focusDividerStartDp = normalizeFocusDividerSpacingDp(editor.focusDividerStartDp);
         this.focusDividerEndDp = normalizeFocusDividerSpacingDp(editor.focusDividerEndDp);
         this.focusDividerWidthDp = normalizeFocusDividerWidthDp(editor.focusDividerWidthDp);
@@ -257,6 +270,7 @@ public final class FocusRestoreSettings {
         private boolean hideNotificationIcons = DEFAULT_HIDE_NOTIFICATION_ICONS;
         private boolean showFocusDivider = DEFAULT_SHOW_FOCUS_DIVIDER;
         private int focusIconSizeDp = DEFAULT_FOCUS_ICON_SIZE_DP;
+        private int focusIconTextGapDp = DEFAULT_FOCUS_ICON_TEXT_GAP_DP;
         private int focusDividerStartDp = DEFAULT_FOCUS_DIVIDER_START_DP;
         private int focusDividerEndDp = DEFAULT_FOCUS_DIVIDER_END_DP;
         private int focusDividerWidthDp = DEFAULT_FOCUS_DIVIDER_WIDTH_DP;
@@ -305,6 +319,7 @@ public final class FocusRestoreSettings {
             this.hideNotificationIcons = source.hideNotificationIcons;
             this.showFocusDivider = source.showFocusDivider;
             this.focusIconSizeDp = source.focusIconSizeDp;
+            this.focusIconTextGapDp = source.focusIconTextGapDp;
             this.focusDividerStartDp = source.focusDividerStartDp;
             this.focusDividerEndDp = source.focusDividerEndDp;
             this.focusDividerWidthDp = source.focusDividerWidthDp;
@@ -355,6 +370,7 @@ public final class FocusRestoreSettings {
             this.hideNotificationIcons = value; return this;
         }
         public Editor focusIconSizeDp(int value) { this.focusIconSizeDp = value; return this; }
+        public Editor focusIconTextGapDp(int value) { this.focusIconTextGapDp = value; return this; }
         public Editor focusDividerStartDp(int value) { this.focusDividerStartDp = value; return this; }
         public Editor focusDividerEndDp(int value) { this.focusDividerEndDp = value; return this; }
         public Editor focusDividerWidthDp(int value) { this.focusDividerWidthDp = value; return this; }
@@ -423,91 +439,259 @@ public final class FocusRestoreSettings {
     }
 
     static boolean hasHookSettings(SharedPreferences preferences) {
-        return preferences.getBoolean(KEY_HOOK_SETTINGS_READY, false);
+        return new PreferenceReader(preferences).getBoolean(
+                KEY_HOOK_SETTINGS_READY, false);
     }
 
     static long generation(SharedPreferences preferences) {
-        return Math.max(0L, preferences.getLong(KEY_SETTINGS_GENERATION, 0L));
+        return Math.max(0L, new PreferenceReader(preferences).getLong(
+                KEY_SETTINGS_GENERATION, 0L));
+    }
+
+    /** Provider仍需输出历史占位列，不能把general字段误当作独立legacy值。 */
+    static String readLegacyIslandSeparator(SharedPreferences preferences) {
+        return new PreferenceReader(preferences).getString(
+                KEY_ISLAND_SEPARATOR, DEFAULT_ISLAND_SEPARATOR);
+    }
+
+    private static final class PreferenceReader {
+        private final Map<String, ?> values;
+
+        PreferenceReader(SharedPreferences preferences) {
+            if (preferences == null) throw new IllegalArgumentException("preferences unavailable");
+            Map<String, ?> snapshot;
+            try {
+                snapshot = preferences.getAll();
+            } catch (RuntimeException failure) {
+                diagnosePreferenceFallback("<snapshot>", "readable preference map",
+                        failure.getClass().getName());
+                // 整个存储不可读不等于未配置；上层应保留缓存/拒绝初始化，不能写入一整套默认值。
+                throw failure;
+            }
+            if (snapshot == null) throw new IllegalStateException("preference snapshot unavailable");
+            values = snapshot;
+        }
+
+        boolean contains(String key) {
+            return values.containsKey(key);
+        }
+
+        boolean getBoolean(String key, boolean fallback) {
+            if (!contains(key)) return fallback;
+            Object raw = values.get(key);
+            if (raw instanceof Boolean) return (Boolean) raw;
+            diagnosePreferenceFallback(key, "Boolean", actualType(raw));
+            return fallback;
+        }
+
+        int getInt(String key, int fallback) {
+            Integer value = getInteger(key);
+            return value == null ? fallback : value;
+        }
+
+        Integer getInteger(String key) {
+            if (!contains(key)) return null;
+            Object raw = values.get(key);
+            if (raw instanceof Integer) return (Integer) raw;
+            diagnosePreferenceFallback(key, "Integer", actualType(raw));
+            return null;
+        }
+
+        long getLong(String key, long fallback) {
+            if (!contains(key)) return fallback;
+            Object raw = values.get(key);
+            if (raw instanceof Long) return (Long) raw;
+            diagnosePreferenceFallback(key, "Long", actualType(raw));
+            return fallback;
+        }
+
+        String getString(String key, String fallback) {
+            if (!contains(key)) return fallback;
+            Object raw = values.get(key);
+            if (raw instanceof String) return (String) raw;
+            diagnosePreferenceFallback(key, "String", actualType(raw));
+            return fallback;
+        }
+
+        Set<String> getStringSet(String key, Set<String> fallback) {
+            if (!contains(key)) return fallback;
+            Object raw = values.get(key);
+            if (!(raw instanceof Set)) {
+                diagnosePreferenceFallback(key, "Set<String>", actualType(raw));
+                return fallback;
+            }
+            Set<String> copy = new HashSet<>();
+            for (Object item : (Set<?>) raw) {
+                if (item != null && !(item instanceof String)) {
+                    diagnosePreferenceFallback(key, "Set<String>",
+                            "Set item " + actualType(item));
+                    return fallback;
+                }
+                copy.add((String) item);
+            }
+            return copy;
+        }
+
+        float readLongPressSeconds() {
+            Object raw = values.get(KEY_LONG_PRESS_SECONDS);
+            if (raw instanceof Number) {
+                return normalizeLongPressSeconds(((Number) raw).floatValue());
+            }
+            if (raw instanceof String) {
+                try {
+                    return normalizeLongPressSeconds(Float.parseFloat(((String) raw).trim()));
+                } catch (NumberFormatException invalid) {
+                    diagnosePreferenceFallback(KEY_LONG_PRESS_SECONDS,
+                            "Number or numeric String", "invalid String");
+                    return DEFAULT_LONG_PRESS_SECONDS;
+                }
+            }
+            if (contains(KEY_LONG_PRESS_SECONDS)) {
+                diagnosePreferenceFallback(KEY_LONG_PRESS_SECONDS,
+                        "Number or numeric String", actualType(raw));
+            }
+            return DEFAULT_LONG_PRESS_SECONDS;
+        }
+
+        float readMaxDisplaySeconds() {
+            Object raw = values.get(KEY_FOCUS_MAX_DISPLAY_SECONDS);
+            if (raw instanceof Number) {
+                return normalizeMaxDisplaySeconds(((Number) raw).floatValue());
+            }
+            if (raw instanceof String) {
+                String text = (String) raw;
+                if (text.trim().length() == 0) return DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
+                try {
+                    Float.parseFloat(text.trim());
+                } catch (NumberFormatException invalid) {
+                    diagnosePreferenceFallback(KEY_FOCUS_MAX_DISPLAY_SECONDS,
+                            "Number or numeric String", "invalid String");
+                    return DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
+                }
+                return parseMaxDisplaySeconds(text, DEFAULT_FOCUS_MAX_DISPLAY_SECONDS);
+            }
+            if (contains(KEY_FOCUS_MAX_DISPLAY_SECONDS)) {
+                diagnosePreferenceFallback(KEY_FOCUS_MAX_DISPLAY_SECONDS,
+                        "Number or numeric String", actualType(raw));
+            }
+            return DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
+        }
+    }
+
+    private static String actualType(Object value) {
+        return value == null ? "null" : value.getClass().getName();
+    }
+
+    private static void diagnosePreferenceFallback(String key, String expected, String actual) {
+        synchronized (PREFERENCE_DIAGNOSTIC_LOCK) {
+            if (!DIAGNOSED_PREFERENCE_KEYS.add(key)) return;
+        }
+        try {
+            android.util.Log.w(LOG_TAG, "settings preference read fallback key=" + key
+                    + " expected=" + expected + " actual=" + actual
+                    + " using field fallback");
+        } catch (RuntimeException loggerUnavailable) {
+            // Android's local JVM stubs may not implement Log; reading must still return its default.
+        }
     }
 
     public static FocusRestoreSettings fromPreferences(SharedPreferences preferences) {
-        String legacy = preferences.getString(KEY_ISLAND_SEPARATOR, DEFAULT_ISLAND_SEPARATOR);
-        int legacyStart = preferences.getInt(KEY_FOCUS_DIVIDER_START_DP, -1);
-        int legacyEnd = preferences.getInt(KEY_FOCUS_DIVIDER_END_DP, -1);
-        int startOffset = preferences.contains(KEY_FOCUS_DIVIDER_START_OFFSET_DP)
-                ? preferences.getInt(KEY_FOCUS_DIVIDER_START_OFFSET_DP, DEFAULT_FOCUS_DIVIDER_START_DP)
+        PreferenceReader values = new PreferenceReader(preferences);
+        String legacy = values.getString(KEY_ISLAND_SEPARATOR, DEFAULT_ISLAND_SEPARATOR);
+        Integer storedWidthDp = values.getInteger(KEY_WIDTH_DP);
+        int widthDp = storedWidthDp == null ? DEFAULT_WIDTH_DP : storedWidthDp;
+        int landscapeFallback = storedWidthDp == null
+                ? DEFAULT_WIDTH_LANDSCAPE_DP : storedWidthDp;
+        int legacyStart = values.getInt(KEY_FOCUS_DIVIDER_START_DP, -1);
+        int legacyEnd = values.getInt(KEY_FOCUS_DIVIDER_END_DP, -1);
+        int startOffset = values.contains(KEY_FOCUS_DIVIDER_START_OFFSET_DP)
+                ? values.getInt(KEY_FOCUS_DIVIDER_START_OFFSET_DP, DEFAULT_FOCUS_DIVIDER_START_DP)
                 : migrateLegacyDividerSpacing(legacyStart);
-        int endOffset = preferences.contains(KEY_FOCUS_DIVIDER_END_OFFSET_DP)
-                ? preferences.getInt(KEY_FOCUS_DIVIDER_END_OFFSET_DP, DEFAULT_FOCUS_DIVIDER_END_DP)
+        int endOffset = values.contains(KEY_FOCUS_DIVIDER_END_OFFSET_DP)
+                ? values.getInt(KEY_FOCUS_DIVIDER_END_OFFSET_DP, DEFAULT_FOCUS_DIVIDER_END_DP)
                 : migrateLegacyDividerSpacing(legacyEnd);
+        boolean showIslandIcon = values.getBoolean(KEY_SHOW_ISLAND_ICON,
+                DEFAULT_SHOW_ISLAND_ICON);
+        boolean useSmallIconFallback = values.getBoolean(KEY_USE_SMALL_ICON_FALLBACK,
+                DEFAULT_USE_SMALL_ICON_FALLBACK);
+        int iconPriority = values.contains(KEY_FOCUS_ICON_PRIORITY)
+                ? values.getInt(KEY_FOCUS_ICON_PRIORITY,
+                        legacyIconPriority(useSmallIconFallback, showIslandIcon))
+                : legacyIconPriority(useSmallIconFallback, showIslandIcon);
         return edit()
-                .hookMode(preferences.getInt(KEY_HOOK_MODE, DEFAULT_HOOK_MODE))
-                .limitWidth(preferences.getBoolean(KEY_LIMIT_WIDTH, DEFAULT_LIMIT_WIDTH))
-                .widthDp(preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_DP))
-                .widthLandscapeDp(preferences.getInt(KEY_WIDTH_LANDSCAPE_DP,
-                        preferences.getInt(KEY_WIDTH_DP, DEFAULT_WIDTH_LANDSCAPE_DP)))
-                .specialBannerNormalBackground(preferences.getBoolean(KEY_SPECIAL_BANNER_NORMAL_BACKGROUND,
+                .hookMode(values.getInt(KEY_HOOK_MODE, DEFAULT_HOOK_MODE))
+                .limitWidth(values.getBoolean(KEY_LIMIT_WIDTH, DEFAULT_LIMIT_WIDTH))
+                .widthDp(widthDp)
+                .widthLandscapeDp(values.getInt(KEY_WIDTH_LANDSCAPE_DP, landscapeFallback))
+                .specialBannerNormalBackground(values.getBoolean(
+                        KEY_SPECIAL_BANNER_NORMAL_BACKGROUND,
                         DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND))
-                .mediaFocusEnabled(preferences.getBoolean(KEY_MEDIA_FOCUS_ENABLED,
+                .mediaFocusEnabled(values.getBoolean(KEY_MEDIA_FOCUS_ENABLED,
                         DEFAULT_MEDIA_FOCUS_ENABLED))
-                .mediaFocusNativeBanner(preferences.getBoolean(KEY_MEDIA_FOCUS_NATIVE_BANNER,
+                .mediaFocusNativeBanner(values.getBoolean(KEY_MEDIA_FOCUS_NATIVE_BANNER,
                         DEFAULT_MEDIA_FOCUS_NATIVE_BANNER))
-                .mediaFocusCastPicker(normalizeCastPicker(preferences.getInt(
+                .mediaFocusCastPicker(normalizeCastPicker(values.getInt(
                         KEY_MEDIA_FOCUS_CAST_PICKER, DEFAULT_MEDIA_FOCUS_CAST_PICKER)))
-                .mediaFocusCastDirect(preferences.getBoolean(KEY_MEDIA_FOCUS_CAST_DIRECT,
+                .mediaFocusCastDirect(values.getBoolean(KEY_MEDIA_FOCUS_CAST_DIRECT,
                         DEFAULT_MEDIA_FOCUS_CAST_DIRECT))
-                .marqueeDelayMs(preferences.getInt(KEY_MARQUEE_DELAY_MS, DEFAULT_MARQUEE_DELAY_MS))
-                .compatRetry(preferences.getBoolean(KEY_COMPAT_RETRY, DEFAULT_COMPAT_RETRY))
-                .marqueeBounce(preferences.getBoolean(KEY_MARQUEE_BOUNCE, DEFAULT_MARQUEE_BOUNCE))
-                .islandCompat(preferences.getBoolean(KEY_ISLAND_COMPAT, DEFAULT_ISLAND_COMPAT))
-                .disableIslandProperty(preferences.getBoolean(KEY_DISABLE_ISLAND_PROPERTY,
+                .marqueeDelayMs(values.getInt(KEY_MARQUEE_DELAY_MS, DEFAULT_MARQUEE_DELAY_MS))
+                .compatRetry(values.getBoolean(KEY_COMPAT_RETRY, DEFAULT_COMPAT_RETRY))
+                .marqueeBounce(values.getBoolean(KEY_MARQUEE_BOUNCE, DEFAULT_MARQUEE_BOUNCE))
+                .islandCompat(values.getBoolean(KEY_ISLAND_COMPAT, DEFAULT_ISLAND_COMPAT))
+                .disableIslandProperty(values.getBoolean(KEY_DISABLE_ISLAND_PROPERTY,
                         DEFAULT_DISABLE_ISLAND_PROPERTY))
-                .disableIslandFeatureCache(preferences.getBoolean(KEY_DISABLE_ISLAND_FEATURE_CACHE,
+                .disableIslandFeatureCache(values.getBoolean(KEY_DISABLE_ISLAND_FEATURE_CACHE,
                         DEFAULT_DISABLE_ISLAND_FEATURE_CACHE))
-                .allowFocusClick(preferences.getBoolean(KEY_ALLOW_FOCUS_CLICK,
+                .allowFocusClick(values.getBoolean(KEY_ALLOW_FOCUS_CLICK,
                         DEFAULT_ALLOW_FOCUS_CLICK))
-                .hideNotificationIcons(preferences.getBoolean(KEY_HIDE_NOTIFICATION_ICONS,
+                .hideNotificationIcons(values.getBoolean(KEY_HIDE_NOTIFICATION_ICONS,
                         DEFAULT_HIDE_NOTIFICATION_ICONS))
-                .focusIconSizeDp(preferences.getInt(KEY_FOCUS_ICON_SIZE_DP, DEFAULT_FOCUS_ICON_SIZE_DP))
+                .focusIconSizeDp(values.getInt(KEY_FOCUS_ICON_SIZE_DP,
+                        DEFAULT_FOCUS_ICON_SIZE_DP))
+                .focusIconTextGapDp(values.getInt(KEY_FOCUS_ICON_TEXT_GAP_DP,
+                        DEFAULT_FOCUS_ICON_TEXT_GAP_DP))
                 .focusDividerStartDp(startOffset)
                 .focusDividerEndDp(endOffset)
-                .focusDividerWidthDp(preferences.getInt(KEY_FOCUS_DIVIDER_WIDTH_DP, DEFAULT_FOCUS_DIVIDER_WIDTH_DP))
-                .focusDividerStyle(preferences.getInt(KEY_FOCUS_DIVIDER_STYLE, DEFAULT_FOCUS_DIVIDER_STYLE))
-                .showFocusDivider(preferences.getBoolean(KEY_SHOW_FOCUS_DIVIDER,
+                .focusDividerWidthDp(values.getInt(KEY_FOCUS_DIVIDER_WIDTH_DP,
+                        DEFAULT_FOCUS_DIVIDER_WIDTH_DP))
+                .focusDividerStyle(values.getInt(KEY_FOCUS_DIVIDER_STYLE,
+                        DEFAULT_FOCUS_DIVIDER_STYLE))
+                .showFocusDivider(values.getBoolean(KEY_SHOW_FOCUS_DIVIDER,
                         DEFAULT_SHOW_FOCUS_DIVIDER))
-                .showIslandIcon(preferences.getBoolean(KEY_SHOW_ISLAND_ICON,
-                        DEFAULT_SHOW_ISLAND_ICON))
-                .tintIslandIcon(preferences.getBoolean(KEY_TINT_ISLAND_ICON,
+                .showIslandIcon(showIslandIcon)
+                .tintIslandIcon(values.getBoolean(KEY_TINT_ISLAND_ICON,
                         DEFAULT_TINT_ISLAND_ICON))
-                .useSmallIconFallback(preferences.getBoolean(KEY_USE_SMALL_ICON_FALLBACK,
-                        DEFAULT_USE_SMALL_ICON_FALLBACK))
-                .focusIconPriority(preferences.getInt(KEY_FOCUS_ICON_PRIORITY,
-                        legacyIconPriority(preferences.getBoolean(KEY_USE_SMALL_ICON_FALLBACK, false),
-                                preferences.getBoolean(KEY_SHOW_ISLAND_ICON, false))))
-                .tintDeviceIcon(preferences.getBoolean(KEY_TINT_DEVICE_ICON, DEFAULT_TINT_DEVICE_ICON))
-                .notificationRowClickFallback(preferences.getBoolean(
+                .useSmallIconFallback(useSmallIconFallback)
+                .focusIconPriority(iconPriority)
+                .tintDeviceIcon(values.getBoolean(KEY_TINT_DEVICE_ICON,
+                        DEFAULT_TINT_DEVICE_ICON))
+                .notificationRowClickFallback(values.getBoolean(
                         KEY_NOTIFICATION_ROW_CLICK_FALLBACK,
                         DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK))
-                .independentFocusBanner(preferences.getBoolean(KEY_INDEPENDENT_FOCUS_BANNER,
+                .independentFocusBanner(values.getBoolean(KEY_INDEPENDENT_FOCUS_BANNER,
                         DEFAULT_INDEPENDENT_FOCUS_BANNER))
                 // 旧配置没有长按字段时保持关闭，不从短按或旧点击开关推导。
-                .longPressNotificationRowClick(preferences.getBoolean(
-                        KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK, DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK))
-                .longPressSeconds(readLongPressSeconds(preferences))
-                .focusSwipeEnabled(preferences.getBoolean(KEY_FOCUS_SWIPE_ENABLED, DEFAULT_FOCUS_SWIPE_ENABLED))
+                .longPressNotificationRowClick(values.getBoolean(
+                        KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK,
+                        DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK))
+                .longPressSeconds(values.readLongPressSeconds())
+                .focusSwipeEnabled(values.getBoolean(KEY_FOCUS_SWIPE_ENABLED,
+                        DEFAULT_FOCUS_SWIPE_ENABLED))
                 // 旧配置未存储独立触控设置，保持实际显示区域模式，不继承显示宽度。
-                .customTouchWidth(preferences.getBoolean(KEY_CUSTOM_TOUCH_WIDTH, DEFAULT_CUSTOM_TOUCH_WIDTH))
-                .touchWidthDp(preferences.getInt(KEY_TOUCH_WIDTH_DP, DEFAULT_TOUCH_WIDTH_DP))
-                .touchWidthLandscapeDp(preferences.getInt(KEY_TOUCH_WIDTH_LANDSCAPE_DP,
+                .customTouchWidth(values.getBoolean(KEY_CUSTOM_TOUCH_WIDTH,
+                        DEFAULT_CUSTOM_TOUCH_WIDTH))
+                .touchWidthDp(values.getInt(KEY_TOUCH_WIDTH_DP, DEFAULT_TOUCH_WIDTH_DP))
+                .touchWidthLandscapeDp(values.getInt(KEY_TOUCH_WIDTH_LANDSCAPE_DP,
                         DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP))
-                .islandTextMode(preferences.getInt(KEY_ISLAND_TEXT_MODE, DEFAULT_ISLAND_TEXT_MODE))
-                .focusMaxDisplaySeconds(readMaxDisplaySeconds(preferences))
-                .islandGeneralSeparator(preferences.getString(KEY_ISLAND_GENERAL_SEPARATOR, legacy))
-                .islandSideSeparator(preferences.getString(KEY_ISLAND_SIDE_SEPARATOR, legacy))
-                .islandForcePackages(preferences.getStringSet(KEY_ISLAND_FORCE_PACKAGES,
+                .islandTextMode(values.getInt(KEY_ISLAND_TEXT_MODE, DEFAULT_ISLAND_TEXT_MODE))
+                .focusMaxDisplaySeconds(values.readMaxDisplaySeconds())
+                .islandGeneralSeparator(values.getString(KEY_ISLAND_GENERAL_SEPARATOR, legacy))
+                .islandSideSeparator(values.getString(KEY_ISLAND_SIDE_SEPARATOR, legacy))
+                .islandForcePackages(values.getStringSet(KEY_ISLAND_FORCE_PACKAGES,
                         Collections.<String>emptySet()))
-                .focusTimeoutExemptPackages(preferences.getStringSet(
-                        KEY_FOCUS_TIMEOUT_EXEMPT_PACKAGES, Collections.<String>emptySet()))
+                .focusTimeoutExemptPackages(values.getStringSet(
+                        KEY_FOCUS_TIMEOUT_EXEMPT_PACKAGES,
+                        Collections.<String>emptySet()))
                 .build();
     }
 
@@ -523,6 +707,7 @@ public final class FocusRestoreSettings {
                 + " hideNotificationIcons=" + hideNotificationIcons
                 + " showFocusDivider=" + showFocusDivider
                 + " focusIconSizeDp=" + focusIconSizeDp
+                + " focusIconTextGapDp=" + focusIconTextGapDp
                 + " focusDividerStartDp=" + focusDividerStartDp
                 + " focusDividerEndDp=" + focusDividerEndDp
                 + " focusDividerWidthDp=" + focusDividerWidthDp
@@ -574,6 +759,7 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_HIDE_NOTIFICATION_ICONS, hideNotificationIcons)
                 .putBoolean(KEY_SHOW_FOCUS_DIVIDER, showFocusDivider)
                 .putInt(KEY_FOCUS_ICON_SIZE_DP, focusIconSizeDp)
+                .putInt(KEY_FOCUS_ICON_TEXT_GAP_DP, focusIconTextGapDp)
                 .putInt(KEY_FOCUS_DIVIDER_START_OFFSET_DP, focusDividerStartDp)
                  .putInt(KEY_FOCUS_DIVIDER_START_DP, legacyDividerSpacing(focusDividerStartDp))
                 .putInt(KEY_FOCUS_DIVIDER_END_OFFSET_DP, focusDividerEndDp)
@@ -609,6 +795,11 @@ public final class FocusRestoreSettings {
     // 0 继续表示跟随 ROM；新增 1～7dp 不改变已保存数值的单位和含义。
     static int normalizeFocusIconSizeDp(int value) {
         return value < 0 ? DEFAULT_FOCUS_ICON_SIZE_DP : Math.min(32, value);
+    }
+
+    static int normalizeFocusIconTextGapDp(int value) {
+        return value < 0 ? DEFAULT_FOCUS_ICON_TEXT_GAP_DP
+                : Math.min(MAX_FOCUS_ICON_TEXT_GAP_DP, value);
     }
 
     static int normalizeFocusDividerSpacingDp(int value) { return clamp(value, AUTO_FOCUS_DIVIDER_SPACING_DP, 24); }
@@ -651,11 +842,8 @@ public final class FocusRestoreSettings {
     }
 
     static float readLongPressSeconds(SharedPreferences preferences) {
-        // 用原始类型读取，兼容手动配置或旧存储中的整数和字符串，且不回写迁移。
-        Object raw = preferences.getAll().get(KEY_LONG_PRESS_SECONDS);
-        if (raw instanceof Number) return normalizeLongPressSeconds(((Number) raw).floatValue());
-        if (raw instanceof String) return parseLongPressSeconds((String) raw);
-        return DEFAULT_LONG_PRESS_SECONDS;
+        // 原始类型读取继续兼容旧整数和手动字符串，不回写迁移。
+        return new PreferenceReader(preferences).readLongPressSeconds();
     }
 
     static int normalizeIslandTextMode(int value) {
@@ -715,12 +903,7 @@ public final class FocusRestoreSettings {
      * build (int) or a hand-edited preference (string) cannot crash the settings screen.
      */
     static float readMaxDisplaySeconds(SharedPreferences preferences) {
-        Object raw = preferences.getAll().get(KEY_FOCUS_MAX_DISPLAY_SECONDS);
-        if (raw instanceof Number) return normalizeMaxDisplaySeconds(((Number) raw).floatValue());
-        if (raw instanceof String) {
-            return parseMaxDisplaySeconds((String) raw, DEFAULT_FOCUS_MAX_DISPLAY_SECONDS);
-        }
-        return DEFAULT_FOCUS_MAX_DISPLAY_SECONDS;
+        return new PreferenceReader(preferences).readMaxDisplaySeconds();
     }
 
     private static Set<String> immutablePackages(Set<String> packages) {

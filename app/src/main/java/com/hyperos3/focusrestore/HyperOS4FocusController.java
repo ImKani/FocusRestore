@@ -962,13 +962,17 @@ final class HyperOS4FocusController {
                     + " widthDp=" + configuredWidthDp + " portraitDp=" + settings.widthDp
                     + " landscapeDp=" + settings.widthLandscapeDp);
             if (settings.showFocusDivider) {
+                float nativeWidthPx = FocusSystemDimensions.dimensionDp(getContext(),
+                        "line_width", 1.3799744f, FocusRestoreSettings.HOOK_MODE_OS4) * density;
                 FocusDividerDrawable decoration = new FocusDividerDrawable(density,
-                        settings.focusDividerStyle, settings.focusDividerWidthDp, currentTint);
+                        settings.focusDividerStyle, settings.focusDividerWidthDp, currentTint, nativeWidthPx);
                 int start = Math.round((settings.focusDividerStartDp == FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP
-                        ? 0 : settings.focusDividerStartDp) * density);
+                        ? FocusSystemDimensions.dimensionDp(getContext(), "status_bar_notification_padding_end",
+                                4f, FocusRestoreSettings.HOOK_MODE_OS4) : settings.focusDividerStartDp) * density);
                 int end = Math.round((settings.focusDividerEndDp == FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP
-                        ? 6 : settings.focusDividerEndDp) * density);
-                contentInsetPx = start + decoration.getIntrinsicWidth() + end;
+                        ? FocusSystemDimensions.dimensionDp(getContext(), "focused_notif_view_padding_start",
+                                6f, FocusRestoreSettings.HOOK_MODE_OS4) : settings.focusDividerEndDp) * density);
+                contentInsetPx = FocusContentGeometry.focusStart(start, decoration.getIntrinsicWidth(), end);
                 dividerOverlap = start < 0 || end < 0;
                 overlapStartPx = Math.min(0, Math.min(start, contentInsetPx));
                 applyOverlapClipping(dividerOverlap);
@@ -987,7 +991,8 @@ final class HyperOS4FocusController {
                 try {
                     currentIconSizePx = FocusIconStyler.statusBarSizePx(getContext(), settings.focusIconSizeDp);
                     int iconSize = currentIconSizePx;
-                    int iconGap = Math.max(1, Math.round(4f * density));
+                    int iconGap = FocusSystemDimensions.iconTextGapPx(getContext(),
+                            settings.focusIconTextGapDp, FocusRestoreSettings.HOOK_MODE_OS4);
                     iconView = new ImageView(getContext());
                     iconView.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
                     tintCurrentIcon = usingDarkIcon ? item.tintIconDark : item.tintIcon;
@@ -1006,7 +1011,7 @@ final class HyperOS4FocusController {
                     iconParams.setMarginStart(contentInsetPx);
                     addView(iconView, iconParams);
                     bindClick(iconView, item, settings);
-                    contentInsetPx += iconSize + iconGap;
+                    contentInsetPx = FocusContentGeometry.textStart(contentInsetPx, iconSize, iconGap);
                     logger.log("OS4 focus icon attached key=" + item.key
                             + " tinted=" + tintCurrentIcon + " sizePx=" + currentIconSizePx);
                 } catch (Throwable throwable) {
@@ -1166,26 +1171,32 @@ final class HyperOS4FocusController {
 
         @Override
         protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
-            if (child != content || contentInsetPx <= 0 || dividerOverlap) {
+            if (child != content) {
                 return super.drawChild(canvas, child, drawingTime);
             }
+            // 负间距允许分隔线/整组焦点向时间靠近，不代表允许跑马灯穿过固定图标。
+            // 起点为负也保留该边界，由宿主dispatchDraw处理外侧允许的绘制区域。
+            int boundary = FocusContentGeometry.textClipBoundary(getWidth(), contentInsetPx,
+                    getLayoutDirection() == View.LAYOUT_DIRECTION_RTL);
             int saveCount = canvas.save();
-            if (getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
-                canvas.clipRect(0, 0, getWidth() - contentInsetPx, getHeight());
-            } else {
-                canvas.clipRect(contentInsetPx, 0, getWidth(), getHeight());
+            try {
+                if (getLayoutDirection() == View.LAYOUT_DIRECTION_RTL) {
+                    canvas.clipRect(0, 0, boundary, getHeight());
+                } else {
+                    canvas.clipRect(boundary, 0, getWidth(), getHeight());
+                }
+                return super.drawChild(canvas, child, drawingTime);
+            } finally {
+                canvas.restoreToCount(saveCount);
             }
-            boolean drawn = super.drawChild(canvas, child, drawingTime);
-            canvas.restoreToCount(saveCount);
-            return drawn;
         }
 
         @Override
         public boolean dispatchTouchEvent(MotionEvent event) {
             if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                float x = event.getX();
-                expandedBlankGesture = getLayoutDirection() == View.LAYOUT_DIRECTION_RTL
-                        ? x < getWidth() - displayWidthPx : x >= displayWidthPx;
+                expandedBlankGesture = FocusContentGeometry.outsideTextViewport(event.getX(),
+                        getWidth(), displayWidthPx, contentInsetPx,
+                        getLayoutDirection() == View.LAYOUT_DIRECTION_RTL);
             }
             HookSettings settings = itemFactory.settings();
             try {
@@ -1202,7 +1213,7 @@ final class HyperOS4FocusController {
 
         @Override
         public boolean onInterceptTouchEvent(MotionEvent event) {
-            // 扩展空白交给宿主正文点击，避免误点已被显示宽度裁掉的RemoteViews按钮。
+            // 正文起侧和扩展空白交给宿主点击，避免误点已被裁掉的RemoteViews按钮。
             return blockClicks || bannerClicks || notificationRowClicks || expandedBlankGesture
                     || super.onInterceptTouchEvent(event);
         }

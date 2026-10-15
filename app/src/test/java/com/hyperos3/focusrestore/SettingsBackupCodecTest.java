@@ -67,7 +67,7 @@ public class SettingsBackupCodecTest {
         int fields = 0;
         JSONObject groups = root.getJSONObject("settings");
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
-        assertEquals(42, fields);
+        assertEquals(43, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules",
                 "focus_divider_start_dp", "focus_divider_end_dp"}) {
@@ -466,6 +466,26 @@ public class SettingsBackupCodecTest {
     }
 
     @Test
+    public void iconTextGapBackupIsIndependentAndMissingFieldFollowsSystem() throws Exception {
+        FocusRestoreSettings old = decodeGroups("{\"icons\":{\"focus_icon_size_dp\":8}}");
+        assertEquals(8, old.focusIconSizeDp);
+        assertEquals(-1, old.focusIconTextGapDp);
+        for (int gap : new int[]{-1, 0, 1, 24}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit().focusIconSizeDp(8)
+                    .focusIconTextGapDp(gap).focusDividerEndDp(12).build();
+            JSONObject icons = new JSONObject(utf8(SettingsBackupCodec.encode(settings)))
+                    .getJSONObject("settings").getJSONObject("icons");
+            assertEquals(gap, icons.getInt("focus_icon_text_gap_dp"));
+            assertEverySettingEquals(settings, SettingsBackupCodec.decode(SettingsBackupCodec.encode(settings)));
+            assertEquals(gap, decodeGroups("{\"icons\":{\"focus_icon_text_gap_dp\":" + gap + "}}")
+                    .focusIconTextGapDp);
+        }
+        for (String invalid : new String[]{"-2", "25", "1.0", "1e0", "true", "\"3\"", "null", "[]", "{}"}) {
+            rejectGroups("{\"icons\":{\"focus_icon_text_gap_dp\":" + invalid + "}}");
+        }
+    }
+
+    @Test
     public void dividerBackupExportsOnlyOffsetsAndRoundTripsActualNegativeOne() throws Exception {
         for (int offset : new int[]{-25, -24, -1, 0, 24}) {
             FocusRestoreSettings settings = FocusRestoreSettings.edit()
@@ -521,7 +541,7 @@ public class SettingsBackupCodecTest {
                 .compatRetry(true).marqueeBounce(false).islandCompat(true)
                 .disableIslandProperty(false).disableIslandFeatureCache(false).allowFocusClick(true)
                 .hideNotificationIcons(false).showFocusDivider(false).showIslandIcon(true).tintIslandIcon(false)
-                .focusIconSizeDp(23).focusDividerStartDp(0).focusDividerEndDp(24)
+                .focusIconSizeDp(23).focusIconTextGapDp(12).focusDividerStartDp(0).focusDividerEndDp(24)
                 .focusDividerWidthDp(4).focusDividerStyle(3)
                 .useSmallIconFallback(true).focusIconPriority(1).tintDeviceIcon(false)
                 .notificationRowClickFallback(true).independentFocusBanner(true)
@@ -567,7 +587,7 @@ public class SettingsBackupCodecTest {
             assertEquals(field.getName(), field.get(expected), field.get(actual));
             count++;
         }
-        assertEquals("current user snapshot field count", 42, count);
+        assertEquals("current user snapshot field count", 43, count);
     }
 
     private static FocusRestoreSettings decodeGroups(String groups) throws IOException {

@@ -52,8 +52,7 @@ public final class SettingsProvider extends ContentProvider {
         FocusRestoreSettings settings = FocusRestoreSettings.fromPreferences(preferences);
         logDiagnostic("provider settings storage=deviceProtected ready=true columns="
                 + COLUMNS.length + " " + settings.describe());
-        String legacySeparator = preferences.getString(FocusRestoreSettings.KEY_ISLAND_SEPARATOR,
-                FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR);
+        String legacySeparator = FocusRestoreSettings.readLegacyIslandSeparator(preferences);
         String[] columns = SettingsContract.columnsForProjection(projection);
         MatrixCursor cursor = new MatrixCursor(columns);
         cursor.addRow(SettingsContract.toRow(settings, legacySeparator, columns));

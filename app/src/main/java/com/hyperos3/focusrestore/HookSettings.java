@@ -34,6 +34,7 @@ final class HookSettings {
     final boolean hideNotificationIcons;
     final boolean showFocusDivider;
     final int focusIconSizeDp;
+    final int focusIconTextGapDp;
     final int focusDividerStartDp;
     final int focusDividerEndDp;
     final int focusDividerWidthDp;
@@ -67,7 +68,7 @@ final class HookSettings {
                          boolean disableIslandProperty, boolean disableIslandFeatureCache,
                          boolean allowFocusClick, boolean hideNotificationIcons,
                          boolean showFocusDivider,
-                         int focusIconSizeDp, int focusDividerStartDp, int focusDividerEndDp,
+                         int focusIconSizeDp, int focusIconTextGapDp, int focusDividerStartDp, int focusDividerEndDp,
                          int focusDividerWidthDp, int focusDividerStyle, boolean showIslandIcon,
                          boolean tintIslandIcon, boolean useSmallIconFallback,
                          int focusIconPriority, boolean tintDeviceIcon,
@@ -100,6 +101,7 @@ final class HookSettings {
         this.hideNotificationIcons = hideNotificationIcons;
         this.showFocusDivider = showFocusDivider;
         this.focusIconSizeDp = FocusRestoreSettings.normalizeFocusIconSizeDp(focusIconSizeDp);
+        this.focusIconTextGapDp = FocusRestoreSettings.normalizeFocusIconTextGapDp(focusIconTextGapDp);
         this.focusDividerStartDp = FocusRestoreSettings.normalizeFocusDividerSpacingDp(focusDividerStartDp);
         this.focusDividerEndDp = FocusRestoreSettings.normalizeFocusDividerSpacingDp(focusDividerEndDp);
         this.focusDividerWidthDp = FocusRestoreSettings.normalizeFocusDividerWidthDp(focusDividerWidthDp);
@@ -148,7 +150,7 @@ final class HookSettings {
                 source.islandCompat, source.disableIslandProperty,
                 source.disableIslandFeatureCache, source.allowFocusClick,
                 source.hideNotificationIcons, source.showFocusDivider,
-                source.focusIconSizeDp, source.focusDividerStartDp, source.focusDividerEndDp,
+                source.focusIconSizeDp, source.focusIconTextGapDp, source.focusDividerStartDp, source.focusDividerEndDp,
                 source.focusDividerWidthDp, source.focusDividerStyle, source.showIslandIcon,
                 source.tintIslandIcon, source.useSmallIconFallback,
                 source.focusIconPriority, source.tintDeviceIcon,
@@ -205,6 +207,7 @@ final class HookSettings {
                         FocusRestoreSettings.DEFAULT_SHOW_FOCUS_DIVIDER),
                 // 缺外观列时使用明确默认值，不推导自其他设置。
                 readInt(cursor, SettingsContract.FOCUS_ICON_SIZE_DP, FocusRestoreSettings.DEFAULT_FOCUS_ICON_SIZE_DP),
+                readInt(cursor, SettingsContract.FOCUS_ICON_TEXT_GAP_DP, FocusRestoreSettings.DEFAULT_FOCUS_ICON_TEXT_GAP_DP),
                 readDivider(cursor, true),
                 readDivider(cursor, false),
                 readInt(cursor, SettingsContract.FOCUS_DIVIDER_WIDTH_DP, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_WIDTH_DP),
@@ -256,6 +259,7 @@ final class HookSettings {
                 + " hideNotificationIcons=" + hideNotificationIcons
                 + " showFocusDivider=" + showFocusDivider
                 + " focusIconSizeDp=" + focusIconSizeDp
+                + " focusIconTextGapDp=" + focusIconTextGapDp
                 + " focusDividerStartDp=" + focusDividerStartDp
                 + " focusDividerEndDp=" + focusDividerEndDp
                 + " focusDividerWidthDp=" + focusDividerWidthDp

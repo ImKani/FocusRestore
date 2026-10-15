@@ -50,7 +50,7 @@ final class SettingsBackupCodec {
     private static final Set<String> INTEGER_FIELDS = new HashSet<>(Arrays.asList("formatVersion",
             "hook_mode", "island_text_mode", "text_width_dp", "text_width_landscape_dp",
             "marquee_delay_ms", "media_focus_cast_picker", "focus_icon_priority", "touch_width_dp", "touch_width_landscape_dp",
-            "focus_icon_size_dp", "focus_divider_start_offset_dp", "focus_divider_end_offset_dp",
+            "focus_icon_size_dp", "focus_icon_text_gap_dp", "focus_divider_start_offset_dp", "focus_divider_end_offset_dp",
             "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style"));
     private SettingsBackupCodec() { }
 
@@ -115,7 +115,7 @@ final class SettingsBackupCodec {
                     "long_press_seconds", "focus_swipe_enabled",
                     "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp");
             JSONObject icons = group(groups, "icons", "show_island_icon", "tint_island_icon",
-                    "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon", "focus_icon_size_dp");
+                    "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon", "focus_icon_size_dp", "focus_icon_text_gap_dp");
             JSONObject marquee = group(groups, "marquee", "marquee_bounce", "marquee_delay_ms");
             JSONObject compatibility = group(groups, "compatibility", "compat_retry",
                     "disable_island_property", "disable_island_feature_cache");
@@ -134,6 +134,7 @@ final class SettingsBackupCodec {
             }
             int iconSize = integer(icons, "focus_icon_size_dp", defaults.focusIconSizeDp);
             if (iconSize < 0 || iconSize > 32) throw invalid("focus_icon_size_dp 必须为 0 或 1～32");
+            int iconTextGap = rangedInteger(icons, "focus_icon_text_gap_dp", defaults.focusIconTextGapDp, -1, 24);
             int dividerStart = backupDivider(focus, "focus_divider_start_offset_dp", "focus_divider_start_dp", defaults.focusDividerStartDp);
             int dividerEnd = backupDivider(focus, "focus_divider_end_offset_dp", "focus_divider_end_dp", defaults.focusDividerEndDp);
             int dividerWidth = rangedInteger(focus, "focus_divider_width_dp", defaults.focusDividerWidthDp, 0, 4);
@@ -164,7 +165,7 @@ final class SettingsBackupCodec {
                     .focusTimeoutExemptPackages(timeoutExemptPackages)
                     .hideNotificationIcons(bool(focus, "hide_notification_icons", defaults.hideNotificationIcons))
                     .showFocusDivider(bool(focus, "show_focus_divider", defaults.showFocusDivider))
-                    .focusIconSizeDp(iconSize).focusDividerStartDp(dividerStart).focusDividerEndDp(dividerEnd)
+                    .focusIconSizeDp(iconSize).focusIconTextGapDp(iconTextGap).focusDividerStartDp(dividerStart).focusDividerEndDp(dividerEnd)
                     .focusDividerWidthDp(dividerWidth).focusDividerStyle(dividerStyle)
                     .mediaFocusEnabled(bool(media, "media_focus_enabled", defaults.mediaFocusEnabled))
                     .mediaFocusNativeBanner(bool(media, "media_focus_native_banner", defaults.mediaFocusNativeBanner))
@@ -231,7 +232,8 @@ final class SettingsBackupCodec {
                         "tint_island_icon", settings.tintIslandIcon,
                         "use_small_icon_fallback", settings.useSmallIconFallback,
                         "focus_icon_priority", settings.focusIconPriority,
-                        "tint_device_icon", settings.tintDeviceIcon, "focus_icon_size_dp", settings.focusIconSizeDp),
+                        "tint_device_icon", settings.tintDeviceIcon, "focus_icon_size_dp", settings.focusIconSizeDp,
+                        "focus_icon_text_gap_dp", settings.focusIconTextGapDp),
                 "marquee", entries("marquee_bounce", settings.marqueeBounce,
                         "marquee_delay_ms", settings.marqueeDelayMs),
                 "compatibility", entries("compat_retry", settings.compatRetry,

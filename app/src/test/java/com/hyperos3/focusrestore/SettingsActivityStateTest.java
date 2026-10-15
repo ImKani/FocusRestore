@@ -119,7 +119,7 @@ public class SettingsActivityStateTest {
     @Test
     public void appearanceStateControlsAndCleanupRemainAvailableOnOs3() throws Exception {
         String source = readSettingsActivitySource();
-        for (String field : new String[]{"focusIconSizeDp", "focusDividerStartDp", "focusDividerEndDp",
+        for (String field : new String[]{"focusIconSizeDp", "focusIconTextGapDp", "focusDividerStartDp", "focusDividerEndDp",
                 "focusDividerWidthDp", "focusDividerStyle"}) {
             String pending = "pending" + Character.toUpperCase(field.charAt(0)) + field.substring(1);
             String wireField = field.equals("focusDividerStartDp") || field.equals("focusDividerEndDp")
@@ -128,7 +128,7 @@ public class SettingsActivityStateTest {
             assertTrue(source.contains("state.getInt(\"m3." + wireField + "\", " + pending + ")"));
             assertTrue(source.contains("." + field + "(" + pending + ")"));
         }
-        for (String control : new String[]{"focusIconSizeSeekBar", "focusDividerStartSeekBar", "focusDividerEndSeekBar",
+        for (String control : new String[]{"focusIconSizeSeekBar", "focusIconTextGapSeekBar", "focusDividerStartSeekBar", "focusDividerEndSeekBar",
                 "focusDividerWidthSeekBar", "focusDividerStyleField"}) assertTrue(source.contains(control + " = null;"));
         assertTrue(source.contains("setModeSpecificSwitchEnabled(showFocusDividerSwitch, true)"));
         assertTrue(!source.contains("显示焦点分隔线（HyperOS 4）"));
@@ -139,6 +139,13 @@ public class SettingsActivityStateTest {
         assertTrue(source.contains("arrow.setImageResource(R.drawable.ic_section_chevron)"));
         assertTrue(source.contains("arrow.setRotation(expanded ? 180f : 0f)"));
         assertTrue(source.contains("systemDimensionDp(\"focused_notif_icon_size\", 16f)"));
+        assertTrue(source.contains("FocusSystemDimensions.iconTextGapDp(this, pendingHookMode)"));
+        int gapSlider = source.indexOf("focusIconTextGapSeekBar = appearanceSlider(iconPanel, \"图标与文字间距\", 0, 24,");
+        int iconGroup = source.indexOf("addCollapsibleSection(root, \"焦点图标\", iconPanel)");
+        assertTrue("gap slider belongs to the icon group", gapSlider >= 0 && iconGroup > gapSlider);
+        String gapControl = source.substring(gapSlider, iconGroup);
+        assertTrue(gapControl.contains("pendingFocusIconTextGapDp, value -> pendingFocusIconTextGapDp = value"));
+        assertEquals(2, gapControl.split("FocusRestoreSettings.DEFAULT_FOCUS_ICON_TEXT_GAP_DP", -1).length - 1);
         assertTrue(source.contains("FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP"));
         assertTrue(source.contains("if (value != automatic) { label.setText(value + \" dp\"); return; }"));
         assertTrue(source.contains("label.setText(number + \" dp\")"));

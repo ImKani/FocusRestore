@@ -206,6 +206,7 @@ public final class SettingsActivity extends Activity {
     private Switch hideNotificationIconsSwitch;
     private Switch showFocusDividerSwitch;
     private SeekBar focusIconSizeSeekBar;
+    private SeekBar focusIconTextGapSeekBar;
     private SeekBar focusDividerStartSeekBar;
     private SeekBar focusDividerEndSeekBar;
     private SeekBar focusDividerWidthSeekBar;
@@ -255,6 +256,7 @@ public final class SettingsActivity extends Activity {
             pendingLongPressNotificationRowClick, pendingFocusSwipeEnabled, pendingCustomTouchWidth;
     private int pendingFocusIconPriority;
     private int pendingFocusIconSizeDp;
+    private int pendingFocusIconTextGapDp;
     private int pendingFocusDividerStartDp;
     private int pendingFocusDividerEndDp;
     private int pendingFocusDividerWidthDp;
@@ -585,6 +587,7 @@ public final class SettingsActivity extends Activity {
         hideNotificationIconsSwitch = null;
         showFocusDividerSwitch = null;
         focusIconSizeSeekBar = null;
+        focusIconTextGapSeekBar = null;
         focusDividerStartSeekBar = null;
         focusDividerEndSeekBar = null;
         focusDividerWidthSeekBar = null;
@@ -894,10 +897,12 @@ public final class SettingsActivity extends Activity {
                     markPending();
                 });
         panel.addView(focusDividerStyleField.spinner, matchWrap(dp(4)));
-        boolean os4 = pendingHookMode == FocusRestoreSettings.HOOK_MODE_OS4;
-        float nativeStart = os4 ? 0f : systemDimensionDp("status_bar_notification_padding_end", 4f);
-        float nativeEnd = os4 ? 6f : systemDimensionDp("focused_notif_view_padding_start", 6f);
-        float nativeWidth = os4 ? 1f : systemDimensionDp("line_width", 1.38f);
+        float nativeStart = FocusSystemDimensions.dimensionDp(this,
+                "status_bar_notification_padding_end", 4f, pendingHookMode);
+        float nativeEnd = FocusSystemDimensions.dimensionDp(this,
+                "focused_notif_view_padding_start", 6f, pendingHookMode);
+        float nativeWidth = FocusSystemDimensions.dimensionDp(this,
+                "line_width", 1.3799744f, pendingHookMode);
         focusDividerStartSeekBar = appearanceSlider(panel, "分隔线前间距（时间侧）", -24, 24,
                 pendingFocusDividerStartDp, value -> pendingFocusDividerStartDp = value,
                 FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP,
@@ -1014,6 +1019,11 @@ public final class SettingsActivity extends Activity {
                 pendingFocusIconSizeDp, value -> pendingFocusIconSizeDp = value, 0,
                 FocusRestoreSettings.DEFAULT_FOCUS_ICON_SIZE_DP,
                 systemDimensionDp("focused_notif_icon_size", 16f));
+        focusIconTextGapSeekBar = appearanceSlider(iconPanel, "图标与文字间距", 0, 24,
+                pendingFocusIconTextGapDp, value -> pendingFocusIconTextGapDp = value,
+                FocusRestoreSettings.DEFAULT_FOCUS_ICON_TEXT_GAP_DP,
+                FocusRestoreSettings.DEFAULT_FOCUS_ICON_TEXT_GAP_DP,
+                FocusSystemDimensions.iconTextGapDp(this, pendingHookMode));
         addCollapsibleSection(root, "焦点图标", iconPanel);
         focusDividerOptionsPanel = panel();
         buildFocusDividerControls(focusDividerOptionsPanel);
@@ -1579,6 +1589,7 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.hide", pendingHideNotificationIcons);
         outState.putBoolean("m3.divider", pendingShowFocusDivider);
         outState.putInt("m3.focusIconSizeDp", pendingFocusIconSizeDp);
+        outState.putInt("m3.focusIconTextGapDp", pendingFocusIconTextGapDp);
         outState.putInt("m3.focusDividerStartOffsetDp", pendingFocusDividerStartDp);
         outState.putInt("m3.focusDividerEndOffsetDp", pendingFocusDividerEndDp);
         outState.putInt("m3.focusDividerWidthDp", pendingFocusDividerWidthDp);
@@ -1652,6 +1663,8 @@ public final class SettingsActivity extends Activity {
         // 旧 Bundle 缺外观字段时保留已加载值；恢复数据也须遵守可保存范围。
         pendingFocusIconSizeDp = FocusRestoreSettings.normalizeFocusIconSizeDp(
                 state.getInt("m3.focusIconSizeDp", pendingFocusIconSizeDp));
+        pendingFocusIconTextGapDp = FocusRestoreSettings.normalizeFocusIconTextGapDp(
+                state.getInt("m3.focusIconTextGapDp", pendingFocusIconTextGapDp));
         pendingFocusDividerStartDp = state.containsKey("m3.focusDividerStartOffsetDp")
                 ? FocusRestoreSettings.normalizeFocusDividerSpacingDp(
                         state.getInt("m3.focusDividerStartOffsetDp", pendingFocusDividerStartDp))
@@ -2602,6 +2615,7 @@ public final class SettingsActivity extends Activity {
         pendingHideNotificationIcons = settings.hideNotificationIcons;
         pendingShowFocusDivider = settings.showFocusDivider;
         pendingFocusIconSizeDp = settings.focusIconSizeDp;
+        pendingFocusIconTextGapDp = settings.focusIconTextGapDp;
         pendingFocusDividerStartDp = settings.focusDividerStartDp;
         pendingFocusDividerEndDp = settings.focusDividerEndDp;
         pendingFocusDividerWidthDp = settings.focusDividerWidthDp;
@@ -2657,6 +2671,7 @@ public final class SettingsActivity extends Activity {
                 .hideNotificationIcons(pendingHideNotificationIcons)
                 .showFocusDivider(pendingShowFocusDivider)
                 .focusIconSizeDp(pendingFocusIconSizeDp)
+                .focusIconTextGapDp(pendingFocusIconTextGapDp)
                 .focusDividerStartDp(pendingFocusDividerStartDp)
                 .focusDividerEndDp(pendingFocusDividerEndDp)
                 .focusDividerWidthDp(pendingFocusDividerWidthDp)

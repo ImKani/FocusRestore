@@ -234,6 +234,8 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
      * {@code setAlpha} alone can end up merely combined with an already-translucent fill.
      */
     private static Drawable forceOpaque(Drawable card) {
+        // 资源 Drawable 可共享 ConstantState；必须沿 mutate 返回值修改，避免污染通知栏背景。
+        card = card.mutate();
         if (card instanceof GradientDrawable) {
             GradientDrawable shape = (GradientDrawable) card;
             try {

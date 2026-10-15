@@ -43,6 +43,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -97,6 +98,9 @@ final class NativeFocusTemplateRenderer {
     private final RowProvider rowProvider;
     private final Object lock = new Object();
     private final Map<ClassLoader, Installation> installations = new IdentityHashMap<>();
+    // 弱 key 与弱 Method 避免能力缓存延长已断开的插件 ClassLoader 生命周期。
+    private final Map<Class<?>, Map<Class<?>, ScopeCancellationCapability>> scopeCancellationCapabilities =
+            new WeakHashMap<>();
     // Only semantic templates and a notification stamp are cached. Factory references are weak.
     private final LinkedHashMap<String, Source> sources = new LinkedHashMap<>(16, 0.75f, true);
     private final LinkedHashMap<String, Long> removedKeys = new LinkedHashMap<>();
@@ -686,39 +690,94 @@ final class NativeFocusTemplateRenderer {
         }
     }
 
-    private void finishAdapterCleanup(List<Object> adapters) {
+    void finishAdapterCleanup(List<Object> adapters) {
+        int cancellationFailures = 0;
+        int detachFailures = 0;
+        int mapFailures = 0;
         for (Object adapter : adapters) {
-            // Cancel any still-suspended binding before the final sweep. Only newly owned scopes
-            // are touched; no ConcurrencyModule/global scope is cancelled.
-            try { cancelOwnedAdapterScope(adapter); }
-            catch (Throwable error) { report("independent adapter scope cancellation", error); }
+            // 未确认 ROM 的取消接口时保留降级；detach/清 map 不能证明挂起的绑定已取消。
+            try {
+                if (!cancelOwnedAdapterScope(adapter)) cancellationFailures++;
+            } catch (Throwable error) {
+                cancellationFailures++;
+                report("independent adapter scope cancellation", error);
+            }
             Set<Object> detached = Collections.newSetFromMap(new IdentityHashMap<>());
             for (String name : HOLDER_FIELDS) {
                 try {
                     Object value = get(adapter, name);
-                    if (!(value instanceof Map)) continue;
+                    if (!(value instanceof Map)) {
+                        throw new IllegalStateException("independent holder map missing: " + name);
+                    }
                     Map<?, ?> holders = (Map<?, ?>) value;
                     for (Object holder : new ArrayList<>(holders.values())) {
                         if (holder != null && detached.add(holder)) {
                             try { call(holder, "onDetach"); }
-                            catch (Throwable error) { report("independent holder detach", error); }
+                            catch (Throwable error) {
+                                detachFailures++;
+                                report("independent holder detach", error);
+                            }
                         }
                     }
                     holders.clear();
-                } catch (Throwable error) { report("independent holder cleanup " + name, error); }
+                } catch (Throwable error) {
+                    mapFailures++;
+                    report("independent holder cleanup " + name, error);
+                }
             }
             try {
                 Object data = get(adapter, "dataMap");
-                if (data instanceof Map) ((Map<?, ?>) data).clear();
-            } catch (Throwable error) { report("independent adapter data cleanup", error); }
+                if (!(data instanceof Map)) throw new IllegalStateException("independent dataMap missing");
+                ((Map<?, ?>) data).clear();
+            } catch (Throwable error) {
+                mapFailures++;
+                report("independent adapter data cleanup", error);
+            }
+        }
+        if (cancellationFailures + detachFailures + mapFailures > 0) {
+            log("independent adapter cleanup cleanupPartial=true adapters=" + adapters.size()
+                    + " scopeCancellationFailures=" + cancellationFailures
+                    + " holderDetachFailures=" + detachFailures + " mapCleanupFailures=" + mapFailures
+                    + "; detach/maps attempted; pending native binding cancellation is not guaranteed");
         }
     }
 
-    private static void cancelOwnedAdapterScope(Object adapter) throws Exception {
+    private boolean cancelOwnedAdapterScope(Object adapter) throws Exception {
         Object scope = get(adapter, "scope");
-        if (scope == null) return;
-        ClassLoader loader = adapter.getClass().getClassLoader();
-        // The second name is the verified relocated coroutine helper in plugin 18.2.2.2.0.
+        if (scope == null) return true;
+        Class<?> scopeClass = scope.getClass();
+        Method method;
+        synchronized (lock) {
+            Map<Class<?>, ScopeCancellationCapability> capabilities =
+                    scopeCancellationCapabilities.get(adapter.getClass());
+            if (capabilities == null) {
+                capabilities = new WeakHashMap<>();
+                scopeCancellationCapabilities.put(adapter.getClass(), capabilities);
+            }
+            ScopeCancellationCapability capability = capabilities.get(scopeClass);
+            if (capability != null && capability.unavailable) return false;
+            method = capability == null ? null : capability.method.get();
+            if (method == null) {
+                try {
+                    method = resolveScopeCancellation(adapter.getClass().getClassLoader(), scope);
+                    capabilities.put(scopeClass, new ScopeCancellationCapability(method));
+                } catch (ReflectiveOperationException | SecurityException | LinkageError error) {
+                    capabilities.put(scopeClass, new ScopeCancellationCapability(null));
+                    report("independent adapter scope capability unavailable adapter=" + adapter.getClass().getName()
+                            + " scope=" + scopeClass.getName() + " loader=" + identity(scopeClass.getClassLoader())
+                            + "; cleanupPartial=true; unconfirmed ROM cancellation interface, retaining detach/maps fallback", error);
+                    return false;
+                }
+            }
+        }
+        // 能力存在不等于调用成功；调用异常仍报告，不缓存为成功或静默跳过后续取消。
+        invoke(method, null, scope, null, 1, null);
+        return true;
+    }
+
+    private static Method resolveScopeCancellation(ClassLoader loader, Object scope) throws Exception {
+        // 仅沿用已确认候选：plugin 18.2.2.2.0 的 relocated helper 为 h1.H。
+        // 报错 ROM 的其他混淆接口未确认，不按参数形状猜新方法。
         for (String name : new String[]{"kotlinx.coroutines.CoroutineScopeKt", "h1.H"}) {
             Class<?> helper;
             try { helper = load(loader, name); }
@@ -730,12 +789,21 @@ final class NativeFocusTemplateRenderer {
                         && p[1] == CancellationException.class && p[2] == int.class
                         && p[3] == Object.class
                         && (method.getName().equals("cancel$default") || method.getName().equals("e"))) {
-                    invoke(method, null, scope, null, 1, null);
-                    return;
+                    method.setAccessible(true);
+                    return method;
                 }
             }
         }
         throw new NoSuchMethodException("owned adapter CoroutineScope cancellation contract missing");
+    }
+
+    private static final class ScopeCancellationCapability {
+        final boolean unavailable;
+        final WeakReference<Method> method;
+        ScopeCancellationCapability(Method method) {
+            unavailable = method == null;
+            this.method = new WeakReference<>(method);
+        }
     }
 
     static final class Render implements FocusBannerSource {
