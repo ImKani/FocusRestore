@@ -25,6 +25,12 @@ final class HookSettings {
     final boolean mediaFocusNativeBanner;
     final int mediaFocusCastPicker;
     final boolean mediaFocusCastDirect;
+    final boolean hideTimeNormal;
+    final boolean hideTimeMedia;
+    final boolean hideTimeDevice;
+    final boolean mediaBriefDisplay;
+    final java.util.List<Integer> mediaBriefFields;
+    final boolean interceptElementAnimation;
     final boolean compatRetry;
     final boolean marqueeBounce;
     final boolean islandCompat;
@@ -64,8 +70,7 @@ final class HookSettings {
                           boolean specialBannerNormalBackground,
                           boolean mediaFocusEnabled, boolean mediaFocusNativeBanner,
                           int mediaFocusCastPicker, boolean mediaFocusCastDirect, int marqueeDelayMs,
-                         boolean compatRetry, boolean marqueeBounce, boolean islandCompat,
-                         boolean disableIslandProperty, boolean disableIslandFeatureCache,
+                         boolean compatRetry, boolean marqueeBounce, boolean islandCompat,                         boolean disableIslandProperty, boolean disableIslandFeatureCache,
                          boolean allowFocusClick, boolean hideNotificationIcons,
                          boolean showFocusDivider,
                          int focusIconSizeDp, int focusIconTextGapDp, int focusDividerStartDp, int focusDividerEndDp,
@@ -78,7 +83,10 @@ final class HookSettings {
                          int islandTextMode, float focusMaxDisplaySeconds,
                          String generalSeparator,
                          String sideSeparator, Set<String> forcePackages,
-                         Set<String> timeoutExemptPackages) {
+                         Set<String> timeoutExemptPackages,
+                         boolean hideTimeNormal, boolean hideTimeMedia, boolean hideTimeDevice,
+                         boolean mediaBriefDisplay, java.util.List<Integer> mediaBriefFields,
+                         boolean interceptElementAnimation) {
         this.hookMode = FocusRestoreSettings.normalizeHookMode(hookMode);
         this.limitWidth = limitWidth;
         this.widthDp = clamp(widthDp, FocusRestoreSettings.MIN_WIDTH_DP,
@@ -131,6 +139,12 @@ final class HookSettings {
                 ? FocusRestoreSettings.DEFAULT_ISLAND_SEPARATOR : sideSeparator);
         this.islandForcePackages = immutablePackages(forcePackages);
         this.focusTimeoutExemptPackages = immutablePackages(timeoutExemptPackages);
+        this.hideTimeNormal = hideTimeNormal;
+        this.hideTimeMedia = hideTimeMedia;
+        this.hideTimeDevice = hideTimeDevice;
+        this.mediaBriefDisplay = mediaBriefDisplay;
+        this.mediaBriefFields = MediaBriefFields.normalize(mediaBriefFields);
+        this.interceptElementAnimation = interceptElementAnimation;
     }
 
     static HookSettings defaults() {
@@ -159,7 +173,10 @@ final class HookSettings {
                 source.customTouchWidth, source.touchWidthDp, source.touchWidthLandscapeDp,
                 source.islandTextMode, source.focusMaxDisplaySeconds,
                 source.islandGeneralSeparator, source.islandSideSeparator,
-                source.islandForcePackages, source.focusTimeoutExemptPackages);
+                source.islandForcePackages, source.focusTimeoutExemptPackages,
+                source.hideTimeNormal, source.hideTimeMedia, source.hideTimeDevice,
+                source.mediaBriefDisplay, source.mediaBriefFields,
+                source.interceptElementAnimation);
     }
 
     static HookSettings fromCursor(Cursor cursor) {
@@ -245,7 +262,28 @@ final class HookSettings {
                 readString(cursor, SettingsContract.ISLAND_GENERAL_SEPARATOR, legacySeparator),
                 readString(cursor, SettingsContract.ISLAND_SIDE_SEPARATOR, legacySeparator),
                 splitPackages(readString(cursor, SettingsContract.ISLAND_FORCE_PACKAGES, "")),
-                splitPackages(readString(cursor, SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES, "")));
+                splitPackages(readString(cursor, SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES, "")),
+                readBoolean(cursor, SettingsContract.HIDE_TIME_NORMAL,
+                        FocusRestoreSettings.DEFAULT_HIDE_TIME_NORMAL),
+                readBoolean(cursor, SettingsContract.HIDE_TIME_MEDIA,
+                        FocusRestoreSettings.DEFAULT_HIDE_TIME_MEDIA),
+                readBoolean(cursor, SettingsContract.HIDE_TIME_DEVICE,
+                        FocusRestoreSettings.DEFAULT_HIDE_TIME_DEVICE),
+                readBoolean(cursor, SettingsContract.MEDIA_BRIEF_DISPLAY,
+                        FocusRestoreSettings.DEFAULT_MEDIA_BRIEF_DISPLAY),
+                MediaBriefFields.parse(readString(cursor, SettingsContract.MEDIA_BRIEF_FIELDS,
+                        MediaBriefFields.DEFAULT_ENCODED)),
+                readBoolean(cursor, SettingsContract.INTERCEPT_ELEMENT_ANIMATION,
+                        FocusRestoreSettings.DEFAULT_INTERCEPT_ELEMENT_ANIMATION));
+    }
+
+    /** 按来源分类返回该类型是否要隐藏状态栏时间。 */
+    boolean hideTimeForKind(int kind) {
+        switch (kind) {
+            case FocusKind.MEDIA: return hideTimeMedia;
+            case FocusKind.DEVICE: return hideTimeDevice;
+            default: return hideTimeNormal;
+        }
     }
 
     String describe() {
@@ -278,6 +316,12 @@ final class HookSettings {
                 + " touchWidthDp=" + touchWidthDp + " touchWidthLandscapeDp=" + touchWidthLandscapeDp
                 + " mediaFocusCastPicker=" + mediaFocusCastPicker
                 + " mediaFocusCastDirect=" + mediaFocusCastDirect
+                + " hideTimeNormal=" + hideTimeNormal
+                + " hideTimeMedia=" + hideTimeMedia
+                + " hideTimeDevice=" + hideTimeDevice
+                + " mediaBriefDisplay=" + mediaBriefDisplay
+                + " mediaBriefFields=" + MediaBriefFields.encode(mediaBriefFields)
+                + " interceptElementAnimation=" + interceptElementAnimation
                 + " islandTextMode=" + islandTextMode
                 + " focusMaxDisplaySeconds=" + focusMaxDisplaySeconds
                 + " forcePackages=" + islandForcePackages

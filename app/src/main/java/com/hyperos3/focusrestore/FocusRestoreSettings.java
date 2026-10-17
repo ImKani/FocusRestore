@@ -36,6 +36,15 @@ public final class FocusRestoreSettings {
     public static final String KEY_MEDIA_FOCUS_CAST_PICKER = "media_focus_cast_picker";
     /** Clicks a media focus straight into the cast UI instead of the media banner. */
     public static final String KEY_MEDIA_FOCUS_CAST_DIRECT = "media_focus_cast_direct";
+    /** 焦点显示时按类型隐藏状态栏时间；隐藏时间时同步隐藏分隔线。 */
+    public static final String KEY_HIDE_TIME_NORMAL = "hide_time_normal";
+    public static final String KEY_HIDE_TIME_MEDIA = "hide_time_media";
+    public static final String KEY_HIDE_TIME_DEVICE = "hide_time_device";
+    /** 媒体焦点简短显示开关及字段顺序。 */
+    public static final String KEY_MEDIA_BRIEF_DISPLAY = "media_brief_display";
+    public static final String KEY_MEDIA_BRIEF_FIELDS = "media_brief_fields";
+    /** 拦截 OS3 “应用缩小到焦点图标”的元素动画；默认开启，可能仍残留图标。 */
+    public static final String KEY_INTERCEPT_ELEMENT_ANIMATION = "intercept_element_animation";
     public static final String KEY_MARQUEE_DELAY_MS = "marquee_delay_ms";
     public static final String KEY_COMPAT_RETRY = "compat_retry";
     public static final String KEY_MARQUEE_BOUNCE = "marquee_bounce";
@@ -99,6 +108,11 @@ public final class FocusRestoreSettings {
     public static final int CAST_PICKER_MIPLAY = 2;
     public static final int DEFAULT_MEDIA_FOCUS_CAST_PICKER = CAST_PICKER_MIPLAY;
     public static final boolean DEFAULT_MEDIA_FOCUS_CAST_DIRECT = false;
+    public static final boolean DEFAULT_HIDE_TIME_NORMAL = false;
+    public static final boolean DEFAULT_HIDE_TIME_MEDIA = false;
+    public static final boolean DEFAULT_HIDE_TIME_DEVICE = false;
+    public static final boolean DEFAULT_MEDIA_BRIEF_DISPLAY = false;
+    public static final boolean DEFAULT_INTERCEPT_ELEMENT_ANIMATION = true;
     public static final int DEFAULT_MARQUEE_DELAY_MS = 200;
     public static final boolean DEFAULT_COMPAT_RETRY = false;
     public static final boolean DEFAULT_MARQUEE_BOUNCE = true;
@@ -155,6 +169,12 @@ public final class FocusRestoreSettings {
     public final boolean mediaFocusNativeBanner;
     public final int mediaFocusCastPicker;
     public final boolean mediaFocusCastDirect;
+    public final boolean hideTimeNormal;
+    public final boolean hideTimeMedia;
+    public final boolean hideTimeDevice;
+    public final boolean mediaBriefDisplay;
+    public final java.util.List<Integer> mediaBriefFields;
+    public final boolean interceptElementAnimation;
     public final boolean compatRetry;
     public final boolean marqueeBounce;
     public final boolean islandCompat;
@@ -203,6 +223,12 @@ public final class FocusRestoreSettings {
         // 二选一：直接展开流转界面时不再走媒体横幅。
         this.mediaFocusCastDirect = editor.mediaFocusCastDirect;
         this.mediaFocusNativeBanner = editor.mediaFocusNativeBanner && !this.mediaFocusCastDirect;
+        this.hideTimeNormal = editor.hideTimeNormal;
+        this.hideTimeMedia = editor.hideTimeMedia;
+        this.hideTimeDevice = editor.hideTimeDevice;
+        this.mediaBriefDisplay = editor.mediaBriefDisplay;
+        this.mediaBriefFields = MediaBriefFields.normalize(editor.mediaBriefFields);
+        this.interceptElementAnimation = editor.interceptElementAnimation;
         this.compatRetry = editor.compatRetry;
         this.marqueeBounce = editor.marqueeBounce;
         this.islandCompat = editor.islandCompat;
@@ -260,6 +286,12 @@ public final class FocusRestoreSettings {
         private boolean mediaFocusNativeBanner = DEFAULT_MEDIA_FOCUS_NATIVE_BANNER;
         private int mediaFocusCastPicker = DEFAULT_MEDIA_FOCUS_CAST_PICKER;
         private boolean mediaFocusCastDirect = DEFAULT_MEDIA_FOCUS_CAST_DIRECT;
+        private boolean hideTimeNormal = DEFAULT_HIDE_TIME_NORMAL;
+        private boolean hideTimeMedia = DEFAULT_HIDE_TIME_MEDIA;
+        private boolean hideTimeDevice = DEFAULT_HIDE_TIME_DEVICE;
+        private boolean mediaBriefDisplay = DEFAULT_MEDIA_BRIEF_DISPLAY;
+        private java.util.List<Integer> mediaBriefFields = MediaBriefFields.defaultOrder();
+        private boolean interceptElementAnimation = DEFAULT_INTERCEPT_ELEMENT_ANIMATION;
         private int marqueeDelayMs = DEFAULT_MARQUEE_DELAY_MS;
         private boolean compatRetry = DEFAULT_COMPAT_RETRY;
         private boolean marqueeBounce = DEFAULT_MARQUEE_BOUNCE;
@@ -309,6 +341,12 @@ public final class FocusRestoreSettings {
             this.mediaFocusNativeBanner = source.mediaFocusNativeBanner;
             this.mediaFocusCastPicker = source.mediaFocusCastPicker;
             this.mediaFocusCastDirect = source.mediaFocusCastDirect;
+            this.hideTimeNormal = source.hideTimeNormal;
+            this.hideTimeMedia = source.hideTimeMedia;
+            this.hideTimeDevice = source.hideTimeDevice;
+            this.mediaBriefDisplay = source.mediaBriefDisplay;
+            this.mediaBriefFields = source.mediaBriefFields;
+            this.interceptElementAnimation = source.interceptElementAnimation;
             this.marqueeDelayMs = source.marqueeDelayMs;
             this.compatRetry = source.compatRetry;
             this.marqueeBounce = source.marqueeBounce;
@@ -356,6 +394,18 @@ public final class FocusRestoreSettings {
         public Editor mediaFocusNativeBanner(boolean value) { this.mediaFocusNativeBanner = value; return this; }
         public Editor mediaFocusCastPicker(int value) { this.mediaFocusCastPicker = value; return this; }
         public Editor mediaFocusCastDirect(boolean value) { this.mediaFocusCastDirect = value; return this; }
+        public Editor hideTimeNormal(boolean value) { this.hideTimeNormal = value; return this; }
+        public Editor hideTimeMedia(boolean value) { this.hideTimeMedia = value; return this; }
+        public Editor hideTimeDevice(boolean value) { this.hideTimeDevice = value; return this; }
+        public Editor mediaBriefDisplay(boolean value) { this.mediaBriefDisplay = value; return this; }
+        public Editor mediaBriefFields(java.util.List<Integer> value) {
+            this.mediaBriefFields = MediaBriefFields.normalize(value);
+            return this;
+        }
+        public Editor interceptElementAnimation(boolean value) {
+            this.interceptElementAnimation = value;
+            return this;
+        }
         public Editor compatRetry(boolean value) { this.compatRetry = value; return this; }
         public Editor marqueeBounce(boolean value) { this.marqueeBounce = value; return this; }
         public Editor islandCompat(boolean value) { this.islandCompat = value; return this; }
@@ -634,6 +684,18 @@ public final class FocusRestoreSettings {
                         KEY_MEDIA_FOCUS_CAST_PICKER, DEFAULT_MEDIA_FOCUS_CAST_PICKER)))
                 .mediaFocusCastDirect(values.getBoolean(KEY_MEDIA_FOCUS_CAST_DIRECT,
                         DEFAULT_MEDIA_FOCUS_CAST_DIRECT))
+                .hideTimeNormal(values.getBoolean(KEY_HIDE_TIME_NORMAL,
+                        DEFAULT_HIDE_TIME_NORMAL))
+                .hideTimeMedia(values.getBoolean(KEY_HIDE_TIME_MEDIA,
+                        DEFAULT_HIDE_TIME_MEDIA))
+                .hideTimeDevice(values.getBoolean(KEY_HIDE_TIME_DEVICE,
+                        DEFAULT_HIDE_TIME_DEVICE))
+                .mediaBriefDisplay(values.getBoolean(KEY_MEDIA_BRIEF_DISPLAY,
+                        DEFAULT_MEDIA_BRIEF_DISPLAY))
+                .mediaBriefFields(MediaBriefFields.parse(values.getString(
+                        KEY_MEDIA_BRIEF_FIELDS, MediaBriefFields.DEFAULT_ENCODED)))
+                .interceptElementAnimation(values.getBoolean(KEY_INTERCEPT_ELEMENT_ANIMATION,
+                        DEFAULT_INTERCEPT_ELEMENT_ANIMATION))
                 .marqueeDelayMs(values.getInt(KEY_MARQUEE_DELAY_MS, DEFAULT_MARQUEE_DELAY_MS))
                 .compatRetry(values.getBoolean(KEY_COMPAT_RETRY, DEFAULT_COMPAT_RETRY))
                 .marqueeBounce(values.getBoolean(KEY_MARQUEE_BOUNCE, DEFAULT_MARQUEE_BOUNCE))
@@ -726,6 +788,12 @@ public final class FocusRestoreSettings {
                 + " touchWidthDp=" + touchWidthDp + " touchWidthLandscapeDp=" + touchWidthLandscapeDp
                 + " mediaFocusCastPicker=" + mediaFocusCastPicker
                 + " mediaFocusCastDirect=" + mediaFocusCastDirect
+                + " hideTimeNormal=" + hideTimeNormal
+                + " hideTimeMedia=" + hideTimeMedia
+                + " hideTimeDevice=" + hideTimeDevice
+                + " mediaBriefDisplay=" + mediaBriefDisplay
+                + " mediaBriefFields=" + MediaBriefFields.encode(mediaBriefFields)
+                + " interceptElementAnimation=" + interceptElementAnimation
                 + " islandTextMode=" + islandTextMode
                 + " focusMaxDisplaySeconds=" + focusMaxDisplaySeconds
                 + " forcePackages=" + islandForcePackages
@@ -749,6 +817,12 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_MEDIA_FOCUS_NATIVE_BANNER, mediaFocusNativeBanner)
                 .putInt(KEY_MEDIA_FOCUS_CAST_PICKER, mediaFocusCastPicker)
                 .putBoolean(KEY_MEDIA_FOCUS_CAST_DIRECT, mediaFocusCastDirect)
+                .putBoolean(KEY_HIDE_TIME_NORMAL, hideTimeNormal)
+                .putBoolean(KEY_HIDE_TIME_MEDIA, hideTimeMedia)
+                .putBoolean(KEY_HIDE_TIME_DEVICE, hideTimeDevice)
+                .putBoolean(KEY_MEDIA_BRIEF_DISPLAY, mediaBriefDisplay)
+                .putString(KEY_MEDIA_BRIEF_FIELDS, MediaBriefFields.encode(mediaBriefFields))
+                .putBoolean(KEY_INTERCEPT_ELEMENT_ANIMATION, interceptElementAnimation)
                 .putInt(KEY_MARQUEE_DELAY_MS, marqueeDelayMs)
                 .putBoolean(KEY_COMPAT_RETRY, compatRetry)
                 .putBoolean(KEY_MARQUEE_BOUNCE, marqueeBounce)

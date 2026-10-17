@@ -67,7 +67,7 @@ public class SettingsBackupCodecTest {
         int fields = 0;
         JSONObject groups = root.getJSONObject("settings");
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
-        assertEquals(43, fields);
+        assertEquals(49, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules",
                 "focus_divider_start_dp", "focus_divider_end_dp"}) {
@@ -549,7 +549,12 @@ public class SettingsBackupCodecTest {
                 .customTouchWidth(true).touchWidthDp(100).touchWidthLandscapeDp(720)
                 .focusMaxDisplaySeconds(12.34f).islandGeneralSeparator("general").islandSideSeparator("side")
                 .islandForcePackages(new HashSet<>(Arrays.asList("com.example.z", "com.example.a")))
-                .focusTimeoutExemptPackages(Collections.singleton("com.example.travel")).build();
+                .focusTimeoutExemptPackages(Collections.singleton("com.example.travel"))
+                .hideTimeNormal(true).hideTimeMedia(true).hideTimeDevice(true)
+                .mediaBriefDisplay(true).mediaBriefFields(Arrays.asList(
+                        MediaBriefFields.PLAY_STATE, MediaBriefFields.TITLE, MediaBriefFields.APP_NAME))
+                .interceptElementAnimation(false)
+                .build();
     }
 
     @Test public void oldIconBackupsMigrateAndNewPriorityRejectsInvalidValues() throws Exception {
@@ -587,7 +592,7 @@ public class SettingsBackupCodecTest {
             assertEquals(field.getName(), field.get(expected), field.get(actual));
             count++;
         }
-        assertEquals("current user snapshot field count", 43, count);
+        assertEquals("current user snapshot field count", 49, count);
     }
 
     private static FocusRestoreSettings decodeGroups(String groups) throws IOException {

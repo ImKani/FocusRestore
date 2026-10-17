@@ -70,11 +70,19 @@ final class SettingsContract {
     static final int MEDIA_FOCUS_CAST_PICKER = 41;
     static final int MEDIA_FOCUS_CAST_DIRECT = 42;
 
+    // 隐藏状态栏时间与媒体简短显示。
+    static final int HIDE_TIME_NORMAL = 43;
+    static final int HIDE_TIME_MEDIA = 44;
+    static final int HIDE_TIME_DEVICE = 45;
+    static final int MEDIA_BRIEF_DISPLAY = 46;
+    static final int MEDIA_BRIEF_FIELDS = 47;
+    static final int INTERCEPT_ELEMENT_ANIMATION = 48;
+
     // 历史字段仍响应旧 projection；废弃功能不恢复，旧分隔符只供缺列回退。
-    static final int LEGACY_ISLAND_SEPARATOR = 43;
-    static final int EXPAND_ISLAND_ON_CLICK = 44;
-    static final int NOTIFICATION_ICON_HIDE_MODE = 45;
-    static final int ISLAND_CUSTOM_RULES = 46;
+    static final int LEGACY_ISLAND_SEPARATOR = 49;
+    static final int EXPAND_ISLAND_ON_CLICK = 50;
+    static final int NOTIFICATION_ICON_HIDE_MODE = 51;
+    static final int ISLAND_CUSTOM_RULES = 52;
 
     static final String[] COLUMNS = {
             "hook_mode", "compat_retry", "disable_island_property", "disable_island_feature_cache",
@@ -91,6 +99,8 @@ final class SettingsContract {
             "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
             "focus_max_display_seconds", "focus_timeout_exempt_packages",
             "media_focus_enabled", "media_focus_native_banner", "media_focus_cast_picker", "media_focus_cast_direct",
+            "hide_time_normal", "hide_time_media", "hide_time_device", "media_brief_display", "media_brief_fields",
+            "intercept_element_animation",
             "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules"
     };
 
@@ -164,6 +174,13 @@ final class SettingsContract {
         row[MEDIA_FOCUS_NATIVE_BANNER] = settings.mediaFocusNativeBanner ? 1 : 0;
         row[MEDIA_FOCUS_CAST_PICKER] = settings.mediaFocusCastPicker;
         row[MEDIA_FOCUS_CAST_DIRECT] = settings.mediaFocusCastDirect ? 1 : 0;
+
+        row[HIDE_TIME_NORMAL] = settings.hideTimeNormal ? 1 : 0;
+        row[HIDE_TIME_MEDIA] = settings.hideTimeMedia ? 1 : 0;
+        row[HIDE_TIME_DEVICE] = settings.hideTimeDevice ? 1 : 0;
+        row[MEDIA_BRIEF_DISPLAY] = settings.mediaBriefDisplay ? 1 : 0;
+        row[MEDIA_BRIEF_FIELDS] = MediaBriefFields.encode(settings.mediaBriefFields);
+        row[INTERCEPT_ELEMENT_ANIMATION] = settings.interceptElementAnimation ? 1 : 0;
 
         row[LEGACY_ISLAND_SEPARATOR] = legacySeparator;
         row[EXPAND_ISLAND_ON_CLICK] = 0;

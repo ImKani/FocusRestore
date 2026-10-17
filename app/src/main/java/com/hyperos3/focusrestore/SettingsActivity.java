@@ -232,7 +232,11 @@ public final class SettingsActivity extends Activity {
     private SeekBar longPressSecondsSeekBar;
     private TextView longPressSecondsValue;
     private TextView longPressSecondsLabel;
-    private LinearLayout nativeBannerOptionsPanel;
+    private TextView contentModeSummary;
+    private TextView mediaClickSummary;
+    private TextView mediaBriefSummary;
+    private TextView legacyClickSummary;
+    private TextView dividerSummary;
     private EditText generalSeparatorInput;
     private EditText sideSeparatorInput;
     private Switch mediaFocusSwitch;
@@ -242,12 +246,26 @@ public final class SettingsActivity extends Activity {
     private TextView bannerBackgroundLabel;
     private TextView mediaFocusClickLabel;
     private TextView mediaFocusCastPickerLabel;
+    private Switch hideTimeNormalSwitch;
+    private Switch hideTimeMediaSwitch;
+    private Switch hideTimeDeviceSwitch;
+    private Switch mediaBriefDisplaySwitch;
+    private Switch interceptElementAnimationSwitch;
+    private LinearLayout mediaBriefFieldsContainer;
+    private final LinearLayout[] mediaBriefFieldRows = new LinearLayout[MediaBriefFields.FIELD_COUNT];
+    private MediaFieldDragHandler mediaFieldDragHandler;
     private int pendingWidthLandscapeDp;
     private boolean pendingSpecialBannerNormalBackground;
     private boolean pendingMediaFocusEnabled;
     private boolean pendingMediaFocusNativeBanner;
     private int pendingMediaFocusCastPicker = FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_PICKER;
     private boolean pendingMediaFocusCastDirect = FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_DIRECT;
+    private boolean pendingHideTimeNormal;
+    private boolean pendingHideTimeMedia;
+    private boolean pendingHideTimeDevice;
+    private boolean pendingMediaBriefDisplay;
+    private java.util.List<Integer> pendingMediaBriefFields = MediaBriefFields.defaultOrder();
+    private boolean pendingInterceptElementAnimation = FocusRestoreSettings.DEFAULT_INTERCEPT_ELEMENT_ANIMATION;
     private boolean pendingManual, pendingCompatRetry, pendingMarqueeBounce, pendingIslandCompat,
             pendingDisableIslandProperty, pendingDisableIslandFeatureCache, pendingAllowFocusClick,
             pendingHideNotificationIcons, pendingShowFocusDivider, pendingShowIslandIcon,
@@ -329,6 +347,7 @@ public final class SettingsActivity extends Activity {
         if (sectionTransitionRoot != null) TransitionManager.endTransitions(sectionTransitionRoot);
         sectionAnimating = false;
         if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
+        if (mediaFieldDragHandler != null) mediaFieldDragHandler.finish(false);
         super.onPause();
     }
 
@@ -614,7 +633,11 @@ public final class SettingsActivity extends Activity {
         longPressSecondsSeekBar = null;
         longPressSecondsValue = null;
         longPressSecondsLabel = null;
-        nativeBannerOptionsPanel = null;
+        contentModeSummary = null;
+        mediaClickSummary = null;
+        mediaBriefSummary = null;
+        legacyClickSummary = null;
+        dividerSummary = null;
         generalSeparatorInput = null;
         sideSeparatorInput = null;
         mediaFocusSwitch = null;
@@ -624,6 +647,16 @@ public final class SettingsActivity extends Activity {
         bannerBackgroundLabel = null;
         mediaFocusClickLabel = null;
         mediaFocusCastPickerLabel = null;
+        hideTimeNormalSwitch = null;
+        hideTimeMediaSwitch = null;
+        hideTimeDeviceSwitch = null;
+        mediaBriefDisplaySwitch = null;
+        interceptElementAnimationSwitch = null;
+        if (mediaFieldDragHandler != null) mediaFieldDragHandler.finish(false);
+        mediaFieldDragHandler = null;
+        if (mediaBriefFieldsContainer != null) mediaBriefFieldsContainer.setOnTouchListener(null);
+        mediaBriefFieldsContainer = null;
+        java.util.Arrays.fill(mediaBriefFieldRows, null);
         forcePackagesButton = null;
         timeoutExemptButton = null;
         importSettingsButton = null;
@@ -665,6 +698,32 @@ public final class SettingsActivity extends Activity {
         return header;
     }
 
+    /** 细线只划分完整设置单元，标题、控件和说明不拆开；不参与触摸或读屏。 */
+    private void addSettingDivider(LinearLayout panel) {
+        View divider = new View(this);
+        divider.setBackgroundColor(COLOR_DIVIDER);
+        divider.setAlpha(0.5f);
+        divider.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, 1);
+        params.setMargins(dp(4), dp(12), dp(4), dp(12));
+        panel.addView(divider, params);
+    }
+
+    private void addSettingSubheading(LinearLayout panel, String title) {
+        if (panel.getChildCount() > 0) addSettingDivider(panel);
+        TextView heading = text(title, 14, COLOR_PRIMARY);
+        heading.setTypeface(heading.getTypeface(), 1);
+        if (Build.VERSION.SDK_INT >= 28) heading.setAccessibilityHeading(true);
+        panel.addView(heading, matchWrap(dp(8)));
+    }
+
+    private TextView addSettingSummary(LinearLayout panel, String value) {
+        TextView summary = text(value, 13, COLOR_TEXT_SECONDARY);
+        summary.setLineSpacing(dp(2), 1f);
+        panel.addView(summary, matchWrap(dp(4)));
+        return summary;
+    }
+
     // Android framework（AOSP，Apache-2.0）公共接口，独立组合调用，未复制实现：
     // https://developer.android.com/reference/android/transition/TransitionManager
     // beginDelayedTransition/ChangeBounds 为 API 19，endTransitions 为 API 23；本项目最低 API 27。
@@ -694,6 +753,7 @@ public final class SettingsActivity extends Activity {
         header.setOnClickListener(view -> {
             if (sectionAnimating) return;
             if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
+            if (mediaFieldDragHandler != null) mediaFieldDragHandler.finish(false);
             boolean expanded = !expandedSections.remove(title);
             if (expanded) expandedSections.add(title);
             arrow.animate().cancel();
@@ -771,13 +831,8 @@ public final class SettingsActivity extends Activity {
         LinearLayout islandPanel = panel();
         islandCompatSwitch = createSwitch("转换超级岛内容为焦点通知");
         islandPanel.addView(islandCompatSwitch, matchWrap(dp(4)));
-        islandPanel.addView(text("焦点内容模式", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
-        islandTextModeField = choiceSpinner(new String[]{"展开全文本解析", "药丸左右拼接"},
-                pendingIslandTextMode, this::selectIslandTextMode);
-        islandPanel.addView(islandTextModeField.spinner, matchWrap(dp(4)));
-        islandPanel.addView(text(
-                "全文本：汇总可读文字；左右拼接：只取两侧并去重。",
-                13, COLOR_TEXT_SECONDARY), matchWrap(dp(4)));
+        addSettingSummary(islandPanel, "尝试转换符合条件的超级岛内容，原生焦点默认优先。解析方式和连接符见高级页“内容解析与拼接”。");
+        addSettingDivider(islandPanel);
 
         forcePackagesButton = new Button(this);
         forcePackagesButton.setText(forcePackagesLabel());
@@ -787,11 +842,13 @@ public final class SettingsActivity extends Activity {
         forcePackagesButton.setMinHeight(dp(52));
         forcePackagesButton.setOnClickListener(v -> showForcePackagesDialog(false));
         islandPanel.addView(forcePackagesButton, matchWrap(0));
+        addSettingSummary(islandPanel, "需开启上方转换开关；名单内应用有可转换内容时优先转换，与超时豁免名单独立。");
         root.addView(islandPanel, matchWrap(dp(12)));
 
         LinearLayout focusPanel = panel();
         manualWidthSwitch = createSwitch("限制焦点通知宽度");
         focusPanel.addView(manualWidthSwitch, matchWrap(dp(4)));
+        addSettingSummary(focusPanel, "开启后按下方数值限制显示宽度；关闭后跟随系统。触控范围在高级页独立设置。");
         LinearLayout widthRow = valueRow("最大宽度", pendingWidthDp + " dp");
         widthValueRow = widthRow;
         widthValue = (TextView) widthRow.getChildAt(1);
@@ -807,6 +864,7 @@ public final class SettingsActivity extends Activity {
             widthSeekBar.setProgress(DEFAULT_WIDTH_DP - MIN_WIDTH_DP);
             widthValue.setText(pendingWidthDp + " dp");
         }, () -> pendingWidthDp == DEFAULT_WIDTH_DP, () -> pendingManual);
+        addSettingDivider(focusPanel);
         LinearLayout landscapeWidthRow = valueRow("横屏最大宽度", pendingWidthLandscapeDp + " dp");
         landscapeWidthValueRow = landscapeWidthRow;
         focusPanel.addView(landscapeWidthRow, matchWrap(dp(2)));
@@ -831,12 +889,7 @@ public final class SettingsActivity extends Activity {
             landscapeWidthSeekBar.setProgress(pendingWidthLandscapeDp - MIN_WIDTH_DP);
             ((TextView) landscapeWidthRow.getChildAt(1)).setText(pendingWidthLandscapeDp + " dp");
         }, () -> pendingWidthLandscapeDp == FocusRestoreSettings.DEFAULT_WIDTH_LANDSCAPE_DP, () -> pendingManual);
-        mediaFocusSwitch = createSwitch("启用媒体焦点通知（实验性）");
-        focusPanel.addView(mediaFocusSwitch, matchWrap(dp(4)));
-        focusPanel.addView(text(
-                "媒体点击与流转设置见高级页“点击行为”。",
-                13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
-        hideNotificationIconsSwitch = createSwitch("隐藏其他通知图标（HyperOS 4）");
+        addSettingSubheading(focusPanel, "显示时长");
         LinearLayout maxDisplayRow = valueRow("最大显示时间（秒）", maxDisplayValue());
         focusMaxDisplayValue = (TextView) maxDisplayRow.getChildAt(1);
         focusPanel.addView(maxDisplayRow, matchWrap(dp(4)));
@@ -853,6 +906,7 @@ public final class SettingsActivity extends Activity {
         focusPanel.addView(text(
                 "到期只隐藏焦点，通知仍保留；支持两位小数。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
+        addSettingDivider(focusPanel);
         timeoutExemptButton = new Button(this);
         timeoutExemptButton.setText(timeoutExemptLabel());
         timeoutExemptButton.setAllCaps(false);
@@ -861,31 +915,61 @@ public final class SettingsActivity extends Activity {
         timeoutExemptButton.setMinHeight(dp(52));
         timeoutExemptButton.setOnClickListener(v -> showForcePackagesDialog(true));
         focusPanel.addView(timeoutExemptButton, matchWrap(dp(4)));
-        focusPanel.addView(text(
-                "豁免应用沿用系统显示时长。",
-                13, COLOR_TEXT_SECONDARY), matchWrap(dp(6)));
-        showFocusDividerSwitch = createSwitch("显示焦点分隔线");
-        focusPanel.addView(hideNotificationIconsSwitch, matchWrap(dp(4)));
-        focusPanel.addView(showFocusDividerSwitch, matchWrap(dp(4)));
+        addSettingSummary(focusPanel, "名单内应用不受本模块的最大显示时间限制，仍按系统原有规则显示。");
 
-        addCollapsibleSection(root, "焦点显示", focusPanel);
+        addCollapsibleSection(root, "显示宽度与时长", focusPanel);
 
         manualWidthSwitch.setChecked(pendingManual);
         widthSeekBar.setProgress(pendingWidthDp - MIN_WIDTH_DP);
         widthValue.setText(pendingWidthDp + " dp");
         islandCompatSwitch.setChecked(pendingIslandCompat);
-        syncIslandTextModeField();
-        hideNotificationIconsSwitch.setChecked(pendingHideNotificationIcons);
-        // 通知横幅背景开关在“点击行为”页创建，勾选状态在那里同步（此处它们尚未创建）。
-        if (mediaFocusSwitch != null) mediaFocusSwitch.setChecked(pendingMediaFocusEnabled);
-        showFocusDividerSwitch.setChecked(pendingShowFocusDivider);
         updateModeButtons();
         updateWidthControls();
         updateForcePackagesButton();
         updateTimeoutExemptButton();
-        updateExperimentalControls();
+        updateModeSpecificControls();
+        updateFocusDividerControls();
         installSettingsListeners();
         refreshDefaultActions();
+    }
+
+    private void buildMediaSection(LinearLayout root) {
+        LinearLayout mediaPanel = panel();
+        mediaFocusSwitch = createSwitch("启用媒体焦点通知（实验性）");
+        mediaPanel.addView(mediaFocusSwitch, matchWrap(dp(4)));
+        addSettingSummary(mediaPanel, "在状态栏显示当前媒体。关闭后保留下方配置；实际显示和横幅兼容性因 ROM 而异。");
+        addSettingSubheading(mediaPanel, "显示内容");
+        mediaBriefDisplaySwitch = createSwitch("媒体焦点简短显示");
+        mediaPanel.addView(mediaBriefDisplaySwitch, matchWrap(dp(4)));
+        mediaBriefSummary = addSettingSummary(mediaPanel, "");
+        mediaBriefFieldsContainer = new LinearLayout(this);
+        mediaBriefFieldsContainer.setOrientation(LinearLayout.VERTICAL);
+        mediaBriefFieldsContainer.setPadding(0, dp(6), 0, dp(6));
+        mediaPanel.addView(mediaBriefFieldsContainer, matchWrap(dp(8)));
+        rebuildMediaBriefFieldRows();
+        mediaFieldDragHandler = new MediaFieldDragHandler();
+        mediaBriefFieldsContainer.setOnTouchListener(mediaFieldDragHandler);
+        addSettingSubheading(mediaPanel, "点击与流转");
+        mediaClickSummary = addSettingSummary(mediaPanel, "");
+        mediaFocusClickLabel = text("点击媒体焦点通知", 15, COLOR_TEXT_PRIMARY);
+        mediaPanel.addView(mediaFocusClickLabel, matchWrap(dp(4)));
+        mediaFocusClickField = choiceSpinner(
+                new String[]{"展开媒体横幅", "直接展开流转界面"},
+                pendingMediaFocusCastDirect ? 1 : 0,
+                position -> selectMediaFocusClick(position == 1));
+        mediaPanel.addView(mediaFocusClickField.spinner, matchWrap(dp(4)));
+        addSettingDivider(mediaPanel);
+        mediaFocusCastPickerLabel = text("无缝流转入口", 15, COLOR_TEXT_PRIMARY);
+        mediaPanel.addView(mediaFocusCastPickerLabel, matchWrap(dp(4)));
+        mediaFocusCastPickerField = choiceSpinner(
+                new String[]{"小米妙播", "安卓原生"},
+                pendingMediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_MIPLAY ? 0 : 1,
+                position -> selectMediaFocusCastPicker(position == 0
+                        ? FocusRestoreSettings.CAST_PICKER_MIPLAY
+                        : FocusRestoreSettings.CAST_PICKER_NATIVE));
+        mediaPanel.addView(mediaFocusCastPickerField.spinner, matchWrap(dp(4)));
+        addSettingSummary(mediaPanel, "适用于直接展开流转及媒体横幅内的流转入口；妙播不可用时回退安卓原生。");
+        addCollapsibleSection(root, "媒体焦点（实验性）", mediaPanel);
     }
 
     private void buildFocusDividerControls(LinearLayout panel) {
@@ -903,14 +987,17 @@ public final class SettingsActivity extends Activity {
                 "focused_notif_view_padding_start", 6f, pendingHookMode);
         float nativeWidth = FocusSystemDimensions.dimensionDp(this,
                 "line_width", 1.3799744f, pendingHookMode);
+        addSettingDivider(panel);
         focusDividerStartSeekBar = appearanceSlider(panel, "分隔线前间距（时间侧）", -24, 24,
                 pendingFocusDividerStartDp, value -> pendingFocusDividerStartDp = value,
                 FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP,
                 FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_START_DP, nativeStart);
+        addSettingDivider(panel);
         focusDividerEndSeekBar = appearanceSlider(panel, "分隔线后间距（焦点侧）", -24, 24,
                 pendingFocusDividerEndDp, value -> pendingFocusDividerEndDp = value,
                 FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP,
                 FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_END_DP, nativeEnd);
+        addSettingDivider(panel);
         focusDividerWidthSeekBar = appearanceSlider(panel, "分隔线粗细", 1, 4,
                 pendingFocusDividerWidthDp, value -> pendingFocusDividerWidthDp = value, 0, 0, nativeWidth);
         panel.addView(text("负间距允许重叠；点击下方文字恢复默认或跟随系统。",
@@ -997,7 +1084,20 @@ public final class SettingsActivity extends Activity {
     }
 
     private void buildAdvancedPage(LinearLayout root) {
+        buildIconAndDividerSection(root);
+        buildContentSection(root);
+        buildInteractionSection(root);
+        buildMediaSection(root);
+        buildStatusBarSection(root);
+        buildTouchSection(root);
+        buildScrollCompatibilitySection(root);
+        buildDebugSection(root);
+        syncAdvancedControls();
+    }
+
+    private void buildIconAndDividerSection(LinearLayout root) {
         LinearLayout iconPanel = panel();
+        addSettingSubheading(iconPanel, "图标来源");
         iconPanel.addView(text("焦点图标优先级（按住拖动排序）", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
         focusIconOrderContainer = new LinearLayout(this);
         // 首尾换位按手指到行中心判定，无需预留半行高的大留白。
@@ -1011,69 +1111,79 @@ public final class SettingsActivity extends Activity {
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         showIslandIconSwitch = createSwitch("优先使用超级岛解析图标");
         tintIslandIconSwitch = createSwitch("超级岛解析图标与通知小图标跟随状态栏反色");
+        addSettingDivider(iconPanel);
         iconPanel.addView(showIslandIconSwitch, matchWrap(dp(4)));
+        addSettingSummary(iconPanel, "没有可用的解析图标时，按上方优先级选择；不改变设备通知图标。");
+        addSettingSubheading(iconPanel, "图标颜色");
         iconPanel.addView(tintIslandIconSwitch, matchWrap(dp(4)));
         iconPanel.addView(text("应用图标保留原色；焦点专用图标沿用通知浅深版本。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        addSettingDivider(iconPanel);
+        tintDeviceIconSwitch = createSwitch("设备通知图标跟随状态栏反色");
+        iconPanel.addView(tintDeviceIconSwitch, matchWrap(dp(4)));
+        addSettingSummary(iconPanel, "仅影响设备通知图标；关闭保留原色，不参与上方图标排序。");
+        addSettingSubheading(iconPanel, "图标尺寸与间距");
         focusIconSizeSeekBar = appearanceSlider(iconPanel, "焦点图标尺寸", 1, 32,
                 pendingFocusIconSizeDp, value -> pendingFocusIconSizeDp = value, 0,
                 FocusRestoreSettings.DEFAULT_FOCUS_ICON_SIZE_DP,
                 systemDimensionDp("focused_notif_icon_size", 16f));
+        addSettingDivider(iconPanel);
         focusIconTextGapSeekBar = appearanceSlider(iconPanel, "图标与文字间距", 0, 24,
                 pendingFocusIconTextGapDp, value -> pendingFocusIconTextGapDp = value,
                 FocusRestoreSettings.DEFAULT_FOCUS_ICON_TEXT_GAP_DP,
                 FocusRestoreSettings.DEFAULT_FOCUS_ICON_TEXT_GAP_DP,
                 FocusSystemDimensions.iconTextGapDp(this, pendingHookMode));
-        addCollapsibleSection(root, "焦点图标", iconPanel);
-        focusDividerOptionsPanel = panel();
+        addSettingSubheading(iconPanel, "焦点分隔线");
+        showFocusDividerSwitch = createSwitch("显示焦点分隔线");
+        iconPanel.addView(showFocusDividerSwitch, matchWrap(dp(4)));
+        dividerSummary = addSettingSummary(iconPanel, "");
+        focusDividerOptionsPanel = new LinearLayout(this);
+        focusDividerOptionsPanel.setOrientation(LinearLayout.VERTICAL);
         buildFocusDividerControls(focusDividerOptionsPanel);
-        addCollapsibleSection(root, "焦点分隔线", focusDividerOptionsPanel);
-        updateFocusDividerControls();
-        LinearLayout deviceIconPanel = panel();
-        tintDeviceIconSwitch = createSwitch("设备通知图标跟随状态栏反色");
-        deviceIconPanel.addView(tintDeviceIconSwitch, matchWrap(dp(4)));
-        deviceIconPanel.addView(text("关闭保留原色；设备图标不参与排序。",
-                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
-        addCollapsibleSection(root, "设备通知图标", deviceIconPanel);
+        iconPanel.addView(focusDividerOptionsPanel, matchWrap(dp(8)));
+        addCollapsibleSection(root, "图标与分隔线", iconPanel);
+    }
 
+    private void buildContentSection(LinearLayout root) {
+        LinearLayout contentPanel = panel();
+        contentPanel.addView(text("焦点内容模式", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        islandTextModeField = choiceSpinner(new String[]{"展开全文本解析", "药丸左右拼接"},
+                pendingIslandTextMode, this::selectIslandTextMode);
+        contentPanel.addView(islandTextModeField.spinner, matchWrap(dp(4)));
+        contentModeSummary = addSettingSummary(contentPanel, "");
+        addSettingDivider(contentPanel);
+        contentPanel.addView(text("普通内容连接符", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        generalSeparatorInput = input("默认：·，允许留空");
+        generalSeparatorInput.setText(pendingGeneralSeparator);
+        contentPanel.addView(generalSeparatorInput, matchWrap(dp(4)));
+        addSettingSummary(contentPanel, "用于模块拼接普通文字片段；允许留空，不改写通知自带的文本布局。");
+        addSettingDivider(contentPanel);
+        contentPanel.addView(text("左右区域连接符", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+        sideSeparatorInput = input("默认：·，允许留空");
+        sideSeparatorInput.setText(pendingSideSeparator);
+        contentPanel.addView(sideSeparatorInput, matchWrap(dp(4)));
+        addSettingSummary(contentPanel, "用于超级岛左、右区域文字之间的拼接，允许留空。");
+        addCollapsibleSection(root, "内容解析与拼接", contentPanel);
+    }
+
+    private void buildInteractionSection(LinearLayout root) {
         LinearLayout interactionPanel = panel();
+        addSettingSubheading(interactionPanel, "短按");
         independentFocusBannerSwitch = createSwitch("点击焦点通知展开横幅（实验性）");
         interactionPanel.addView(independentFocusBannerSwitch, matchWrap(dp(4)));
         interactionPanel.addView(text(
                 "点击外侧收起横幅。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
-        nativeBannerOptionsPanel = new LinearLayout(this);
-        nativeBannerOptionsPanel.setOrientation(LinearLayout.VERTICAL);
+        addSettingDivider(interactionPanel);
         bannerBackgroundLabel = text("通知横幅背景", 15, COLOR_TEXT_PRIMARY);
-        nativeBannerOptionsPanel.addView(bannerBackgroundLabel, matchWrap(dp(4)));
+        interactionPanel.addView(bannerBackgroundLabel, matchWrap(dp(4)));
         bannerBackgroundField = choiceSpinner(
                 new String[]{"统一使用纯色背景", "使用普通通知背景"},
                 pendingSpecialBannerNormalBackground ? 0 : 1,
                 position -> selectBannerBackground(position == 0));
-        nativeBannerOptionsPanel.addView(bannerBackgroundField.spinner, matchWrap(dp(4)));
-        mediaFocusClickLabel = text("点击媒体焦点通知", 15, COLOR_TEXT_PRIMARY);
-        nativeBannerOptionsPanel.addView(mediaFocusClickLabel, matchWrap(dp(6)));
-        mediaFocusClickField = choiceSpinner(
-                new String[]{"展开媒体横幅", "直接展开流转界面"},
-                pendingMediaFocusCastDirect ? 1 : 0,
-                position -> selectMediaFocusClick(position == 1));
-        nativeBannerOptionsPanel.addView(mediaFocusClickField.spinner, matchWrap(dp(4)));
-        mediaFocusCastPickerLabel = text("无缝流转入口", 15, COLOR_TEXT_PRIMARY);
-        nativeBannerOptionsPanel.addView(mediaFocusCastPickerLabel, matchWrap(dp(6)));
-        mediaFocusCastPickerField = choiceSpinner(
-                new String[]{"小米妙播", "安卓原生"},
-                pendingMediaFocusCastPicker == FocusRestoreSettings.CAST_PICKER_MIPLAY ? 0 : 1,
-                position -> selectMediaFocusCastPicker(position == 0
-                        ? FocusRestoreSettings.CAST_PICKER_MIPLAY
-                        : FocusRestoreSettings.CAST_PICKER_NATIVE));
-        nativeBannerOptionsPanel.addView(mediaFocusCastPickerField.spinner, matchWrap(dp(4)));
-        nativeBannerOptionsPanel.addView(text(
-                "妙播不可用时回退安卓原生。",
-                13, COLOR_TEXT_SECONDARY), matchWrap(dp(2)));
-        interactionPanel.addView(nativeBannerOptionsPanel, matchWrap(dp(2)));
-        interactionPanel.addView(text(
-                "媒体选项需启用媒体焦点；横幅兼容性因 ROM 而异。",
-                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        interactionPanel.addView(bannerBackgroundField.spinner, matchWrap(dp(4)));
+        addSettingSummary(interactionPanel, "需开启上方“点击展开横幅”；横幅兼容性因 ROM 而异。媒体点击方式见“媒体焦点”。");
+        addSettingSubheading(interactionPanel, "长按");
         // 长按直接走通知列表点击，不能归入短按横幅子项或旧点击互斥链。
         longPressNotificationRowClickSwitch = createSwitch("长按焦点通知模拟通知列表点击（实验性）");
         interactionPanel.addView(longPressNotificationRowClickSwitch, matchWrap(dp(4)));
@@ -1097,17 +1207,44 @@ public final class SettingsActivity extends Activity {
             longPressSecondsSeekBar.setProgress(Math.round(pendingLongPressSeconds * 10f) - 2);
             longPressSecondsValue.setText(String.format(Locale.US, "%.1f 秒", pendingLongPressSeconds));
         }, () -> pendingLongPressSeconds == FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS, () -> pendingLongPressNotificationRowClick);
+        addSettingSubheading(interactionPanel, "左右滑动");
         focusSwipeEnabledSwitch = createSwitch("左右滑动切换和收起焦点通知（实验性）");
         interactionPanel.addView(focusSwipeEnabledSwitch, matchWrap(dp(4)));
         interactionPanel.addView(text(
                 "左右滑动切换；空白位置收起，再滑可恢复。通知仍保留。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        addSettingSubheading(interactionPanel, "旧版点击兼容");
+        legacyClickSummary = addSettingSummary(interactionPanel, "");
         allowFocusClickSwitch = createSwitch("旧版：打开通知内容（实验性）");
         notificationRowClickFallbackSwitch = createSwitch(
                 "直接打开失败时模拟通知列表点击（实验性）");
         interactionPanel.addView(allowFocusClickSwitch, matchWrap(dp(4)));
+        addSettingSummary(interactionPanel, "需先关闭“点击展开横幅”；不影响独立的长按功能。");
+        addSettingDivider(interactionPanel);
         interactionPanel.addView(notificationRowClickFallbackSwitch, matchWrap(0));
-        addCollapsibleSection(root, "点击行为", interactionPanel);
+        addSettingSummary(interactionPanel, "仅用于旧版直接打开的失败兜底，需同时开启上方“旧版：打开通知内容”。");
+        addCollapsibleSection(root, "点击与手势", interactionPanel);
+    }
+
+    private void buildStatusBarSection(LinearLayout root) {
+        LinearLayout timePanel = panel();
+        hideNotificationIconsSwitch = createSwitch("隐藏其他通知图标（HyperOS 4）");
+        timePanel.addView(hideNotificationIconsSwitch, matchWrap(dp(4)));
+        addSettingSummary(timePanel, "仅在 HyperOS 4 焦点显示期间隐藏其他通知图标；焦点收起后恢复。");
+        addSettingSubheading(timePanel, "隐藏状态栏时间");
+        addSettingSummary(timePanel, "以下三项独立控制对应焦点显示期间的时钟；隐藏时同步隐藏时间旁的分隔线，焦点收起后恢复。");
+        hideTimeNormalSwitch = createSwitch("普通焦点隐藏时间");
+        hideTimeMediaSwitch = createSwitch("媒体焦点隐藏时间");
+        hideTimeDeviceSwitch = createSwitch("设备通知隐藏时间");
+        timePanel.addView(hideTimeNormalSwitch, matchWrap(dp(4)));
+        addSettingDivider(timePanel);
+        timePanel.addView(hideTimeMediaSwitch, matchWrap(dp(4)));
+        addSettingDivider(timePanel);
+        timePanel.addView(hideTimeDeviceSwitch, matchWrap(0));
+        addCollapsibleSection(root, "状态栏显示", timePanel);
+    }
+
+    private void buildTouchSection(LinearLayout root) {
         LinearLayout touchPanel = panel();
         customTouchWidthSwitch = createSwitch("自定义焦点触控范围");
         touchPanel.addView(customTouchWidthSwitch, matchWrap(dp(4)));
@@ -1129,6 +1266,7 @@ public final class SettingsActivity extends Activity {
             touchWidthSeekBar.setProgress(pendingTouchWidthDp - MIN_WIDTH_DP);
             touchWidthValue.setText(pendingTouchWidthDp + " dp");
         }, () -> pendingTouchWidthDp == FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_DP, () -> pendingCustomTouchWidth);
+        addSettingDivider(touchWidthOptionsPanel);
         LinearLayout touchLandscapeRow = valueRow("横屏触控宽度", pendingTouchWidthLandscapeDp + " dp");
         touchWidthLandscapeValue = (TextView) touchLandscapeRow.getChildAt(1);
         touchWidthOptionsPanel.addView(touchLandscapeRow, matchWrap(0));
@@ -1147,12 +1285,16 @@ public final class SettingsActivity extends Activity {
         addCollapsibleSection(root, "触控范围", touchPanel);
         customTouchWidthSwitch.setChecked(pendingCustomTouchWidth);
         updateTouchWidthControls();
+    }
 
+    private void buildScrollCompatibilitySection(LinearLayout root) {
         LinearLayout delayPanel = panel();
+        addSettingSubheading(delayPanel, "文字滚动");
         marqueeBounceSwitch = createSwitch("启用往返滚动");
         compatRetrySwitch = createSwitch("兼容重试模式");
         delayPanel.addView(marqueeBounceSwitch, matchWrap(dp(4)));
-        delayPanel.addView(compatRetrySwitch, matchWrap(dp(4)));
+        addSettingSummary(delayPanel, "开启后文字在两端之间往返滚动；启动延迟用于控制开始滚动前的等待时间。");
+        addSettingDivider(delayPanel);
         LinearLayout delayRow = valueRow("滚动启动延迟", "0.2 秒");
         delayValue = (TextView) delayRow.getChildAt(1);
         delayPanel.addView(delayRow, matchWrap(0));
@@ -1166,18 +1308,21 @@ public final class SettingsActivity extends Activity {
             delaySeekBar.setProgress(pendingDelayMs / 100);
             delayValue.setText(String.format(Locale.US, "%.1f 秒", pendingDelayMs / 1000f));
         }, () -> pendingDelayMs == DEFAULT_MARQUEE_DELAY_MS, () -> true);
+        addSettingSubheading(delayPanel, "兼容处理");
+        delayPanel.addView(compatRetrySwitch, matchWrap(dp(4)));
+        addSettingSummary(delayPanel, "默认关闭。遇到焦点文字滚动刷新异常时，可尝试开启。");
+        addSettingDivider(delayPanel);
+        interceptElementAnimationSwitch = createSwitch("拦截应用退出/点击时的元素动画（OS3）");
+        delayPanel.addView(interceptElementAnimationSwitch, matchWrap(dp(4)));
+        addSettingSummary(delayPanel, "仅适用于 OS3，默认开启。拦截应用与焦点图标之间的元素转场；关闭后恢复系统判断。仍可能出现图标残留。");
         addCollapsibleSection(root, "滚动与兼容", delayPanel);
-        LinearLayout separatorPanel = panel();
-        separatorPanel.addView(text("普通内容", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
-        generalSeparatorInput = input("默认：·，允许留空");
-        generalSeparatorInput.setText(pendingGeneralSeparator);
-        separatorPanel.addView(generalSeparatorInput, matchWrap(dp(8)));
-        separatorPanel.addView(text("左右区域", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
-        sideSeparatorInput = input("默认：·，允许留空");
-        sideSeparatorInput.setText(pendingSideSeparator);
-        separatorPanel.addView(sideSeparatorInput, matchWrap(0));
-        addCollapsibleSection(root, "内容连接符", separatorPanel);
+    }
 
+    private void syncAdvancedControls() {
+        hideNotificationIconsSwitch.setChecked(pendingHideNotificationIcons);
+        showFocusDividerSwitch.setChecked(pendingShowFocusDivider);
+        mediaFocusSwitch.setChecked(pendingMediaFocusEnabled);
+        syncIslandTextModeField();
         showIslandIconSwitch.setChecked(pendingShowIslandIcon);
         tintIslandIconSwitch.setChecked(pendingTintIslandIcon);
         tintDeviceIconSwitch.setChecked(pendingTintDeviceIcon);
@@ -1189,24 +1334,34 @@ public final class SettingsActivity extends Activity {
         syncBannerBackgroundField();
         syncMediaFocusClickField();
         syncMediaFocusCastPickerField();
+        hideTimeNormalSwitch.setChecked(pendingHideTimeNormal);
+        hideTimeMediaSwitch.setChecked(pendingHideTimeMedia);
+        hideTimeDeviceSwitch.setChecked(pendingHideTimeDevice);
+        mediaBriefDisplaySwitch.setChecked(pendingMediaBriefDisplay);
+        interceptElementAnimationSwitch.setChecked(pendingInterceptElementAnimation);
+        updateMediaBriefControls();
         marqueeBounceSwitch.setChecked(pendingMarqueeBounce);
         compatRetrySwitch.setChecked(pendingCompatRetry);
         delaySeekBar.setProgress(pendingDelayMs / 100);
         delayValue.setText(String.format(Locale.US, "%.1f 秒", pendingDelayMs / 1000f));
+        updateModeSpecificControls();
+        updateFocusDividerControls();
+        installSettingsListeners();
+        refreshDefaultActions();
+    }
 
+    private void buildDebugSection(LinearLayout root) {
         if (BuildConfig.DEBUG) {
             LinearLayout debugPanel = panel();
             disableIslandPropertySwitch = createSwitch("覆盖 feature.island.debug");
             disableIslandFeatureCacheSwitch = createSwitch("禁用 FEATURE_DYNAMIC_ISLAND");
             debugPanel.addView(disableIslandPropertySwitch, matchWrap(dp(4)));
+            addSettingDivider(debugPanel);
             debugPanel.addView(disableIslandFeatureCacheSwitch, matchWrap(0));
             addCollapsibleSection(root, "内部兼容开关", debugPanel);
             disableIslandPropertySwitch.setChecked(pendingDisableIslandProperty);
             disableIslandFeatureCacheSwitch.setChecked(pendingDisableIslandFeatureCache);
         }
-        updateExperimentalControls();
-        installSettingsListeners();
-        refreshDefaultActions();
     }
 
     /** The 关于 page: app information, links and licence, kept off the settings and advanced pages. */
@@ -1576,6 +1731,12 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.mediaFocusNativeBanner", pendingMediaFocusNativeBanner);
         outState.putInt("m3.mediaFocusCastPicker", pendingMediaFocusCastPicker);
         outState.putBoolean("m3.mediaFocusCastDirect", pendingMediaFocusCastDirect);
+        outState.putBoolean("m3.hideTimeNormal", pendingHideTimeNormal);
+        outState.putBoolean("m3.hideTimeMedia", pendingHideTimeMedia);
+        outState.putBoolean("m3.hideTimeDevice", pendingHideTimeDevice);
+        outState.putBoolean("m3.mediaBriefDisplay", pendingMediaBriefDisplay);
+        outState.putString("m3.mediaBriefFields", MediaBriefFields.encode(pendingMediaBriefFields));
+        outState.putBoolean("m3.interceptElementAnimation", pendingInterceptElementAnimation);
         
         outState.putInt("m3.delay", pendingDelayMs);
         outState.putBoolean("m3.retry", pendingCompatRetry);
@@ -1627,6 +1788,14 @@ public final class SettingsActivity extends Activity {
         currentPage = Math.max(0, Math.min(2, state.getInt("m3.page", 0)));
         ArrayList<String> expanded = state.getStringArrayList("ui.expandedSections");
         if (expanded != null) expandedSections.addAll(expanded);
+        // 仅迁移本次界面的展开状态，不触碰持久设置或配置备份。
+        migrateExpandedSection("显示宽度与时长", "焦点显示");
+        migrateExpandedSection("图标与分隔线", "焦点图标", "焦点分隔线", "设备通知图标");
+        migrateExpandedSection("点击与手势", "点击行为");
+        migrateExpandedSection("媒体焦点（实验性）", "媒体焦点显示");
+        migrateExpandedSection("状态栏显示", "隐藏状态栏时间");
+        migrateExpandedSection("滚动与兼容", "状态栏动画");
+        migrateExpandedSection("内容解析与拼接", "内容连接符");
         if (isSnapshottedAfterStore(state)) {
             // Keep the freshly loaded store: replaying this snapshot would resurrect values the
             // user already replaced and, via m3.savePending, write them back permanently.
@@ -1647,6 +1816,14 @@ public final class SettingsActivity extends Activity {
                 state.getInt("m3.mediaFocusCastPicker", pendingMediaFocusCastPicker));
         pendingMediaFocusCastDirect = state.getBoolean("m3.mediaFocusCastDirect",
                 pendingMediaFocusCastDirect);
+        pendingHideTimeNormal = state.getBoolean("m3.hideTimeNormal", pendingHideTimeNormal);
+        pendingHideTimeMedia = state.getBoolean("m3.hideTimeMedia", pendingHideTimeMedia);
+        pendingHideTimeDevice = state.getBoolean("m3.hideTimeDevice", pendingHideTimeDevice);
+        pendingMediaBriefDisplay = state.getBoolean("m3.mediaBriefDisplay", pendingMediaBriefDisplay);
+        pendingMediaBriefFields = MediaBriefFields.parse(state.getString("m3.mediaBriefFields",
+                MediaBriefFields.DEFAULT_ENCODED));
+        pendingInterceptElementAnimation = state.getBoolean("m3.interceptElementAnimation",
+                pendingInterceptElementAnimation);
         
         pendingDelayMs = state.getInt("m3.delay", pendingDelayMs);
         pendingCompatRetry = state.getBoolean("m3.retry", pendingCompatRetry);
@@ -1713,6 +1890,12 @@ public final class SettingsActivity extends Activity {
         if (timeoutExempt != null) {
             pendingTimeoutExemptPackages = new HashSet<>(InputLimits.sanitizePackages(
                     new java.util.LinkedHashSet<>(timeoutExempt)));
+        }
+    }
+
+    private void migrateExpandedSection(String title, String... oldTitles) {
+        for (String oldTitle : oldTitles) {
+            if (expandedSections.remove(oldTitle)) expandedSections.add(title);
         }
     }
 
@@ -1906,6 +2089,29 @@ public final class SettingsActivity extends Activity {
             updateFocusDividerControls();
             markPending();
         });
+        if (hideTimeNormalSwitch != null) hideTimeNormalSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingHideTimeNormal = c;
+            markPending();
+        });
+        if (hideTimeMediaSwitch != null) hideTimeMediaSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingHideTimeMedia = c;
+            markPending();
+        });
+        if (hideTimeDeviceSwitch != null) hideTimeDeviceSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingHideTimeDevice = c;
+            markPending();
+        });
+        if (mediaBriefDisplaySwitch != null) mediaBriefDisplaySwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingMediaBriefDisplay = c;
+            updateMediaBriefControls();
+            markPending();
+        });
+        if (interceptElementAnimationSwitch != null) {
+            interceptElementAnimationSwitch.setOnCheckedChangeListener((b, c) -> {
+                pendingInterceptElementAnimation = c;
+                markPending();
+            });
+        }
     }
 
     private String forcePackagesLabel() {
@@ -2124,11 +2330,220 @@ public final class SettingsActivity extends Activity {
         }
     }
 
+    private void rebuildMediaBriefFieldRows() {
+        if (mediaBriefFieldsContainer == null) return;
+        mediaBriefFieldsContainer.removeAllViews();
+        java.util.List<Integer> order = orderedMediaFields();
+        int index = 0;
+        for (int field : order) {
+            mediaBriefFieldRows[index++] = mediaBriefFieldRow(field);
+            mediaBriefFieldsContainer.addView(mediaBriefFieldRows[index - 1], matchWrap(dp(2)));
+        }
+        for (int i = index; i < MediaBriefFields.FIELD_COUNT; i++) mediaBriefFieldRows[i] = null;
+    }
+
+    private java.util.List<Integer> orderedMediaFields() {
+        java.util.List<Integer> order = new java.util.ArrayList<>(MediaBriefFields.FIELD_COUNT);
+        for (int field : pendingMediaBriefFields) {
+            if (field >= 0 && field < MediaBriefFields.FIELD_COUNT && !order.contains(field)) {
+                order.add(field);
+            }
+        }
+        for (int field = 0; field < MediaBriefFields.FIELD_COUNT; field++) {
+            if (!order.contains(field)) order.add(field);
+        }
+        return order;
+    }
+
+    private LinearLayout mediaBriefFieldRow(int field) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setTag(field);
+        Switch toggle = new Switch(this);
+        toggle.setText(MediaBriefFields.label(field));
+        toggle.setTextSize(15);
+        styleSwitch(toggle);
+        // 先置位再挂监听，重建行时不触发 markPending。
+        toggle.setChecked(pendingMediaBriefFields.contains(field));
+        toggle.setOnCheckedChangeListener((button, checked) -> {
+            refreshMediaBriefFields();
+            markPending();
+        });
+        row.addView(toggle, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        TextView grip = text("≡", 17, COLOR_TEXT_SECONDARY);
+        grip.setGravity(Gravity.CENTER);
+        grip.setPadding(dp(10), 0, dp(10), 0);
+        row.addView(grip, new LinearLayout.LayoutParams(dp(40), dp(48)));
+        return row;
+    }
+
+    /** 按当前行顺序收集勾选字段，作为持久化的有序列表。 */
+    private void refreshMediaBriefFields() {
+        java.util.List<Integer> fields = new java.util.ArrayList<>(MediaBriefFields.FIELD_COUNT);
+        for (LinearLayout row : mediaBriefFieldRows) {
+            if (row == null) continue;
+            Switch toggle = (Switch) row.getChildAt(0);
+            if (toggle != null && toggle.isChecked()) {
+                int field = (Integer) row.getTag();
+                if (!fields.contains(field)) fields.add(field);
+            }
+        }
+        pendingMediaBriefFields = fields;
+    }
+
+    private void updateMediaBriefControls() {
+        if (mediaBriefFieldsContainer == null) return;
+        boolean editable = pendingMediaFocusEnabled && pendingMediaBriefDisplay;
+        setModeSpecificSwitchEnabled(mediaBriefDisplaySwitch, pendingMediaFocusEnabled);
+        if (mediaBriefSummary != null) mediaBriefSummary.setText(!pendingMediaFocusEnabled
+                ? "需先开启“启用媒体焦点通知”。关闭媒体时保留字段选择与顺序。"
+                : !pendingMediaBriefDisplay
+                        ? "开启后可勾选字段并按住行拖动排序，仅影响状态栏内容，不影响媒体横幅。"
+                        : "按下方顺序显示勾选的字段；按住行拖动排序。仅影响状态栏内容，不影响媒体横幅。");
+        mediaBriefFieldsContainer.setAlpha(editable ? 1f : 0.38f);
+        for (LinearLayout row : mediaBriefFieldRows) {
+            if (row == null) continue;
+            Switch toggle = (Switch) row.getChildAt(0);
+            if (toggle != null) toggle.setEnabled(editable);
+        }
+    }
+
+    private final class MediaFieldDragHandler implements View.OnTouchListener {
+        private final int touchSlop = ViewConfiguration.get(SettingsActivity.this).getScaledTouchSlop();
+        private int pointerId = -1;
+        private LinearLayout touchedRow;
+        private boolean dragging;
+        private float downY, pointerOffset;
+        private final Runnable armDrag = () -> {
+            if (destroyed || touchedRow == null || mediaFieldDragHandler != this
+                    || !pendingMediaFocusEnabled || !pendingMediaBriefDisplay
+                    || mediaBriefFieldsContainer == null
+                    || !mediaBriefFieldsContainer.isAttachedToWindow()) return;
+            dragging = true;
+            mediaBriefFieldsContainer.getParent().requestDisallowInterceptTouchEvent(true);
+            touchedRow.setElevation(dp(6));
+            touchedRow.setAlpha(0.94f);
+            touchedRow.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+        };
+
+        @Override
+        public boolean onTouch(View view, MotionEvent event) {
+            if (!pendingMediaFocusEnabled || !pendingMediaBriefDisplay) return false;
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                finish(false);
+                for (LinearLayout row : mediaBriefFieldRows) {
+                    if (row != null && event.getY() >= row.getTop() && event.getY() < row.getBottom()) {
+                        touchedRow = row;
+                        break;
+                    }
+                }
+                if (touchedRow == null) return false;
+                pointerId = event.getPointerId(0);
+                downY = event.getY();
+                pointerOffset = downY - touchedRow.getTop();
+                view.postDelayed(armDrag, ViewConfiguration.getLongPressTimeout());
+                return true;
+            }
+            if (touchedRow == null) return false;
+            if (action == MotionEvent.ACTION_CANCEL || event.getPointerCount() != 1
+                    || event.findPointerIndex(pointerId) < 0) {
+                finish(false);
+                return true;
+            }
+            if (action == MotionEvent.ACTION_MOVE) {
+                if (!dragging) {
+                    if (Math.abs(event.getY() - downY) > touchSlop) finish(false);
+                    return true;
+                }
+                moveRow(event.getY());
+                return true;
+            }
+            if (action == MotionEvent.ACTION_UP) {
+                if (dragging) moveRow(event.getY());
+                finish(dragging);
+                return true;
+            }
+            return true;
+        }
+
+        private int draggingSlot() {
+            for (int slot = 0; slot < mediaBriefFieldRows.length; slot++) {
+                if (mediaBriefFieldRows[slot] == touchedRow) return slot;
+            }
+            return -1;
+        }
+
+        private float slotTop(int slot) {
+            float top = mediaBriefFieldsContainer.getPaddingTop();
+            for (int index = 0; index < slot; index++) {
+                LinearLayout row = mediaBriefFieldRows[index];
+                LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) row.getLayoutParams();
+                top += params.topMargin + row.getHeight() + params.bottomMargin;
+            }
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams)
+                    mediaBriefFieldRows[slot].getLayoutParams();
+            return top + params.topMargin;
+        }
+
+        private void moveRow(float pointerY) {
+            int slot = draggingSlot();
+            if (slot < 0) return;
+            float[] slotCenters = new float[MediaBriefFields.FIELD_COUNT];
+            for (int index = 0; index < slotCenters.length; index++) {
+                slotCenters[index] = slotTop(index) + mediaBriefFieldRows[index].getHeight() / 2f;
+            }
+            int target = FocusIconDragGeometry.targetSlot(pointerY, pointerOffset,
+                    touchedRow.getHeight(), slot, slotCenters);
+            while (slot > target) {
+                mediaBriefFieldRows[slot] = mediaBriefFieldRows[slot - 1];
+                mediaBriefFieldRows[--slot] = touchedRow;
+            }
+            while (slot < target) {
+                mediaBriefFieldRows[slot] = mediaBriefFieldRows[slot + 1];
+                mediaBriefFieldRows[++slot] = touchedRow;
+            }
+            float top = Math.max(0f, Math.min(pointerY - pointerOffset,
+                    mediaBriefFieldsContainer.getHeight() - touchedRow.getHeight()));
+            for (int index = 0; index < mediaBriefFieldRows.length; index++) {
+                LinearLayout row = mediaBriefFieldRows[index];
+                if (row == null) continue;
+                row.setTranslationY((row == touchedRow ? top : slotTop(index)) - row.getTop());
+            }
+        }
+
+        void finish(boolean commit) {
+            if (mediaBriefFieldsContainer == null) return;
+            mediaBriefFieldsContainer.removeCallbacks(armDrag);
+            if (touchedRow == null) return;
+            if (commit && dragging) refreshMediaBriefFields();
+            for (LinearLayout row : mediaBriefFieldRows) {
+                if (row == null) continue;
+                row.setTranslationY(0f);
+                row.setElevation(0f);
+                row.setAlpha(1f);
+            }
+            touchedRow = null;
+            pointerId = -1;
+            if (dragging) {
+                rebuildMediaBriefFieldRows();
+                updateMediaBriefControls();
+                mediaBriefFieldsContainer.getParent().requestDisallowInterceptTouchEvent(false);
+                if (commit) markPending();
+            }
+            dragging = false;
+        }
+    }
+
     private void updateExperimentalControls() {
         setModeSpecificSwitchEnabled(showIslandIconSwitch, true);
         boolean modeEnabled = pendingIslandCompat;
         setControlEnabled(islandTextModeField == null ? null : islandTextModeField.spinner,
                 modeEnabled);
+        if (contentModeSummary != null) contentModeSummary.setText(modeEnabled
+                ? "全文本：汇总可读文字；左右拼接：只取两侧并去重。仅影响超级岛内容转换。"
+                : "需先开启主页“转换超级岛内容为焦点通知”，才能调整此模式。");
         setModeSpecificSwitchEnabled(tintIslandIconSwitch,
                 true);
         boolean nativeBannerEnabled = pendingIndependentFocusBanner;
@@ -2147,6 +2562,16 @@ public final class SettingsActivity extends Activity {
         // 标题文字与控件一起压色，和“旧版：打开通知内容”的置灰表现一致。
         boolean bannerSubEnabled = nativeBannerEnabled;
         boolean mediaSubEnabled = nativeBannerEnabled && pendingMediaFocusEnabled;
+        if (mediaClickSummary != null) mediaClickSummary.setText(mediaSubEnabled
+                ? "以下两项用于媒体短按；由“点击与手势”中的“点击展开横幅”开关启用。"
+                : !pendingMediaFocusEnabled && !nativeBannerEnabled
+                        ? "需同时开启“启用媒体焦点通知”和“点击与手势 → 点击展开横幅”。"
+                        : !pendingMediaFocusEnabled
+                                ? "需先开启本组“启用媒体焦点通知”。"
+                                : "需先开启“点击与手势 → 点击展开横幅”。");
+        if (legacyClickSummary != null) legacyClickSummary.setText(nativeBannerEnabled
+                ? "“点击展开横幅”已开启，以下两项已关闭并置灰；关闭横幅后可使用旧版点击。"
+                : "旧版点击与“点击展开横幅”互斥；开启横幅会关闭以下两项，不影响长按。");
         setControlEnabled(bannerBackgroundLabel, bannerSubEnabled);
         setControlEnabled(bannerBackgroundField == null ? null : bannerBackgroundField.spinner,
                 bannerSubEnabled);
@@ -2164,7 +2589,13 @@ public final class SettingsActivity extends Activity {
         setControlEnabled(longPressSecondsValue, pendingLongPressNotificationRowClick);
         setModeSpecificSwitchEnabled(independentFocusBannerSwitch, true);
         setModeSpecificSwitchEnabled(allowFocusClickSwitch, !nativeBannerEnabled);
-        setModeSpecificSwitchEnabled(notificationRowClickFallbackSwitch, !nativeBannerEnabled);
+        // 关闭旧版直接打开时，失败兜底不会执行；只置灰，不清掉用户已保存的选择。
+        setModeSpecificSwitchEnabled(notificationRowClickFallbackSwitch,
+                !nativeBannerEnabled && pendingAllowFocusClick);
+        if ((!pendingMediaFocusEnabled || !pendingMediaBriefDisplay) && mediaFieldDragHandler != null) {
+            mediaFieldDragHandler.finish(false);
+        }
+        updateMediaBriefControls();
     }
 
     private void selectIslandTextMode(int mode) {
@@ -2603,6 +3034,12 @@ public final class SettingsActivity extends Activity {
         pendingMediaFocusNativeBanner = settings.mediaFocusNativeBanner;
         pendingMediaFocusCastPicker = settings.mediaFocusCastPicker;
         pendingMediaFocusCastDirect = settings.mediaFocusCastDirect;
+        pendingHideTimeNormal = settings.hideTimeNormal;
+        pendingHideTimeMedia = settings.hideTimeMedia;
+        pendingHideTimeDevice = settings.hideTimeDevice;
+        pendingMediaBriefDisplay = settings.mediaBriefDisplay;
+        pendingMediaBriefFields = new java.util.ArrayList<>(settings.mediaBriefFields);
+        pendingInterceptElementAnimation = settings.interceptElementAnimation;
         pendingDelayMs = settings.marqueeDelayMs;
         pendingCompatRetry = settings.compatRetry;
         pendingMarqueeBounce = settings.marqueeBounce;
@@ -2661,6 +3098,12 @@ public final class SettingsActivity extends Activity {
                 .mediaFocusNativeBanner(pendingMediaFocusNativeBanner)
                 .mediaFocusCastPicker(pendingMediaFocusCastPicker)
                 .mediaFocusCastDirect(pendingMediaFocusCastDirect)
+                .hideTimeNormal(pendingHideTimeNormal)
+                .hideTimeMedia(pendingHideTimeMedia)
+                .hideTimeDevice(pendingHideTimeDevice)
+                .mediaBriefDisplay(pendingMediaBriefDisplay)
+                .mediaBriefFields(pendingMediaBriefFields)
+                .interceptElementAnimation(pendingInterceptElementAnimation)
                 .marqueeDelayMs(pendingDelayMs)
                 .compatRetry(pendingCompatRetry)
                 .marqueeBounce(pendingMarqueeBounce)
@@ -3061,6 +3504,7 @@ public final class SettingsActivity extends Activity {
     private void updateModeSpecificControls() {
         boolean os4 = pendingHookMode == FocusRestoreSettings.HOOK_MODE_OS4;
         setModeSpecificSwitchEnabled(hideNotificationIconsSwitch, os4);
+        setModeSpecificSwitchEnabled(interceptElementAnimationSwitch, !os4);
         setModeSpecificSwitchEnabled(showFocusDividerSwitch, true);
         // 保留容器只对 OS4 的左侧图标容器有意义，并且必须依附于总隐藏开关。
         updateExperimentalControls();
@@ -3074,6 +3518,9 @@ public final class SettingsActivity extends Activity {
 
     private void updateFocusDividerControls() {
         if (focusDividerOptionsPanel == null) return;
+        if (dividerSummary != null) dividerSummary.setText(pendingShowFocusDivider
+                ? "样式与尺寸仅影响时间和焦点之间的分隔线；启用隐藏时间时，该分隔线也会隐藏。"
+                : "需先开启“显示焦点分隔线”，才能调整下方样式与尺寸；关闭后保留配置。");
         focusDividerOptionsPanel.setAlpha(pendingShowFocusDivider ? 1f : 0.42f);
         setChildrenEnabled(focusDividerOptionsPanel, pendingShowFocusDivider);
     }

@@ -13,6 +13,6 @@ import static org.junit.Assert.assertNull;
 
 public class MediaFocusContentTest {
     @Test public void emptyNotificationIsIgnored() {
-        assertNull(MediaFocusContent.from(new Notification()));
+        assertNull(MediaFocusContent.from(new Notification(), null));
     }
 }

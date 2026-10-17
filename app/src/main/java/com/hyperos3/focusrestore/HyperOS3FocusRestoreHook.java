@@ -190,6 +190,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private final Set<String> dismissedMediaPackages = Collections.synchronizedSet(new HashSet<>());
     /** Latest OS3 prompt controller, used to actively remove a dismissed media Focus bean. */
     private volatile WeakReference<Object> os3PromptControllerRef = new WeakReference<>(null);
+    /**
+     * OS3 隐藏时间要一并隐藏的视图字段：时钟正文、时钟座位（占位）与焦点分隔线。
+     * ROM 自身的 hideClock 正是同时处理这三者，只藏 mClockView 会留下占位和分隔线。
+     */
+    private static final String[] OS3_TIME_VIEW_FIELDS = {"mClockView", "mClockSeat", "mFocusedNotLine"};
+    /** 显示前记录的原始可见性，焦点隐藏后恢复，避免覆盖 ROM 自己的状态。 */
+    private final int[] os3TimeOriginalVisibility = new int[OS3_TIME_VIEW_FIELDS.length];
+    /** 当前焦点类型命中隐藏时间；供 showClock 守卫低成本判断，避免每次都重建焦点数据。 */
+    private volatile boolean os3HideTimeActive;
     private volatile Class<?> os3PromptControllerClass;
     private final FocusSwipeSelection os3SwipeSelection = new FocusSwipeSelection();
     private final ThreadLocal<OS3SwipeScope> os3SwipeScope = new ThreadLocal<>();
@@ -591,6 +600,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         os3FocusDivider.install(classLoader);
         hookOS3DeviceIconTint();
         hookPromptShouldShow();
+        hookOS3FocusVisibility();
+        hookElementAnimationIntercept();
         hookOS3TouchEntry();
         hookDisableConvertedFocusClick();
         hookFocusLongPress();
@@ -4027,6 +4038,216 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     /**
+     * OS3 隐藏时间。ROM 在焦点显示状态变化时经
+     * FocusedNotifPromptController.setIsFocusedNotifPromptShowing 回调
+     * MiuiCollapsedStatusBarFragment.onFocusedNotifVisibilityChanged(Z)，随后按
+     * StatusBarVisibilityModel.showClock 决定时钟可见性。ROM 的 hideClock 同时处理
+     * mClockView（时钟正文）、mClockSeat（时钟座位/占位）和 mFocusedNotLine（焦点分隔线）；
+     * 只隐藏 mClockView 会留下占位与分隔线，因此这里按类型把三者一起隐藏，焦点隐藏后恢复。
+     *
+     * <p>锁屏/解锁会重新 showClock，但不一定再次触发焦点可见性回调；只要焦点仍在显示且命中
+     * 隐藏时间，就在 showClock 之后再次隐藏，避免解锁后时钟重新出现。
+     */
+    private void hookOS3FocusVisibility() {
+        try {
+            Class<?> fragment = FocusReflection.findClass(
+                    "com.android.systemui.statusbar.phone.MiuiCollapsedStatusBarFragment",
+                    classLoader);
+            XposedHelpers.findAndHookMethod(fragment, "onFocusedNotifVisibilityChanged",
+                    boolean.class, new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            if (!Boolean.TRUE.equals(param.args[0])) return;
+                            for (int index = 0; index < OS3_TIME_VIEW_FIELDS.length; index++) {
+                                View view = os3TimeView(param.thisObject, index);
+                                os3TimeOriginalVisibility[index] = view == null
+                                        ? View.VISIBLE : view.getVisibility();
+                            }
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (Boolean.TRUE.equals(param.args[0])) {
+                                int kind = os3FocusKind();
+                                boolean hide = currentSettings.hideTimeForKind(kind);
+                                os3HideTimeActive = hide;
+                                if (hide) setOS3TimeVisible(param.thisObject, false);
+                                debug("OS3 hide-time showing kind=" + kind + " hide=" + hide);
+                            } else {
+                                os3HideTimeActive = false;
+                                restoreOS3Time(param.thisObject);
+                                debug("OS3 hide-time restored");
+                            }
+                        }
+                    });
+            hookOS3ClockShowGuard(fragment);
+        } catch (Throwable t) {
+            error("hookOS3FocusVisibility", t);
+        }
+    }
+
+    /**
+     * 锁屏/解锁或状态栏重建时 ROM 会重新 showClock，而焦点仍在显示；此时把时钟/座位/
+     * 分隔线再次隐藏。焦点已隐藏时不拦截，让 ROM 正常恢复。
+     */
+    private void hookOS3ClockShowGuard(Class<?> fragment) {
+        try {
+            XposedHelpers.findAndHookMethod(fragment, "showClock", boolean.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (!os3HideTimeActive || !os3FocusStillShowing()) return;
+                            setOS3TimeVisible(param.thisObject, false);
+                        }
+                    });
+        } catch (Throwable t) {
+            error("hookOS3ClockShowGuard", t);
+        }
+    }
+
+    /** 焦点提示当前是否处于显示状态（ROM 的 mIsFocusedNotifPromptShowing）。 */
+    private boolean os3FocusStillShowing() {
+        Object controller = os3PromptControllerRef.get();
+        if (controller == null) return false;
+        Object value = getField(controller, "mIsFocusedNotifPromptShowing");
+        return Boolean.TRUE.equals(value);
+    }
+
+    /**
+     * OS3 “应用缩小到焦点图标”的元素动画拦截。
+     *
+     * <p>接口来源：作者提供的只读 APK MCP http://192.168.31.21:8787/mcp，
+     * 小米 SystemUI 16.03.251211.r；具体实现许可证未确认，仅依据接口事实独立实现。
+     * AnimationUtilities 的两个能力方法独立读取字段，必须配齐手机 ROM 的 NONE 语义：
+     * supportElementAnimation=false 阻止本地元素入口，hasNoAnimation=true 让
+     * FocusedNotifPromptController.notifyNotifBeanChanged 向桌面发送空包名，并让
+     * CamouflageImageWindow 的临时图标不绘制；ROM 的启动与收尾流程继续执行。
+     *
+     * <p>控制器 mView 来自正常焦点 mIcon，不能在 finish 后把可见图标当残留隐藏。
+     * 不吞状态机消息，保留 ROM 的状态恢复、临时窗口和图层收尾。
+     */
+    private void hookElementAnimationIntercept() {
+        // 独立安装：某一接口缺失时仍保留另一处拦截，并记录具体失败的方法。
+        hookElementAnimationCapability("supportElementAnimation", false);
+        hookElementAnimationCapability("hasNoAnimation", true);
+        if (VERBOSE_LOG) hookElementAnimationDesktopDiagnosis();
+    }
+
+    private void hookElementAnimationCapability(final String methodName, final boolean noneResult) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.systemui.statusbar.animation.AnimationUtilities", classLoader,
+                    methodName, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (param.hasThrowable()) return;
+                            HookSettings settings = currentSettings;
+                            // 设置尚未加载时按默认值开启拦截，避免首帧动画漏拦。
+                            boolean enabled = settings == null || settings.interceptElementAnimation;
+                            boolean original = Boolean.TRUE.equals(param.getResult());
+                            if (enabled) param.setResult(noneResult);
+                            if (VERBOSE_LOG && firstDiagnosis("elementAnim|" + methodName
+                                    + "|" + enabled + "|" + original)) {
+                                debug("OS3 element animation capability method=" + methodName
+                                        + " enabled=" + enabled + " original=" + original
+                                        + " result=" + param.getResult());
+                            }
+                        }
+                    });
+            debug("OS3 element animation hook installed method=" + methodName);
+        } catch (Throwable t) {
+            error("hookElementAnimationCapability " + methodName, t);
+        }
+    }
+
+    /** 只观察桌面出站协议，区分能力已改写与空包名分支实际执行；不修改通知内容。 */
+    private void hookElementAnimationDesktopDiagnosis() {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.systemui.recents.LauncherProxyService", classLoader,
+                    "onFocusedNotifUpdate", String.class, Icon.class, Rect.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            HookSettings settings = currentSettings;
+                            boolean enabled = settings == null || settings.interceptElementAnimation;
+                            boolean packageEmpty = TextUtils.isEmpty((String) param.args[0]);
+                            boolean iconPresent = param.args[1] != null;
+                            if (firstDiagnosis("elementAnimDesktop|" + enabled
+                                    + "|" + packageEmpty + "|" + iconPresent)) {
+                                debug("OS3 element animation desktop update enabled=" + enabled
+                                        + " packageEmpty=" + packageEmpty + " iconPresent=" + iconPresent
+                                        + " rect=" + param.args[2]);
+                            }
+                        }
+                    });
+            debug("OS3 element animation desktop diagnosis installed");
+        } catch (Throwable t) {
+            error("hookElementAnimationDesktopDiagnosis", t);
+        }
+    }
+
+    private static View os3TimeView(Object fragment, int index) {
+        Object value = getField(fragment, OS3_TIME_VIEW_FIELDS[index]);
+        return value instanceof View ? (View) value : null;
+    }
+
+    private void setOS3TimeVisible(Object fragment, boolean visible) {
+        for (int index = 0; index < OS3_TIME_VIEW_FIELDS.length; index++) {
+            View view = os3TimeView(fragment, index);
+            if (view == null) continue;
+            cancelOS3TimeAnimation(view);
+            view.setVisibility(visible ? View.VISIBLE : View.GONE);
+            if (visible) resetOS3TimeAppearance(view);
+        }
+    }
+
+    private void restoreOS3Time(Object fragment) {
+        for (int index = 0; index < OS3_TIME_VIEW_FIELDS.length; index++) {
+            View view = os3TimeView(fragment, index);
+            if (view == null) continue;
+            cancelOS3TimeAnimation(view);
+            int visibility = os3TimeOriginalVisibility[index];
+            view.setVisibility(visibility);
+            if (visibility == View.VISIBLE) resetOS3TimeAppearance(view);
+        }
+    }
+
+    /**
+     * ROM 的 showClock 先 cancel ViewPropertyAnimator 再改值；模块若直接改值，
+     * 正在跑的 alpha/translation 动画会继续覆盖，表现为时钟先偏移再抖回原位。
+     */
+    private static void cancelOS3TimeAnimation(View view) {
+        try {
+            view.animate().cancel();
+        } catch (Throwable ignored) {
+            // 动画取消失败不应影响可见性恢复。
+        }
+    }
+
+    /** 还原 ROM 的 hideClock 会改写的 alpha/translationX，否则视图可见但仍是透明。 */
+    private static void resetOS3TimeAppearance(View view) {
+        view.setAlpha(1f);
+        view.setTranslationX(0f);
+    }
+
+    /** 当前焦点来源分类：媒体/设备/普通。 */
+    private int os3FocusKind() {
+        Object controller = os3PromptControllerRef.get();
+        if (controller == null) return FocusKind.NORMAL;
+        try {
+            Object bean = getField(controller, "mCurrentNotifBean");
+            FocusData data = bean == null ? null : inspectBean(bean);
+            if (data == null) return FocusKind.NORMAL;
+            if (isMediaFocus(data)) return FocusKind.MEDIA;
+            if (isConstructedDeviceFocusNotification(data)) return FocusKind.DEVICE;
+            return FocusKind.NORMAL;
+        } catch (Throwable t) {
+            return FocusKind.NORMAL;
+        }
+    }
+
+    /**
      * 私有接口依据本项目既有 OS3/OS4 SystemUI 观察：NotificationEntry.row、
      * ExpandableNotificationRow.getEntry()/mEntry；精确 ROM 版本、版权所有者与协议未确认。
      * 长按时复核通知身份，打开动作复用本项目横幅正文入口。
@@ -4504,7 +4725,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         Object content = getField(promptObject, "mContentText");
         if (!(content instanceof TextView)) return false;
         TextView text = (TextView) content;
-        String value = data.mediaContent.text;
+        String value = data.mediaContent.assembleText(currentSettings.mediaBriefDisplay,
+                currentSettings.mediaBriefFields, systemUiContext);
         if (!TextUtils.equals(text.getText(), value)) text.setText(value);
         text.setVisibility(View.VISIBLE);
         if (firstDiagnosis("mediaText|" + data.key)) {
@@ -4729,11 +4951,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             } else if (!TextUtils.equals(current, state.lastConvertedContent)) {
                 state.originalContent = current;
             }
-            state.lastConvertedContent = data.mediaContent.text;
+            state.lastConvertedContent = data.mediaContent.assembleText(
+                    currentSettings.mediaBriefDisplay, currentSettings.mediaBriefFields,
+                    systemUiContext);
         }
         try {
-            XposedHelpers.setObjectField(bean, "content", data.mediaContent.text);
-            data.content = data.mediaContent.text;
+            String mediaText = data.mediaContent.assembleText(currentSettings.mediaBriefDisplay,
+                    currentSettings.mediaBriefFields, systemUiContext);
+            XposedHelpers.setObjectField(bean, "content", mediaText);
+            data.content = mediaText;
             data.isFocus = true;
             preMarkedIslands.remove(state.expanded);
             log(stage + " applied media content key=" + data.key
@@ -5748,11 +5974,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             log("OS4 media candidate key=" + key + " package=" + data.packageName
                     + " playing=" + media.playing + " source=MediaStyle");
             return new HyperOS4FocusController.DisplayItem(entry, key, data.packageName,
-                    media.text, "mediaStyle", null, null, contentIntent,
+                    media.assembleText(currentSettings.mediaBriefDisplay,
+                            currentSettings.mediaBriefFields, systemUiContext),
+                    "mediaStyle", null, null, contentIntent,
                     light == null ? null : light.icon, dark == null ? null : dark.icon,
                     light != null && light.tint, dark != null && dark.tint,
                     light != null && light.islandIcon, dark != null && dark.islandIcon,
-                    90);
+                    90, FocusKind.MEDIA);
         }
 
         if (data.isOriginalFocus && hasNativeStatusBarContent) {
@@ -5800,7 +6028,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         focusIconDark != null && focusIconDark.tint,
                         focusIcon != null && focusIcon.islandIcon,
                         focusIconDark != null && focusIconDark.islandIcon,
-                        OS4FocusPriorityPolicy.PRIORITY_ISLAND_WHITELIST);
+                        OS4FocusPriorityPolicy.PRIORITY_ISLAND_WHITELIST,
+                        constructedDevice ? FocusKind.DEVICE : FocusKind.NORMAL);
             }
             return new HyperOS4FocusController.DisplayItem(entry, key, data.packageName,
                     cleanText(data.ticker), "nativeFocus", data.barRv, data.barNightRv,
@@ -5810,7 +6039,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     focusIconDark != null && focusIconDark.tint,
                     focusIcon != null && focusIcon.islandIcon,
                     focusIconDark != null && focusIconDark.islandIcon,
-                    OS4FocusPriorityPolicy.PRIORITY_NATIVE_FOCUS);
+                    OS4FocusPriorityPolicy.PRIORITY_NATIVE_FOCUS,
+                    constructedDevice ? FocusKind.DEVICE : FocusKind.NORMAL);
         }
 
         // OS4 may mark an island notification as Focus before it has any native
@@ -5847,7 +6077,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 focusIcon != null && focusIcon.tint,
                 focusIconDark != null && focusIconDark.tint,
                 focusIcon != null && focusIcon.islandIcon,
-                focusIconDark != null && focusIconDark.islandIcon, priority);
+                focusIconDark != null && focusIconDark.islandIcon, priority,
+                constructedDevice ? FocusKind.DEVICE : FocusKind.NORMAL);
     }
 
     private FocusData inspectBean(Object bean) {
@@ -5897,7 +6128,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
 
             data.notification = notification;
-            data.mediaContent = MediaFocusContent.from(notification);
+            data.mediaContent = MediaFocusContent.from(notification, data.packageName);
             if (data.mediaContent != null && !TextUtils.isEmpty(data.key)) {
                 mediaNotificationKeys.add(data.key);
             }

@@ -56,6 +56,8 @@ public class SettingsContractTest {
                 "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
                 "focus_max_display_seconds", "focus_timeout_exempt_packages",
                 "media_focus_enabled", "media_focus_native_banner", "media_focus_cast_picker", "media_focus_cast_direct",
+                "hide_time_normal", "hide_time_media", "hide_time_device", "media_brief_display", "media_brief_fields",
+                "intercept_element_animation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules"
         }, SettingsContract.columnsForProjection(null));
         int[] fields = {
@@ -80,10 +82,13 @@ public class SettingsContractTest {
                 SettingsContract.FOCUS_MAX_DISPLAY_SECONDS, SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES,
                 SettingsContract.MEDIA_FOCUS_ENABLED, SettingsContract.MEDIA_FOCUS_NATIVE_BANNER,
                 SettingsContract.MEDIA_FOCUS_CAST_PICKER, SettingsContract.MEDIA_FOCUS_CAST_DIRECT,
+                SettingsContract.HIDE_TIME_NORMAL, SettingsContract.HIDE_TIME_MEDIA,
+                SettingsContract.HIDE_TIME_DEVICE, SettingsContract.MEDIA_BRIEF_DISPLAY,
+                SettingsContract.MEDIA_BRIEF_FIELDS, SettingsContract.INTERCEPT_ELEMENT_ANIMATION,
                 SettingsContract.LEGACY_ISLAND_SEPARATOR, SettingsContract.EXPAND_ISLAND_ON_CLICK,
                 SettingsContract.NOTIFICATION_ICON_HIDE_MODE, SettingsContract.ISLAND_CUSTOM_RULES
         };
-        assertEquals(47, SettingsContract.COLUMNS.length);
+        assertEquals(53, SettingsContract.COLUMNS.length);
         assertEquals(SettingsContract.FOCUS_DIVIDER_START_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_START_DP);
         assertEquals(SettingsContract.FOCUS_DIVIDER_END_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_END_DP);
         assertEquals(SettingsContract.COLUMNS.length, fields.length);

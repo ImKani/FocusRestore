@@ -141,9 +141,9 @@ public class SettingsActivityStateTest {
         assertTrue(source.contains("systemDimensionDp(\"focused_notif_icon_size\", 16f)"));
         assertTrue(source.contains("FocusSystemDimensions.iconTextGapDp(this, pendingHookMode)"));
         int gapSlider = source.indexOf("focusIconTextGapSeekBar = appearanceSlider(iconPanel, \"图标与文字间距\", 0, 24,");
-        int iconGroup = source.indexOf("addCollapsibleSection(root, \"焦点图标\", iconPanel)");
+        int iconGroup = source.indexOf("addCollapsibleSection(root, \"图标与分隔线\", iconPanel)");
         assertTrue("gap slider belongs to the icon group", gapSlider >= 0 && iconGroup > gapSlider);
-        String gapControl = source.substring(gapSlider, iconGroup);
+        String gapControl = source.substring(gapSlider, source.indexOf("addSettingSubheading(iconPanel, \"焦点分隔线\")", gapSlider));
         assertTrue(gapControl.contains("pendingFocusIconTextGapDp, value -> pendingFocusIconTextGapDp = value"));
         assertEquals(2, gapControl.split("FocusRestoreSettings.DEFAULT_FOCUS_ICON_TEXT_GAP_DP", -1).length - 1);
         assertTrue(source.contains("FocusRestoreSettings.AUTO_FOCUS_DIVIDER_SPACING_DP"));

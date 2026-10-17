@@ -106,14 +106,17 @@ final class SettingsBackupCodec {
             JSONObject focus = group(groups, "focus", "limit_text_width", "text_width_dp",
                     "text_width_landscape_dp", "focus_max_display_seconds",
                     "focus_timeout_exempt_packages", "hide_notification_icons", "show_focus_divider",
-                    "focus_divider_start_offset_dp", "focus_divider_end_offset_dp", "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style");
+                    "focus_divider_start_offset_dp", "focus_divider_end_offset_dp", "focus_divider_start_dp", "focus_divider_end_dp", "focus_divider_width_dp", "focus_divider_style",
+                    "hide_time_normal", "hide_time_media", "hide_time_device");
             JSONObject media = group(groups, "media", "media_focus_enabled", "media_focus_native_banner",
-                    "media_focus_cast_picker", "media_focus_cast_direct");
+                    "media_focus_cast_picker", "media_focus_cast_direct", "media_brief_display",
+                    "media_brief_fields");
             JSONObject interaction = group(groups, "interaction", "independent_focus_banner",
                     "special_banner_normal_background", "allow_focus_click",
                     "notification_row_click_fallback", "long_press_notification_row_click",
                     "long_press_seconds", "focus_swipe_enabled",
-                    "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp");
+                    "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
+                    "intercept_element_animation");
             JSONObject icons = group(groups, "icons", "show_island_icon", "tint_island_icon",
                     "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon", "focus_icon_size_dp", "focus_icon_text_gap_dp");
             JSONObject marquee = group(groups, "marquee", "marquee_bounce", "marquee_delay_ms");
@@ -171,6 +174,11 @@ final class SettingsBackupCodec {
                     .mediaFocusNativeBanner(bool(media, "media_focus_native_banner", defaults.mediaFocusNativeBanner))
                     .mediaFocusCastPicker(picker)
                     .mediaFocusCastDirect(bool(media, "media_focus_cast_direct", defaults.mediaFocusCastDirect))
+                    .mediaBriefDisplay(bool(media, "media_brief_display", defaults.mediaBriefDisplay))
+                    .mediaBriefFields(mediaFields(media, "media_brief_fields", defaults.mediaBriefFields))
+                    .hideTimeNormal(bool(focus, "hide_time_normal", defaults.hideTimeNormal))
+                    .hideTimeMedia(bool(focus, "hide_time_media", defaults.hideTimeMedia))
+                    .hideTimeDevice(bool(focus, "hide_time_device", defaults.hideTimeDevice))
                     .independentFocusBanner(bool(interaction, "independent_focus_banner", defaults.independentFocusBanner))
                     .specialBannerNormalBackground(bool(interaction, "special_banner_normal_background", defaults.specialBannerNormalBackground))
                     .allowFocusClick(bool(interaction, "allow_focus_click", defaults.allowFocusClick))
@@ -178,6 +186,8 @@ final class SettingsBackupCodec {
                     .longPressNotificationRowClick(bool(interaction, "long_press_notification_row_click", defaults.longPressNotificationRowClick))
                     .longPressSeconds(seconds(interaction, "long_press_seconds", defaults.longPressSeconds))
                     .focusSwipeEnabled(bool(interaction, "focus_swipe_enabled", defaults.focusSwipeEnabled))
+                    .interceptElementAnimation(bool(interaction, "intercept_element_animation",
+                            defaults.interceptElementAnimation))
                     .customTouchWidth(bool(interaction, "custom_touch_width", defaults.customTouchWidth))
                     .touchWidthDp(integer(interaction, "touch_width_dp", defaults.touchWidthDp))
                     .touchWidthLandscapeDp(integer(interaction, "touch_width_landscape_dp", defaults.touchWidthLandscapeDp))
@@ -213,11 +223,16 @@ final class SettingsBackupCodec {
                          "focus_divider_start_offset_dp", settings.focusDividerStartDp,
                          "focus_divider_end_offset_dp", settings.focusDividerEndDp,
                          "focus_divider_width_dp", settings.focusDividerWidthDp,
-                         "focus_divider_style", settings.focusDividerStyle),
+                         "focus_divider_style", settings.focusDividerStyle,
+                        "hide_time_normal", settings.hideTimeNormal,
+                        "hide_time_media", settings.hideTimeMedia,
+                        "hide_time_device", settings.hideTimeDevice),
                 "media", entries("media_focus_enabled", settings.mediaFocusEnabled,
                         "media_focus_native_banner", settings.mediaFocusNativeBanner,
                         "media_focus_cast_picker", settings.mediaFocusCastPicker,
-                        "media_focus_cast_direct", settings.mediaFocusCastDirect),
+                        "media_focus_cast_direct", settings.mediaFocusCastDirect,
+                        "media_brief_display", settings.mediaBriefDisplay,
+                        "media_brief_fields", MediaBriefFields.encode(settings.mediaBriefFields)),
                 "interaction", entries("independent_focus_banner", settings.independentFocusBanner,
                         "special_banner_normal_background", settings.specialBannerNormalBackground,
                         "allow_focus_click", settings.allowFocusClick,
@@ -227,7 +242,8 @@ final class SettingsBackupCodec {
                         "focus_swipe_enabled", settings.focusSwipeEnabled,
                         "custom_touch_width", settings.customTouchWidth,
                         "touch_width_dp", settings.touchWidthDp,
-                        "touch_width_landscape_dp", settings.touchWidthLandscapeDp),
+                        "touch_width_landscape_dp", settings.touchWidthLandscapeDp,
+                        "intercept_element_animation", settings.interceptElementAnimation),
                 "icons", entries("show_island_icon", settings.showIslandIcon,
                         "tint_island_icon", settings.tintIslandIcon,
                         "use_small_icon_fallback", settings.useSmallIconFallback,
@@ -418,6 +434,20 @@ final class SettingsBackupCodec {
         } catch (NumberFormatException malformed) {
             throw new InvalidBackupException(key + " 不是有效秒数", malformed);
         }
+    }
+
+    private static java.util.List<Integer> mediaFields(JSONObject object, String key,
+            java.util.List<Integer> fallback) throws IOException {
+        if (!object.has(key)) return fallback;
+        Object value = object.opt(key);
+        if (!(value instanceof String)) throw invalid(key + " 必须是字段顺序文本");
+        String encoded = (String) value;
+        if (encoded.length() > 32) throw invalid(key + " 字段顺序文本过长");
+        // 空串表示全部关闭；非空只允许逗号分隔的 0～4，重复项由 normalize 去重。
+        if (encoded.length() > 0 && !encoded.matches("^[0-4](,[0-4])*$")) {
+            throw invalid(key + " 必须是 0～4 的逗号分隔文本");
+        }
+        return MediaBriefFields.parse(encoded);
     }
 
     private static String separator(JSONObject object, String key, String fallback) throws IOException {

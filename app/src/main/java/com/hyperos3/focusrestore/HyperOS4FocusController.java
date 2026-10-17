@@ -90,13 +90,14 @@ final class HyperOS4FocusController {
         final boolean islandIcon;
         final boolean islandIconDark;
         final int priority;
+        final int kind;
         long updateSequence;
 
         DisplayItem(Object notificationEntry, String key, String packageName, String text, String source,
                     RemoteViews remoteViews, RemoteViews remoteViewsNight,
                     PendingIntent contentIntent, Icon icon, Icon iconDark,
                     boolean tintIcon, boolean tintIconDark,
-                    boolean islandIcon, boolean islandIconDark, int priority) {
+                    boolean islandIcon, boolean islandIconDark, int priority, int kind) {
             this.notificationEntry = notificationEntry;
             this.key = key;
             this.packageName = packageName;
@@ -112,6 +113,7 @@ final class HyperOS4FocusController {
             this.islandIcon = islandIcon;
             this.islandIconDark = islandIconDark;
             this.priority = priority;
+            this.kind = kind;
         }
 
         boolean hasContent() {
@@ -138,6 +140,8 @@ final class HyperOS4FocusController {
     private boolean renderPosted;
     private FocusHostView renderPostHost;
     private TextView statusBarClock;
+    /** 隐藏时钟前的原始可见性，恢复时避免覆盖 ROM 自己的状态。 */
+    private int clockRestoreVisibility = View.VISIBLE;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Runnable expiryCheck = this::runExpiryCheck;
     private String displayedKey;
@@ -554,6 +558,7 @@ final class HyperOS4FocusController {
                 ViewGroup slot = primarySlot;
                 if (slot != null) slot.setVisibility(View.GONE);
                 notificationIconHider.request(false);
+                setClockHidden(false);
                 logger.log("OS4 focus hidden; no eligible notification legacySlot=GONE"
                         + " notificationIconsRestored=true");
             }
@@ -602,6 +607,7 @@ final class HyperOS4FocusController {
             if (host != focusHost || generation != renderGeneration) return;
             hideOriginalChildren();
             setNotificationIconsHidden(settings.hideNotificationIcons);
+            setClockHidden(settings.hideTimeForKind(item.kind));
             host.setVisibility(View.VISIBLE);
             host.showContent(content, item, settings);
             if (BuildConfig.DEBUG) host.post(() -> {
@@ -638,6 +644,24 @@ final class HyperOS4FocusController {
                     + Integer.toHexString(currentTint));
         } else {
             logger.log("OS4 statusBarClock=missing id=" + id);
+        }
+    }
+
+    /**
+     * 隐藏/恢复状态栏时钟。隐藏前记录原始可见性，恢复时还原本来的状态而不是强行为 VISIBLE，
+     * 避免覆盖 ROM 自己对该时钟的可见性控制。
+     */
+    private void setClockHidden(boolean hidden) {
+        TextView clock = statusBarClock;
+        if (clock == null) return;
+        if (hidden) {
+            if (clock.getVisibility() != View.GONE) {
+                clockRestoreVisibility = clock.getVisibility();
+                clock.setVisibility(View.GONE);
+            }
+        } else if (clock.getVisibility() == View.GONE) {
+            clock.setVisibility(clockRestoreVisibility);
+            clockRestoreVisibility = View.VISIBLE;
         }
     }
 
@@ -961,7 +985,7 @@ final class HyperOS4FocusController {
             logger.log("OS4 focus width select orientation=" + (landscape ? "landscape" : "portrait")
                     + " widthDp=" + configuredWidthDp + " portraitDp=" + settings.widthDp
                     + " landscapeDp=" + settings.widthLandscapeDp);
-            if (settings.showFocusDivider) {
+            if (settings.showFocusDivider && !settings.hideTimeForKind(item.kind)) {
                 float nativeWidthPx = FocusSystemDimensions.dimensionDp(getContext(),
                         "line_width", 1.3799744f, FocusRestoreSettings.HOOK_MODE_OS4) * density;
                 FocusDividerDrawable decoration = new FocusDividerDrawable(density,
