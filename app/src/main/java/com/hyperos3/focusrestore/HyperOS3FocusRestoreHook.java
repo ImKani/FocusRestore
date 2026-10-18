@@ -40,6 +40,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
+import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.view.animation.LinearInterpolator;
 import android.widget.FrameLayout;
@@ -86,6 +87,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * payload re-parse and the redundant view writes.
      */
     private final Map<Object, String> appliedIslandTexts = new WeakHashMap<>();
+    /** UI 线程拥有；值只弱引用视图，避免 WeakHashMap 的值反向保活键。 */
+    private final Map<Object, OS3ClockTimerBinding> clockTimerBindings = new WeakHashMap<>();
     /**
      * Notification keys whose focus prompt this module has already forced visible once. Forcing
      * {@code shouldShow} on every false leaves a stale icon after the user clicks the prompt, so the
@@ -1653,6 +1656,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         Object removed = notificationEntrySbn(entry);
         StatusBarNotification removedSbn = removed instanceof StatusBarNotification
                 ? (StatusBarNotification) removed : null;
+        if (mainHandler != null) mainHandler.post(() -> {
+            for (OS3ClockTimerBinding binding : new ArrayList<>(clockTimerBindings.values())) {
+                if (binding.key.equals(key) && (removedSbn == null
+                        || binding.postTime <= removedSbn.getPostTime())) binding.close();
+            }
+        });
         if (nativeBannerRenderer != null) nativeBannerRenderer.onNotificationRemoved(key, removedSbn);
     }
 
@@ -2934,7 +2943,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                         : data.mediaContent.playing));
                                 return;
                             }
-                            IslandText islandText = (!data.isOriginalFocus && currentSettings.islandCompat)
+                            IslandText islandText = shouldConvert(data)
                                     ? extractIslandContent(data) : null;
                             if (islandText != null && !TextUtils.isEmpty(islandText.text)) {
                                 try {
@@ -3094,6 +3103,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             Object bean = param.args[0];
+                            // null、换通知、暂停/恢复及同 key 新代次都先撤销旧 tick，防止复用视图串写。
+                            stopClockTimer(param.thisObject);
+                            synchronized (appliedIslandTexts) { appliedIslandTexts.remove(param.thisObject); }
                             FocusLongPressGesture gesture = promptLongPressGesture(param.thisObject);
                             if (gesture != null) {
                                 FocusData previous = inspectBean(getField(param.thisObject, "mData"));
@@ -3195,16 +3207,38 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
             boolean swipeChanged;
             boolean appearanceChanged;
+            boolean islandConversionChanged;
             synchronized (this) {
                 if (generation != settingsReadGeneration) return false;
                 swipeChanged = currentSettings.focusSwipeEnabled != next.focusSwipeEnabled;
                 appearanceChanged = !sameFocusAppearance(currentSettings, next);
+                islandConversionChanged = currentSettings.islandCompat != next.islandCompat
+                        || !currentSettings.islandForcePackages.equals(next.islandForcePackages);
                 currentSettings = next;
                 if (modeHooksInstalled && next.hookMode != installedHookMode) {
                     log("hook mode change saved configuredMode=OS" + next.hookMode
                             + " installedMode=OS" + installedHookMode
                             + "; restart SystemUI or device to apply");
                 }
+            }
+            if (islandConversionChanged && modeHooksInstalled && mainHandler != null) {
+                mainHandler.post(() -> {
+                    if (currentSettings != next) return;
+                    for (OS3ClockTimerBinding binding : new ArrayList<>(clockTimerBindings.values())) {
+                        View prompt = binding.promptRef.get();
+                        if (!binding.isCurrent() && prompt != null) {
+                            // 关闭转换/移出白名单后交回 ROM，不能只停 tick 却留下最后一秒。
+                            Object bean = getField(prompt, "mData");
+                            Method setData = findPromptSetDataMethod();
+                            if (setData == null) {
+                                error("OS3 clock timer settings restore setData=missing", null);
+                                continue;
+                            }
+                            try { setData.invoke(prompt, bean, false); }
+                            catch (Throwable failure) { error("OS3 clock timer settings restore", failure); }
+                        }
+                    }
+                });
             }
             if (swipeChanged && modeHooksInstalled && mainHandler != null) {
                 mainHandler.post(() -> {
@@ -3980,10 +4014,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             }
                             if (result) return;
 
-                            // 模块自己构造的设备通知焦点通知：ROM 的 shouldShow 只对携带 miui.focus.rv
-                            // 的通知返回 true，因此它会在这里被清掉（0.25.2 真机：15 个事件里 12 个卡在
-                            // 这一关，只有个别事件没走这次询问才显示出来）。构造的通知本来就是模块要
-                            // 显示的，直接放行。
+                            // 模块自己构造的设备焦点沿用已有显式放行与视图交付路径。
+                            // shouldShow 还检查顶层应用/锁屏/heads-up 等条件；RemoteViews/ticker
+                            // 门槛实际属于 FocusUtils.showOnStatusBar，并非这个方法。
                             if (isConstructedDeviceFocusNotification(data)) {
                                 param.setResult(true);
                                 // ROM 的 update() 先按自己当时的 mShouldShow（false）算出"提示无需
@@ -4000,14 +4033,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 return;
                             }
 
-                            // HyperOS answers shouldShow=true only for a notification carrying its own
-                            // miui.focus.rv. A whitelisted island notification is otherwise parsed and
-                            // written into the bean and then never displayed, which is exactly the
-                            // "nothing shows up" report. The prompt is therefore forced visible once
-                            // per key. Scoped to the whitelist because that is the user's explicit
-                            // statement that this package's island content should appear as focus.
-                            // 媒体通知已在前一阶段写入 Focus 标记，但 ROM 的默认判断仍只认原生
-                            // focus RemoteViews；这里必须单独放行，否则刚转换就会被 shouldShow 清掉。
+                            // 保留用户白名单的一次性显式放行。自动补齐的时钟计时器只修复
+                            // showOnStatusBar 资格，继续服从此处 ROM 的顶层应用/锁屏等判断。
                             boolean whitelisted = currentSettings.islandCompat
                                     && currentSettings.islandForcePackages.contains(data.packageName);
                             // Bound to the notification generation, not just the key: re-posting the
@@ -4659,6 +4686,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     if (param.hasThrowable()) {
+                        stopClockTimer(param.thisObject);
                         Throwable failure = param.getThrowable();
                         error("updateRemoteViews throwable", failure);
                         Object bean = getField(param.thisObject, "mData");
@@ -4737,11 +4765,33 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     private boolean preferConvertedIslandText(Object promptObject, FocusData data) {
-        if (!(promptObject instanceof View) || data == null) return false;
-        if (!currentSettings.islandCompat || !data.hasIslandParam) return false;
+        if (!(promptObject instanceof View)) return false;
+        if (data == null || !shouldConvert(data)) {
+            stopClockTimer(promptObject);
+            synchronized (appliedIslandTexts) { appliedIslandTexts.remove(promptObject); }
+            return false;
+        }
         Object content = getField(promptObject, "mContentText");
-        if (!(content instanceof TextView)) return false;
+        if (!(content instanceof TextView)) { stopClockTimer(promptObject); return false; }
         TextView textView = (TextView) content;
+
+        IslandClockTimer timer = clockTimer(data);
+        if (timer != null && mainHandler != null && data.sbn != null) {
+            hideKnownRemoteViewsContainers(promptObject, textView, data.key);
+            textView.setVisibility(View.VISIBLE);
+            OS3ClockTimerBinding binding = clockTimerBindings.get(promptObject);
+            if (binding == null || !binding.matches(data, textView)) {
+                stopClockTimer(promptObject);
+                cancelCurrentMarquee();
+                binding = new OS3ClockTimerBinding((View) promptObject, textView, data, timer);
+                clockTimerBindings.put(promptObject, binding);
+                binding.start();
+                log("OS3 clock timer bound key=" + data.key + " type=" + timer.type
+                        + " postTime=" + data.sbn.getPostTime() + " owner=status-bar-text");
+            } else binding.ticker.render();
+            return true;
+        }
+        stopClockTimer(promptObject);
 
         String applied;
         synchronized (appliedIslandTexts) {
@@ -4776,6 +4826,128 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     + " source=" + source + " text=" + preview(text));
         }
         return true;
+    }
+
+    private IslandClockTimer clockTimer(FocusData data) {
+        return data == null ? null : IslandClockTimer.parse(data.packageName, data.islandParam);
+    }
+
+    private boolean needsClockTimerFallback(FocusData data) {
+        // 接口事实：作者提供的 SystemUI 16.03.251211.r，FocusUtils.showOnStatusBar，
+        // 经 http://192.168.31.21:8787/mcp 核实要求 Focus 标记及 ticker/rvBar。
+        // 版权所有者及私有接口许可未确认；此处仅独立补齐无状态栏内容的时钟资格。
+        return installedHookMode != FocusRestoreSettings.HOOK_MODE_OS4 && data != null
+                && FocusPriorityPolicy.needsClockTimerFallback(clockTimer(data) != null,
+                        data.hasBarRv, !TextUtils.isEmpty(data.ticker));
+    }
+
+    private void stopClockTimer(Object prompt) {
+        OS3ClockTimerBinding binding = clockTimerBindings.remove(prompt);
+        if (binding != null) binding.close();
+    }
+
+    /** 独立维护状态栏 TextView；展开横幅仍使用 NativeFocusTimerSession。 */
+    private final class OS3ClockTimerBinding implements View.OnAttachStateChangeListener,
+            ViewTreeObserver.OnPreDrawListener, FocusTimerTicker.Target {
+        final WeakReference<View> promptRef;
+        final WeakReference<TextView> textRef;
+        final WeakReference<Object> beanRef;
+        final String key;
+        final long postTime;
+        final String payload;
+        final FocusTimerTicker ticker;
+        ViewTreeObserver observer;
+        boolean closed;
+
+        OS3ClockTimerBinding(View prompt, TextView text, FocusData data, IslandClockTimer timer) {
+            promptRef = new WeakReference<>(prompt);
+            textRef = new WeakReference<>(text);
+            beanRef = new WeakReference<>(getField(prompt, "mData"));
+            key = data.key;
+            postTime = data.sbn.getPostTime();
+            payload = data.islandParam;
+            ticker = new FocusTimerTicker(timer, new FocusTimerTicker.Scheduler() {
+                @Override public long wallNow() { return System.currentTimeMillis(); }
+                @Override public long elapsedNow() { return SystemClock.elapsedRealtime(); }
+                @Override public void postDelayed(Runnable task, long delay) {
+                    mainHandler.postDelayed(task, delay);
+                }
+                @Override public void remove(Runnable task) { mainHandler.removeCallbacks(task); }
+            }, this);
+        }
+
+        boolean matches(FocusData data, TextView text) {
+            return !closed && textRef.get() == text && key.equals(data.key)
+                    && data.sbn != null && postTime == data.sbn.getPostTime()
+                    && TextUtils.equals(payload, data.islandParam);
+        }
+
+        void start() {
+            View prompt = promptRef.get();
+            if (prompt == null) { close(); return; }
+            prompt.addOnAttachStateChangeListener(this);
+            ticker.render();
+            if (!closed && prompt.isAttachedToWindow()) onViewAttachedToWindow(prompt);
+        }
+
+        @Override public boolean isCurrent() {
+            View prompt = promptRef.get();
+            Object bean = beanRef.get();
+            FocusData data = prompt == null || bean == null || getField(prompt, "mData") != bean
+                    ? null : inspectBean(bean);
+            boolean valid = !closed && data != null && matches(data, textRef.get())
+                    && textRef.get() != null && shouldConvert(data) && !isFocusDisplayExpired(data);
+            if (!valid) close();
+            return valid;
+        }
+
+        @Override public void show(String value) {
+            TextView text = textRef.get();
+            try {
+                if (text != null && !TextUtils.equals(text.getText(), value)) text.setText(value);
+            } catch (Throwable failure) {
+                // ROM 视图写入失败后终止本代刷新，保留已有内容并记录具体通知。
+                close();
+                error("OS3 clock timer text update key=" + key, failure);
+            }
+        }
+
+        @Override public void onViewAttachedToWindow(View view) {
+            if (closed) return;
+            removeObserver();
+            observer = view.getViewTreeObserver();
+            observer.addOnPreDrawListener(this);
+            onPreDraw();
+        }
+
+        @Override public void onViewDetachedFromWindow(View view) {
+            removeObserver();
+            ticker.setVisible(false);
+        }
+
+        @Override public boolean onPreDraw() {
+            View prompt = promptRef.get();
+            TextView text = textRef.get();
+            ticker.setVisible(prompt != null && text != null && prompt.isShown() && text.isShown());
+            return true;
+        }
+
+        void removeObserver() {
+            if (observer != null && observer.isAlive()) observer.removeOnPreDrawListener(this);
+            observer = null;
+        }
+
+        void close() {
+            if (closed) return;
+            closed = true;
+            ticker.close();
+            removeObserver();
+            View prompt = promptRef.get();
+            if (prompt != null) {
+                prompt.removeOnAttachStateChangeListener(this);
+                if (clockTimerBindings.get(prompt) == this) clockTimerBindings.remove(prompt);
+            }
+        }
     }
 
     /** The island text this module parsed for the notification, or null when there is none to use. */
@@ -4906,11 +5078,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
         boolean whitelisted = currentSettings.islandForcePackages.contains(data.packageName);
         boolean smsVerification = isSmsVerificationCode(data);
-        boolean convert = !data.isOriginalFocus || whitelisted || smsVerification;
+        boolean clockTimerFallback = needsClockTimerFallback(data);
+        boolean convert = FocusPriorityPolicy.shouldConvertIsland(data.isOriginalFocus,
+                whitelisted, smsVerification, clockTimerFallback);
         if (firstDiagnosis("shouldConvert|" + data.key + "|" + convert)) {
             debug("shouldConvert=" + convert + " package=" + data.packageName
                     + " isOriginalFocus=" + data.isOriginalFocus
-                    + " whitelist=" + whitelisted + " smsVerification=" + smsVerification);
+                    + " whitelist=" + whitelisted + " smsVerification=" + smsVerification
+                    + " clockTimerFallback=" + clockTimerFallback);
         }
         return convert;
     }
