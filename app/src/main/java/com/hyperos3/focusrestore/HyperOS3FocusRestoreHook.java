@@ -198,10 +198,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * ROM 自身的 hideClock 正是同时处理这三者，只藏 mClockView 会留下占位和分隔线。
      */
     private static final String[] OS3_TIME_VIEW_FIELDS = {"mClockView", "mClockSeat", "mFocusedNotLine"};
-    /** 显示前记录的原始可见性，焦点隐藏后恢复，避免覆盖 ROM 自己的状态。 */
-    private final int[] os3TimeOriginalVisibility = new int[OS3_TIME_VIEW_FIELDS.length];
-    /** 当前焦点类型命中隐藏时间；供 showClock 守卫低成本判断，避免每次都重建焦点数据。 */
-    private volatile boolean os3HideTimeActive;
+    /** 主线程拥有；状态不反向持有 Fragment，重建后不继承旧视图的隐藏快照。 */
+    private final Map<Object, OS3ClockVisibility> os3ClockVisibility = new WeakHashMap<>();
+    private boolean os3ClockRefreshQueued;
     private volatile Class<?> os3PromptControllerClass;
     private final FocusSwipeSelection os3SwipeSelection = new FocusSwipeSelection();
     private final ThreadLocal<OS3SwipeScope> os3SwipeScope = new ThreadLocal<>();
@@ -3147,6 +3146,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             preferConvertedIslandText(param.thisObject, data);
                             preferMediaText(param.thisObject, data);
                             scheduleNativeMarquee(param.thisObject);
+                            // 同为 showing=true 时 ROM 不再通知显隐变化；等 setData 调用链结束读当前 bean。
+                            scheduleOS3ClockRefresh();
                         }
                     });
         } catch (Throwable t) {
@@ -3208,18 +3209,29 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             boolean swipeChanged;
             boolean appearanceChanged;
             boolean islandConversionChanged;
+            boolean hideTimeChanged;
             synchronized (this) {
                 if (generation != settingsReadGeneration) return false;
                 swipeChanged = currentSettings.focusSwipeEnabled != next.focusSwipeEnabled;
                 appearanceChanged = !sameFocusAppearance(currentSettings, next);
                 islandConversionChanged = currentSettings.islandCompat != next.islandCompat
                         || !currentSettings.islandForcePackages.equals(next.islandForcePackages);
+                hideTimeChanged = false;
+                for (int kind : new int[]{FocusKind.NORMAL, FocusKind.MEDIA, FocusKind.DEVICE}) {
+                    hideTimeChanged |= currentSettings.hideTimeForKind(kind) != next.hideTimeForKind(kind);
+                }
                 currentSettings = next;
                 if (modeHooksInstalled && next.hookMode != installedHookMode) {
                     log("hook mode change saved configuredMode=OS" + next.hookMode
                             + " installedMode=OS" + installedHookMode
                             + "; restart SystemUI or device to apply");
                 }
+            }
+            if (hideTimeChanged && modeHooksInstalled && mainHandler != null
+                    && installedHookMode == FocusRestoreSettings.HOOK_MODE_OS3) {
+                mainHandler.post(() -> {
+                    if (currentSettings == next) scheduleOS3ClockRefresh();
+                });
             }
             if (islandConversionChanged && modeHooksInstalled && mainHandler != null) {
                 mainHandler.post(() -> {
@@ -4070,7 +4082,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * MiuiCollapsedStatusBarFragment.onFocusedNotifVisibilityChanged(Z)，随后按
      * StatusBarVisibilityModel.showClock 决定时钟可见性。ROM 的 hideClock 同时处理
      * mClockView（时钟正文）、mClockSeat（时钟座位/占位）和 mFocusedNotLine（焦点分隔线）；
-     * 只隐藏 mClockView 会留下占位与分隔线，因此这里按类型把三者一起隐藏，焦点隐藏后恢复。
+     * 只隐藏 mClockView 会留下占位与分隔线，因此这里按类型把三者一起隐藏。
      *
      * <p>锁屏/解锁会重新 showClock，但不一定再次触发焦点可见性回调；只要焦点仍在显示且命中
      * 隐藏时间，就在 showClock 之后再次隐藏，避免解锁后时钟重新出现。
@@ -4083,28 +4095,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(fragment, "onFocusedNotifVisibilityChanged",
                     boolean.class, new XC_MethodHook() {
                         @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            if (!Boolean.TRUE.equals(param.args[0])) return;
-                            for (int index = 0; index < OS3_TIME_VIEW_FIELDS.length; index++) {
-                                View view = os3TimeView(param.thisObject, index);
-                                os3TimeOriginalVisibility[index] = view == null
-                                        ? View.VISIBLE : view.getVisibility();
-                            }
-                        }
-
-                        @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (Boolean.TRUE.equals(param.args[0])) {
-                                int kind = os3FocusKind();
-                                boolean hide = currentSettings.hideTimeForKind(kind);
-                                os3HideTimeActive = hide;
-                                if (hide) setOS3TimeVisible(param.thisObject, false);
-                                debug("OS3 hide-time showing kind=" + kind + " hide=" + hide);
-                            } else {
-                                os3HideTimeActive = false;
-                                restoreOS3Time(param.thisObject);
-                                debug("OS3 hide-time restored");
-                            }
+                            if (!param.hasThrowable()) updateOS3ClockVisibility(param.thisObject);
                         }
                     });
             hookOS3ClockShowGuard(fragment);
@@ -4123,8 +4115,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
-                            if (!os3HideTimeActive || !os3FocusStillShowing()) return;
-                            setOS3TimeVisible(param.thisObject, false);
+                            if (param.hasThrowable()) return;
+                            // 不依赖上一次类型缓存；解锁或切媒体时按当前 Fragment/bean 判定。
+                            if (shouldHideOS3Clock(param.thisObject)) {
+                                updateOS3ClockVisibility(param.thisObject);
+                            } else {
+                                os3ClockState(param.thisObject);
+                            }
                         }
                     });
         } catch (Throwable t) {
@@ -4132,12 +4129,82 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** 焦点提示当前是否处于显示状态（ROM 的 mIsFocusedNotifPromptShowing）。 */
-    private boolean os3FocusStillShowing() {
-        Object controller = os3PromptControllerRef.get();
-        if (controller == null) return false;
-        Object value = getField(controller, "mIsFocusedNotifPromptShowing");
-        return Boolean.TRUE.equals(value);
+    private boolean shouldHideOS3Clock(Object fragment) {
+        return Boolean.TRUE.equals(getField(fragment, "mIsFocusedNotifPromptViewShowing"))
+                && currentSettings.hideTimeForKind(os3FocusKind());
+    }
+
+    private OS3ClockVisibility os3ClockState(Object fragment) {
+        OS3ClockVisibility state = os3ClockVisibility.get(fragment);
+        if (state == null) {
+            state = new OS3ClockVisibility();
+            os3ClockVisibility.put(fragment, state);
+        }
+        return state;
+    }
+
+    private void scheduleOS3ClockRefresh() {
+        if (mainHandler == null || os3ClockRefreshQueued) return;
+        os3ClockRefreshQueued = true;
+        mainHandler.post(() -> {
+            os3ClockRefreshQueued = false;
+            for (Object fragment : new ArrayList<>(os3ClockVisibility.keySet())) {
+                View clock = os3TimeView(fragment, 0);
+                // 排队期间销毁的视图不复活；新 Fragment 由自己的回调注册。
+                if (clock != null && clock.isAttachedToWindow()) updateOS3ClockVisibility(fragment);
+            }
+        });
+    }
+
+    /**
+     * 接口来源：作者只读 APK MCP http://192.168.31.21:8787/mcp，小米 SystemUI
+     * 16.03.251211.r，MiuiCollapsedStatusBarFragment.updateStatusBarVisibilities/showClock/
+     * hideClock 和 MiuiClock.updateClockVisibility。具体实现许可证未确认，仅按接口独立实现。
+     * mLastModifiedVisibility.showClock 已包含锁屏、禁用标志与设备布局策略；恢复时不得强制显示。
+     */
+    private void updateOS3ClockVisibility(final Object fragment) {
+        final boolean hide = shouldHideOS3Clock(fragment);
+        try {
+            boolean changed = os3ClockState(fragment).update(hide, new OS3ClockVisibility.Host() {
+                @Override public boolean nativeClockShown() {
+                    Object model = XposedHelpers.getObjectField(fragment, "mLastModifiedVisibility");
+                    return XposedHelpers.getBooleanField(model, "showClock");
+                }
+                @Override public void hideForFocus() { hideOS3TimeViews(fragment); }
+                @Override public void showNativeClock() {
+                    restoreOS3NativeClock(fragment, true);
+                }
+                @Override public void hideNativeClock() {
+                    restoreOS3NativeClock(fragment, false);
+                }
+                @Override public void reconcileClockVisibility() {
+                    View clock = os3TimeView(fragment, 0);
+                    if (clock == null) throw new IllegalStateException("OS3 clock view missing");
+                    XposedHelpers.callMethod(clock, "updateClockVisibility");
+                }
+            });
+            if (changed) {
+                View clock = os3TimeView(fragment, 0);
+                debug("OS3 hide-time applied kind=" + os3FocusKind() + " hide=" + hide
+                        + " visibility=" + (clock == null ? "missing" : clock.getVisibility())
+                        + " alpha=" + (clock == null ? "missing" : clock.getAlpha()));
+            }
+        } catch (Throwable failure) {
+            // 接口失败保留接管标志供后续重试，不回放旧快照或强行显示锁屏时钟。
+            error("OS3 hide-time apply hide=" + hide, failure);
+        }
+    }
+
+    private void restoreOS3NativeClock(Object fragment, boolean show) {
+        boolean customAnimation = XposedHelpers.getBooleanField(fragment, "mUseCustomizedAnim");
+        try {
+            // ROM 即使 animate=false，仍会因 mUseCustomizedAnim=true 启动透明度动画。
+            // 这里只撤销模块覆盖，不延续焦点进出场动画，避免恢复后旧动画又写回透明状态。
+            XposedHelpers.setBooleanField(fragment, "mUseCustomizedAnim", false);
+            XposedHelpers.callMethod(fragment, show ? "showClock" : "hideClock", false);
+        } finally {
+            XposedHelpers.setBooleanField(fragment, "mUseCustomizedAnim", customAnimation);
+        }
     }
 
     /**
@@ -4219,24 +4286,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         return value instanceof View ? (View) value : null;
     }
 
-    private void setOS3TimeVisible(Object fragment, boolean visible) {
+    private void hideOS3TimeViews(Object fragment) {
         for (int index = 0; index < OS3_TIME_VIEW_FIELDS.length; index++) {
             View view = os3TimeView(fragment, index);
             if (view == null) continue;
             cancelOS3TimeAnimation(view);
-            view.setVisibility(visible ? View.VISIBLE : View.GONE);
-            if (visible) resetOS3TimeAppearance(view);
-        }
-    }
-
-    private void restoreOS3Time(Object fragment) {
-        for (int index = 0; index < OS3_TIME_VIEW_FIELDS.length; index++) {
-            View view = os3TimeView(fragment, index);
-            if (view == null) continue;
-            cancelOS3TimeAnimation(view);
-            int visibility = os3TimeOriginalVisibility[index];
-            view.setVisibility(visibility);
-            if (visibility == View.VISIBLE) resetOS3TimeAppearance(view);
+            view.setVisibility(View.GONE);
         }
     }
 
@@ -4250,12 +4305,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         } catch (Throwable ignored) {
             // 动画取消失败不应影响可见性恢复。
         }
-    }
-
-    /** 还原 ROM 的 hideClock 会改写的 alpha/translationX，否则视图可见但仍是透明。 */
-    private static void resetOS3TimeAppearance(View view) {
-        view.setAlpha(1f);
-        view.setTranslationX(0f);
     }
 
     /** 当前焦点来源分类：媒体/设备/普通。 */
