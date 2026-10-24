@@ -196,6 +196,7 @@ public final class SettingsActivity extends Activity {
     private Switch compatRetrySwitch;
     private Switch marqueeBounceSwitch;
     private Switch islandCompatSwitch;
+    private Switch islandRichTextSwitch;
     private SpinnerField islandTextModeField;
     private EditText focusMaxDisplayInput;
     private TextView focusMaxDisplayValue;
@@ -267,7 +268,7 @@ public final class SettingsActivity extends Activity {
     private java.util.List<Integer> pendingMediaBriefFields = MediaBriefFields.defaultOrder();
     private boolean pendingInterceptElementAnimation = FocusRestoreSettings.DEFAULT_INTERCEPT_ELEMENT_ANIMATION;
     private boolean pendingManual, pendingCompatRetry, pendingMarqueeBounce, pendingIslandCompat,
-            pendingDisableIslandProperty, pendingDisableIslandFeatureCache, pendingAllowFocusClick,
+            pendingIslandRichText, pendingDisableIslandProperty, pendingDisableIslandFeatureCache, pendingAllowFocusClick,
             pendingHideNotificationIcons, pendingShowFocusDivider, pendingShowIslandIcon,
             pendingTintIslandIcon, pendingUseSmallIconFallback,
             pendingNotificationRowClickFallback, pendingIndependentFocusBanner,
@@ -597,6 +598,7 @@ public final class SettingsActivity extends Activity {
         compatRetrySwitch = null;
         marqueeBounceSwitch = null;
         islandCompatSwitch = null;
+        islandRichTextSwitch = null;
         islandTextModeField = null;
         focusMaxDisplayInput = null;
         focusMaxDisplayValue = null;
@@ -1152,6 +1154,10 @@ public final class SettingsActivity extends Activity {
         contentPanel.addView(islandTextModeField.spinner, matchWrap(dp(4)));
         contentModeSummary = addSettingSummary(contentPanel, "");
         addSettingDivider(contentPanel);
+        islandRichTextSwitch = createSwitch("渲染彩色字体（<font color>）");
+        contentPanel.addView(islandRichTextSwitch, matchWrap(dp(4)));
+        addSettingSummary(contentPanel, "按文本里的 <font color='#RRGGBB'> 标记显示对应颜色；关闭后保留原始标记文本。");
+        addSettingDivider(contentPanel);
         contentPanel.addView(text("普通内容连接符", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
         generalSeparatorInput = input("默认：·，允许留空");
         generalSeparatorInput.setText(pendingGeneralSeparator);
@@ -1322,6 +1328,7 @@ public final class SettingsActivity extends Activity {
         hideNotificationIconsSwitch.setChecked(pendingHideNotificationIcons);
         showFocusDividerSwitch.setChecked(pendingShowFocusDivider);
         mediaFocusSwitch.setChecked(pendingMediaFocusEnabled);
+        islandRichTextSwitch.setChecked(pendingIslandRichText);
         syncIslandTextModeField();
         showIslandIconSwitch.setChecked(pendingShowIslandIcon);
         tintIslandIconSwitch.setChecked(pendingTintIslandIcon);
@@ -1742,6 +1749,7 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.retry", pendingCompatRetry);
         outState.putBoolean("m3.bounce", pendingMarqueeBounce);
         outState.putBoolean("m3.island", pendingIslandCompat);
+        outState.putBoolean("m3.islandRichText", pendingIslandRichText);
         outState.putInt("m3.islandTextMode", pendingIslandTextMode);
         outState.putFloat("m3.focusMaxSeconds", pendingFocusMaxDisplaySeconds);
         outState.putBoolean("m3.property", pendingDisableIslandProperty);
@@ -1829,6 +1837,7 @@ public final class SettingsActivity extends Activity {
         pendingCompatRetry = state.getBoolean("m3.retry", pendingCompatRetry);
         pendingMarqueeBounce = state.getBoolean("m3.bounce", pendingMarqueeBounce);
         pendingIslandCompat = state.getBoolean("m3.island", pendingIslandCompat);
+        pendingIslandRichText = state.getBoolean("m3.islandRichText", pendingIslandRichText);
         pendingIslandTextMode = state.getInt("m3.islandTextMode", pendingIslandTextMode);
         pendingFocusMaxDisplaySeconds = state.getFloat("m3.focusMaxSeconds",
                 pendingFocusMaxDisplaySeconds);
@@ -1970,6 +1979,10 @@ public final class SettingsActivity extends Activity {
             pendingIslandCompat = c;
             updateForcePackagesButton();
             updateExperimentalControls();
+            markPending();
+        });
+        if (islandRichTextSwitch != null) islandRichTextSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingIslandRichText = c;
             markPending();
         });
         if (generalSeparatorInput != null) {
@@ -2541,6 +2554,7 @@ public final class SettingsActivity extends Activity {
         boolean modeEnabled = pendingIslandCompat;
         setControlEnabled(islandTextModeField == null ? null : islandTextModeField.spinner,
                 modeEnabled);
+        setModeSpecificSwitchEnabled(islandRichTextSwitch, modeEnabled);
         if (contentModeSummary != null) contentModeSummary.setText(modeEnabled
                 ? "全文本：汇总可读文字；左右拼接：只取两侧并去重。仅影响超级岛内容转换。"
                 : "需先开启主页“转换超级岛内容为焦点通知”，才能调整此模式。");
@@ -3044,6 +3058,7 @@ public final class SettingsActivity extends Activity {
         pendingCompatRetry = settings.compatRetry;
         pendingMarqueeBounce = settings.marqueeBounce;
         pendingIslandCompat = settings.islandCompat;
+        pendingIslandRichText = settings.islandRichText;
         pendingIslandTextMode = settings.islandTextMode;
         pendingFocusMaxDisplaySeconds = settings.focusMaxDisplaySeconds;
         pendingDisableIslandProperty = settings.disableIslandProperty;
@@ -3108,6 +3123,7 @@ public final class SettingsActivity extends Activity {
                 .compatRetry(pendingCompatRetry)
                 .marqueeBounce(pendingMarqueeBounce)
                 .islandCompat(pendingIslandCompat)
+                .islandRichText(pendingIslandRichText)
                 .disableIslandProperty(pendingDisableIslandProperty)
                 .disableIslandFeatureCache(pendingDisableIslandFeatureCache)
                 .allowFocusClick(pendingAllowFocusClick)

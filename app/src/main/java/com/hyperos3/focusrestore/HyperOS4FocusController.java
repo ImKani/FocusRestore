@@ -580,7 +580,8 @@ final class HyperOS4FocusController {
         }
         if (content == null && !TextUtils.isEmpty(item.text)) {
             TextView textView = new TextView(host.getContext());
-            textView.setText(item.text);
+            textView.setText(settings.islandRichText
+                    ? FocusRichText.apply(item.text) : item.text);
             textView.setTextSize(14f);
             textView.setTextColor(currentTint);
             textView.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);

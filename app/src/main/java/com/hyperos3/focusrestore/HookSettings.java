@@ -34,6 +34,7 @@ final class HookSettings {
     final boolean compatRetry;
     final boolean marqueeBounce;
     final boolean islandCompat;
+    final boolean islandRichText;
     final boolean disableIslandProperty;
     final boolean disableIslandFeatureCache;
     final boolean allowFocusClick;
@@ -70,7 +71,8 @@ final class HookSettings {
                           boolean specialBannerNormalBackground,
                           boolean mediaFocusEnabled, boolean mediaFocusNativeBanner,
                           int mediaFocusCastPicker, boolean mediaFocusCastDirect, int marqueeDelayMs,
-                         boolean compatRetry, boolean marqueeBounce, boolean islandCompat,                         boolean disableIslandProperty, boolean disableIslandFeatureCache,
+                         boolean compatRetry, boolean marqueeBounce, boolean islandCompat,
+                         boolean islandRichText, boolean disableIslandProperty, boolean disableIslandFeatureCache,
                          boolean allowFocusClick, boolean hideNotificationIcons,
                          boolean showFocusDivider,
                          int focusIconSizeDp, int focusIconTextGapDp, int focusDividerStartDp, int focusDividerEndDp,
@@ -103,6 +105,7 @@ final class HookSettings {
         this.compatRetry = compatRetry;
         this.marqueeBounce = marqueeBounce;
         this.islandCompat = islandCompat;
+        this.islandRichText = islandRichText;
         this.disableIslandProperty = disableIslandProperty;
         this.disableIslandFeatureCache = disableIslandFeatureCache;
         this.allowFocusClick = allowFocusClick;
@@ -161,7 +164,7 @@ final class HookSettings {
                 source.mediaFocusEnabled, source.mediaFocusNativeBanner,
                 source.mediaFocusCastPicker, source.mediaFocusCastDirect,
                 source.marqueeDelayMs, source.compatRetry, source.marqueeBounce,
-                source.islandCompat, source.disableIslandProperty,
+                source.islandCompat, source.islandRichText, source.disableIslandProperty,
                 source.disableIslandFeatureCache, source.allowFocusClick,
                 source.hideNotificationIcons, source.showFocusDivider,
                 source.focusIconSizeDp, source.focusIconTextGapDp, source.focusDividerStartDp, source.focusDividerEndDp,
@@ -213,6 +216,8 @@ final class HookSettings {
                 readBoolean(cursor, SettingsContract.MARQUEE_BOUNCE,
                         FocusRestoreSettings.DEFAULT_MARQUEE_BOUNCE),
                 readBoolean(cursor, SettingsContract.ISLAND_COMPAT, FocusRestoreSettings.DEFAULT_ISLAND_COMPAT),
+                readBoolean(cursor, SettingsContract.ISLAND_RICH_TEXT,
+                        FocusRestoreSettings.DEFAULT_ISLAND_RICH_TEXT),
                 readBoolean(cursor, SettingsContract.DISABLE_ISLAND_PROPERTY,
                         FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_PROPERTY),
                 readBoolean(cursor, SettingsContract.DISABLE_ISLAND_FEATURE_CACHE,
@@ -291,6 +296,7 @@ final class HookSettings {
                 + " delayMs=" + marqueeDelayMs + " compatRetry=" + compatRetry
                 + " marqueeBounce=" + marqueeBounce
                 + " islandCompat=" + islandCompat
+                + " islandRichText=" + islandRichText
                 + " disableIslandProperty=" + disableIslandProperty
                 + " disableIslandFeatureCache=" + disableIslandFeatureCache
                 + " allowFocusClick=" + allowFocusClick

@@ -101,8 +101,8 @@ final class SettingsBackupCodec {
                     "icons", "marquee", "compatibility");
             JSONObject system = group(groups, "system", "hook_mode");
             JSONObject island = group(groups, "island", "island_compat", "island_text_mode",
-                    "island_general_separator", "island_side_separator", "island_separator",
-                    "island_force_packages");
+                    "island_rich_text", "island_general_separator", "island_side_separator",
+                    "island_separator", "island_force_packages");
             JSONObject focus = group(groups, "focus", "limit_text_width", "text_width_dp",
                     "text_width_landscape_dp", "focus_max_display_seconds",
                     "focus_timeout_exempt_packages", "hide_notification_icons", "show_focus_divider",
@@ -161,6 +161,7 @@ final class SettingsBackupCodec {
                     .disableIslandFeatureCache(bool(compatibility, "disable_island_feature_cache", defaults.disableIslandFeatureCache))
                     .islandCompat(bool(island, "island_compat", defaults.islandCompat))
                     .islandTextMode(textMode)
+                    .islandRichText(bool(island, "island_rich_text", defaults.islandRichText))
                     .islandGeneralSeparator(separator(island, "island_general_separator", legacySeparator))
                     .islandSideSeparator(separator(island, "island_side_separator", legacySeparator))
                     .islandForcePackages(forcePackages)
@@ -211,6 +212,7 @@ final class SettingsBackupCodec {
                 "system", entries("hook_mode", settings.hookMode),
                 "island", entries("island_compat", settings.islandCompat,
                         "island_text_mode", settings.islandTextMode,
+                        "island_rich_text", settings.islandRichText,
                         "island_general_separator", settings.islandGeneralSeparator,
                         "island_side_separator", settings.islandSideSeparator,
                         "island_force_packages", new TreeSet<>(settings.islandForcePackages)),

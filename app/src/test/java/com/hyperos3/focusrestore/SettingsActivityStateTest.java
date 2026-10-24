@@ -114,6 +114,9 @@ public class SettingsActivityStateTest {
         assertTrue(source.contains("长按直接打开通知，独立于短按。"));
         assertTrue("focus text mode must survive a restart",
                 written.contains("m3.islandTextMode"));
+        assertTrue("rich text switch must reflect the loaded value",
+                source.contains("islandRichTextSwitch.setChecked(pendingIslandRichText)"));
+        assertTrue(source.contains("islandRichTextSwitch = createSwitch(\"渲染彩色字体（<font color>）\")"));
     }
 
     @Test

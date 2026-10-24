@@ -49,6 +49,8 @@ public final class FocusRestoreSettings {
     public static final String KEY_COMPAT_RETRY = "compat_retry";
     public static final String KEY_MARQUEE_BOUNCE = "marquee_bounce";
     public static final String KEY_ISLAND_COMPAT = "island_compat";
+    /** 解析超级岛文本里的 font color 标记并以对应颜色显示。 */
+    public static final String KEY_ISLAND_RICH_TEXT = "island_rich_text";
     public static final String KEY_ISLAND_SEPARATOR = "island_separator";
     public static final String KEY_ALLOW_FOCUS_CLICK = "allow_focus_click";
     public static final String KEY_ISLAND_GENERAL_SEPARATOR = "island_general_separator";
@@ -117,6 +119,7 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_COMPAT_RETRY = false;
     public static final boolean DEFAULT_MARQUEE_BOUNCE = true;
     public static final boolean DEFAULT_ISLAND_COMPAT = true;
+    public static final boolean DEFAULT_ISLAND_RICH_TEXT = true;
     public static final boolean DEFAULT_DISABLE_ISLAND_PROPERTY = true;
     public static final boolean DEFAULT_DISABLE_ISLAND_FEATURE_CACHE = true;
     public static final boolean DEFAULT_ALLOW_FOCUS_CLICK = false;
@@ -178,6 +181,7 @@ public final class FocusRestoreSettings {
     public final boolean compatRetry;
     public final boolean marqueeBounce;
     public final boolean islandCompat;
+    public final boolean islandRichText;
     public final boolean disableIslandProperty;
     public final boolean disableIslandFeatureCache;
     public final boolean allowFocusClick;
@@ -232,6 +236,7 @@ public final class FocusRestoreSettings {
         this.compatRetry = editor.compatRetry;
         this.marqueeBounce = editor.marqueeBounce;
         this.islandCompat = editor.islandCompat;
+        this.islandRichText = editor.islandRichText;
         this.disableIslandProperty = editor.disableIslandProperty;
         this.disableIslandFeatureCache = editor.disableIslandFeatureCache;
         this.allowFocusClick = editor.allowFocusClick;
@@ -296,6 +301,7 @@ public final class FocusRestoreSettings {
         private boolean compatRetry = DEFAULT_COMPAT_RETRY;
         private boolean marqueeBounce = DEFAULT_MARQUEE_BOUNCE;
         private boolean islandCompat = DEFAULT_ISLAND_COMPAT;
+        private boolean islandRichText = DEFAULT_ISLAND_RICH_TEXT;
         private boolean disableIslandProperty = DEFAULT_DISABLE_ISLAND_PROPERTY;
         private boolean disableIslandFeatureCache = DEFAULT_DISABLE_ISLAND_FEATURE_CACHE;
         private boolean allowFocusClick = DEFAULT_ALLOW_FOCUS_CLICK;
@@ -351,6 +357,7 @@ public final class FocusRestoreSettings {
             this.compatRetry = source.compatRetry;
             this.marqueeBounce = source.marqueeBounce;
             this.islandCompat = source.islandCompat;
+            this.islandRichText = source.islandRichText;
             this.disableIslandProperty = source.disableIslandProperty;
             this.disableIslandFeatureCache = source.disableIslandFeatureCache;
             this.allowFocusClick = source.allowFocusClick;
@@ -409,6 +416,7 @@ public final class FocusRestoreSettings {
         public Editor compatRetry(boolean value) { this.compatRetry = value; return this; }
         public Editor marqueeBounce(boolean value) { this.marqueeBounce = value; return this; }
         public Editor islandCompat(boolean value) { this.islandCompat = value; return this; }
+        public Editor islandRichText(boolean value) { this.islandRichText = value; return this; }
         public Editor disableIslandProperty(boolean value) {
             this.disableIslandProperty = value; return this;
         }
@@ -700,6 +708,7 @@ public final class FocusRestoreSettings {
                 .compatRetry(values.getBoolean(KEY_COMPAT_RETRY, DEFAULT_COMPAT_RETRY))
                 .marqueeBounce(values.getBoolean(KEY_MARQUEE_BOUNCE, DEFAULT_MARQUEE_BOUNCE))
                 .islandCompat(values.getBoolean(KEY_ISLAND_COMPAT, DEFAULT_ISLAND_COMPAT))
+                .islandRichText(values.getBoolean(KEY_ISLAND_RICH_TEXT, DEFAULT_ISLAND_RICH_TEXT))
                 .disableIslandProperty(values.getBoolean(KEY_DISABLE_ISLAND_PROPERTY,
                         DEFAULT_DISABLE_ISLAND_PROPERTY))
                 .disableIslandFeatureCache(values.getBoolean(KEY_DISABLE_ISLAND_FEATURE_CACHE,
@@ -763,6 +772,7 @@ public final class FocusRestoreSettings {
                 + " specialBannerNormalBackground=" + specialBannerNormalBackground
                 + " delayMs=" + marqueeDelayMs + " compatRetry=" + compatRetry
                 + " marqueeBounce=" + marqueeBounce + " islandCompat=" + islandCompat
+                + " islandRichText=" + islandRichText
                 + " disableIslandProperty=" + disableIslandProperty
                 + " disableIslandFeatureCache=" + disableIslandFeatureCache
                 + " allowFocusClick=" + allowFocusClick
@@ -827,6 +837,7 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_COMPAT_RETRY, compatRetry)
                 .putBoolean(KEY_MARQUEE_BOUNCE, marqueeBounce)
                 .putBoolean(KEY_ISLAND_COMPAT, islandCompat)
+                .putBoolean(KEY_ISLAND_RICH_TEXT, islandRichText)
                 .putBoolean(KEY_DISABLE_ISLAND_PROPERTY, disableIslandProperty)
                 .putBoolean(KEY_DISABLE_ISLAND_FEATURE_CACHE, disableIslandFeatureCache)
                 .putBoolean(KEY_ALLOW_FOCUS_CLICK, allowFocusClick)

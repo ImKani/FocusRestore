@@ -86,7 +86,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * layout pass (the marquee animation alone causes many), so this lets a repeat pass skip both the
      * payload re-parse and the redundant view writes.
      */
-    private final Map<Object, String> appliedIslandTexts = new WeakHashMap<>();
+    private final Map<Object, AppliedIslandText> appliedIslandTexts = new WeakHashMap<>();
     /** UI 线程拥有；值只弱引用视图，避免 WeakHashMap 的值反向保活键。 */
     private final Map<Object, OS3ClockTimerBinding> clockTimerBindings = new WeakHashMap<>();
     /**
@@ -3209,6 +3209,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             boolean swipeChanged;
             boolean appearanceChanged;
             boolean islandConversionChanged;
+            boolean richTextChanged;
             boolean hideTimeChanged;
             synchronized (this) {
                 if (generation != settingsReadGeneration) return false;
@@ -3216,6 +3217,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 appearanceChanged = !sameFocusAppearance(currentSettings, next);
                 islandConversionChanged = currentSettings.islandCompat != next.islandCompat
                         || !currentSettings.islandForcePackages.equals(next.islandForcePackages);
+                richTextChanged = currentSettings.islandRichText != next.islandRichText;
                 hideTimeChanged = false;
                 for (int kind : new int[]{FocusKind.NORMAL, FocusKind.MEDIA, FocusKind.DEVICE}) {
                     hideTimeChanged |= currentSettings.hideTimeForKind(kind) != next.hideTimeForKind(kind);
@@ -3231,6 +3233,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     && installedHookMode == FocusRestoreSettings.HOOK_MODE_OS3) {
                 mainHandler.post(() -> {
                     if (currentSettings == next) scheduleOS3ClockRefresh();
+                });
+            }
+            if (richTextChanged && modeHooksInstalled && mainHandler != null) {
+                mainHandler.post(() -> {
+                    if (currentSettings != next) return;
+                    refreshConvertedPromptTexts();
                 });
             }
             if (islandConversionChanged && modeHooksInstalled && mainHandler != null) {
@@ -4617,7 +4625,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         Object content = getField(promptView, "mContentText");
         if (!(content instanceof TextView)) return;
         TextView textView = (TextView) content;
-        if (!TextUtils.equals(textView.getText(), text)) textView.setText(text);
+        CharSequence display = currentSettings.islandRichText
+                ? FocusRichText.apply(text) : text;
+        if (!FocusRichText.displays(textView.getText(), display)) textView.setText(display);
         if (textView.getVisibility() != View.VISIBLE) textView.setVisibility(View.VISIBLE);
     }
 
@@ -4747,6 +4757,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         String fallback = parsedIslandText(data);
                         if (TextUtils.isEmpty(fallback) && data != null) fallback = data.content;
                         if (TextUtils.isEmpty(fallback) && data != null) fallback = data.ticker;
+                        CharSequence display = currentSettings.islandRichText
+                                ? FocusRichText.apply(fallback) : fallback;
                         RemoteViewsFailurePolicy.Action action = RemoteViewsFailurePolicy.decide(
                                 failure, !TextUtils.isEmpty(fallback));
                         if (action == RemoteViewsFailurePolicy.Action.RETHROW) return;
@@ -4759,7 +4771,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             restoreRemoteViewsPrompt(param.thisObject);
                             hideKnownRemoteViewsContainers(param.thisObject, textView,
                                     data == null ? null : data.key);
-                            textView.setText(fallback);
+                            if (!FocusRichText.displays(textView.getText(), display)) {
+                                textView.setText(display);
+                            }
                             textView.setVisibility(View.VISIBLE);
                             scheduleNativeMarquee(param.thisObject);
                         } else {
@@ -4804,7 +4818,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         TextView text = (TextView) content;
         String value = data.mediaContent.assembleText(currentSettings.mediaBriefDisplay,
                 currentSettings.mediaBriefFields, systemUiContext);
-        if (!TextUtils.equals(text.getText(), value)) text.setText(value);
+        CharSequence display = currentSettings.islandRichText
+                ? FocusRichText.apply(value) : value;
+        if (!FocusRichText.displays(text.getText(), display)) text.setText(display);
         text.setVisibility(View.VISIBLE);
         if (firstDiagnosis("mediaText|" + data.key)) {
             debug("media text rendered key=" + data.key + " playing="
@@ -4842,15 +4858,16 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
         stopClockTimer(promptObject);
 
-        String applied;
+        AppliedIslandText applied;
         synchronized (appliedIslandTexts) {
             applied = appliedIslandTexts.get(promptObject);
         }
         String text;
         String source = null;
-        if (applied != null && TextUtils.equals(data.content, applied)) {
+        boolean reused = applied != null && TextUtils.equals(data.content, applied.raw);
+        if (reused) {
             // Same payload as the previous pass: reuse the conversion instead of re-parsing the JSON.
-            text = applied;
+            text = applied.raw;
         } else {
             IslandText parsed = shouldConvert(data) ? extractIslandContent(data) : null;
             if (parsed == null || TextUtils.isEmpty(parsed.text)) return false;
@@ -4858,23 +4875,43 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             source = parsed.source;
         }
 
+        boolean rich = currentSettings.islandRichText;
+        boolean styleChanged = applied != null && applied.rich != rich;
+        CharSequence display = reused && !styleChanged ? applied.rendered
+                : rich ? FocusRichText.apply(text) : text;
+
         // updateRemoteViews runs for every layout pass and its before-hook restores the
         // notification's own RemoteViews each time, so the containers must be hidden again here. The
-        // text and marquee only need attention when the converted text actually changed, otherwise a
-        // marquee-driven layout pass would rewrite the view tree and log on every frame.
+        // text and marquee only need attention when the converted text or its styling changed,
+        // otherwise a marquee-driven layout pass would rewrite the view tree and log on every frame.
         hideKnownRemoteViewsContainers(promptObject, textView, data.key);
-        boolean changed = !TextUtils.equals(applied, text);
-        if (!TextUtils.equals(textView.getText(), text)) textView.setText(text);
+        boolean wrote = false;
+        if (!FocusRichText.displays(textView.getText(), display)) {
+            textView.setText(display);
+            wrote = true;
+        }
         textView.setVisibility(View.VISIBLE);
-        if (changed) {
+        boolean changed = !reused;
+        if (changed || styleChanged || wrote) {
             synchronized (appliedIslandTexts) {
-                appliedIslandTexts.put(promptObject, text);
+                appliedIslandTexts.put(promptObject,
+                        new AppliedIslandText(text, display, rich));
             }
             scheduleNativeMarquee(promptObject);
+        }
+        if (changed) {
             log("updateRemoteViews prefers converted island text key=" + data.key
                     + " source=" + source + " text=" + preview(text));
         }
         return true;
+    }
+
+    /** 彩色字体开关变化后立即重写已显示的提示文字，不必等下一次通知更新。 */
+    private void refreshConvertedPromptTexts() {
+        for (View prompt : promptViewsSnapshot()) {
+            FocusData data = inspectBean(getField(prompt, "mData"));
+            if (data != null) preferConvertedIslandText(prompt, data);
+        }
     }
 
     private IslandClockTimer clockTimer(FocusData data) {
@@ -6629,6 +6666,19 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         IslandText(String text, String source) {
             this.text = text;
             this.source = source;
+        }
+    }
+
+    /** 缓存已写入提示视图的原始文本、实际显示的字符序列及当时的彩色字体状态。 */
+    private static final class AppliedIslandText {
+        final String raw;
+        final CharSequence rendered;
+        final boolean rich;
+
+        AppliedIslandText(String raw, CharSequence rendered, boolean rich) {
+            this.raw = raw;
+            this.rendered = rendered;
+            this.rich = rich;
         }
     }
 

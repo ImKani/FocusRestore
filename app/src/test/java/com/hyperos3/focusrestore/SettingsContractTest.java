@@ -45,7 +45,7 @@ public class SettingsContractTest {
                 "hook_mode", "compat_retry", "disable_island_property", "disable_island_feature_cache",
                 "limit_text_width", "text_width_dp", "width_landscape_dp", "marquee_delay_ms", "marquee_bounce",
                 "island_compat", "island_text_mode", "island_general_separator", "island_side_separator",
-                "island_force_packages",
+                "island_force_packages", "island_rich_text",
                 "hide_notification_icons", "show_focus_divider",
                 "focus_icon_size_dp", "focus_icon_text_gap_dp", "focus_divider_start_offset_dp", "focus_divider_end_offset_dp", "focus_divider_width_dp", "focus_divider_style",
                 "show_island_icon", "tint_island_icon",
@@ -67,8 +67,8 @@ public class SettingsContractTest {
                 SettingsContract.MARQUEE_DELAY_MS, SettingsContract.MARQUEE_BOUNCE,
                 SettingsContract.ISLAND_COMPAT, SettingsContract.ISLAND_TEXT_MODE,
                 SettingsContract.ISLAND_GENERAL_SEPARATOR, SettingsContract.ISLAND_SIDE_SEPARATOR,
-                SettingsContract.ISLAND_FORCE_PACKAGES, SettingsContract.HIDE_NOTIFICATION_ICONS,
-                SettingsContract.SHOW_FOCUS_DIVIDER,
+                SettingsContract.ISLAND_FORCE_PACKAGES, SettingsContract.ISLAND_RICH_TEXT,
+                SettingsContract.HIDE_NOTIFICATION_ICONS, SettingsContract.SHOW_FOCUS_DIVIDER,
                 SettingsContract.FOCUS_ICON_SIZE_DP, SettingsContract.FOCUS_ICON_TEXT_GAP_DP, SettingsContract.FOCUS_DIVIDER_START_DP, SettingsContract.FOCUS_DIVIDER_END_DP, SettingsContract.FOCUS_DIVIDER_WIDTH_DP, SettingsContract.FOCUS_DIVIDER_STYLE,
                 SettingsContract.SHOW_ISLAND_ICON,
                 SettingsContract.TINT_ISLAND_ICON, SettingsContract.USE_SMALL_ICON_FALLBACK,
@@ -88,7 +88,7 @@ public class SettingsContractTest {
                 SettingsContract.LEGACY_ISLAND_SEPARATOR, SettingsContract.EXPAND_ISLAND_ON_CLICK,
                 SettingsContract.NOTIFICATION_ICON_HIDE_MODE, SettingsContract.ISLAND_CUSTOM_RULES
         };
-        assertEquals(53, SettingsContract.COLUMNS.length);
+        assertEquals(54, SettingsContract.COLUMNS.length);
         assertEquals(SettingsContract.FOCUS_DIVIDER_START_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_START_DP);
         assertEquals(SettingsContract.FOCUS_DIVIDER_END_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_END_DP);
         assertEquals(SettingsContract.COLUMNS.length, fields.length);
@@ -274,6 +274,19 @@ public class SettingsContractTest {
             assertEquals(0, row[SettingsContract.NOTIFICATION_ICON_HIDE_MODE]);
             assertEquals(hidden, HookSettings.fromSettings(settings).hideNotificationIcons);
         }
+    }
+
+    @Test
+    public void richTextChoiceRoundTripsByNameAndLegacyColumnsDefaultOn() {
+        FocusRestoreSettings off = FocusRestoreSettings.edit().islandRichText(false).build();
+        Object[] row = SettingsContract.toRow(off, "");
+        assertEquals(0, row[SettingsContract.ISLAND_RICH_TEXT]);
+        HookSettings current = HookSettings.fromCursor(namedCursor(SettingsContract.COLUMNS, row));
+        assertFalse(current.islandRichText);
+        HookSettings legacy = HookSettings.fromCursor(namedCursor(LEGACY_COLUMNS,
+                SettingsContract.toRow(off, "", LEGACY_COLUMNS)));
+        assertTrue(legacy.islandRichText);
+        assertTrue(FocusRestoreSettings.defaults().islandRichText);
     }
 
     @Test

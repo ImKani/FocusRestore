@@ -67,7 +67,7 @@ public class SettingsBackupCodecTest {
         int fields = 0;
         JSONObject groups = root.getJSONObject("settings");
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
-        assertEquals(49, fields);
+        assertEquals(50, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules",
                 "focus_divider_start_dp", "focus_divider_end_dp"}) {
@@ -126,6 +126,16 @@ public class SettingsBackupCodecTest {
         } finally {
             java.util.TimeZone.setDefault(previousZone);
             java.util.Locale.setDefault(previousLocale);
+        }
+    }
+
+    @Test
+    public void richTextBackupDefaultsOnForOldFilesAndRejectsOtherTypes() throws Exception {
+        assertTrue(decodeGroups("{\"island\":{\"island_compat\":true}}").islandRichText);
+        assertFalse(decodeGroups("{\"island\":{\"island_rich_text\":false}}").islandRichText);
+        assertTrue(decodeGroups("{\"island\":{\"island_rich_text\":true}}").islandRichText);
+        for (String invalid : new String[]{"1", "\"true\"", "null", "[]", "{}"}) {
+            rejectGroups("{\"island\":{\"island_rich_text\":" + invalid + "}}");
         }
     }
 
@@ -538,7 +548,7 @@ public class SettingsBackupCodecTest {
         return FocusRestoreSettings.edit().hookMode(4).limitWidth(false).widthDp(244).widthLandscapeDp(1200)
                 .marqueeDelayMs(1700).specialBannerNormalBackground(false)
                 .mediaFocusEnabled(true).mediaFocusNativeBanner(true).mediaFocusCastPicker(1).mediaFocusCastDirect(direct)
-                .compatRetry(true).marqueeBounce(false).islandCompat(true)
+                .compatRetry(true).marqueeBounce(false).islandCompat(true).islandRichText(false)
                 .disableIslandProperty(false).disableIslandFeatureCache(false).allowFocusClick(true)
                 .hideNotificationIcons(false).showFocusDivider(false).showIslandIcon(true).tintIslandIcon(false)
                 .focusIconSizeDp(23).focusIconTextGapDp(12).focusDividerStartDp(0).focusDividerEndDp(24)
@@ -592,7 +602,7 @@ public class SettingsBackupCodecTest {
             assertEquals(field.getName(), field.get(expected), field.get(actual));
             count++;
         }
-        assertEquals("current user snapshot field count", 49, count);
+        assertEquals("current user snapshot field count", 50, count);
     }
 
     private static FocusRestoreSettings decodeGroups(String groups) throws IOException {

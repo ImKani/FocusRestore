@@ -8,12 +8,15 @@
 package com.hyperos3.focustestnotifier;
 
 /**
- * Verbatim focus/island payloads captured from the device with
- * {@code adb shell dumpsys notification --noredact}, plus small derived variants.
+ * Focus/island payloads captured from the device with
+ * {@code adb shell dumpsys notification --noredact} or the module's bounded payload log, plus small
+ * derived variants.
  *
- * <p>Keeping the real strings here is the point: the module's parser and banner behaviour were
+ * <p>Keeping the observed strings here is the point: the module's parser and banner behaviour were
  * debugged against exactly these values, so a test notification built from them reproduces field
  * behaviour (including the duplicated {@code aodTitle}) instead of an idealised approximation.
+ * The takeout payload is de-identified by removing its real order URL/ID; its visible text and
+ * island structure are unchanged.
  */
 final class FocusPayloads {
     /** {@code miui.focus.param.custom} of 0|com.miui.personalassistant|0|火车_sdk#...|10138. */
@@ -83,6 +86,44 @@ final class FocusPayloads {
                     + "\"textInfo\":{\"title\":\"岛图标测试\",\"showHighlightColor\":false}}},"
                     + "\"smallIslandArea\":{\"picInfo\":{\"type\":1,"
                     + "\"pic\":\"miui.focus.pic_island_test\"}}}}}";
+
+    /**
+     * 0.40.2 日志中 {@code com.taobao.taobao} 外卖通知的 {@code miui.focus.param} 结构
+     * （{@code log/focus-restore-os3-0.40.2.log}）：标题含
+     * {@code <font color='#0FAD50'>18:26</font>}，用于验证彩色字体渲染。
+     *
+     * <p>为避免把真实订单地址写入本地测试工具，去掉了 {@code url}/{@code orderId}/{@code sequence}；
+     * 标题、进度、岛区域和 aodTitle 保持日志观测值。
+     */
+    static final String TAKEOUT_COLORED_FONT =
+            "{\"progressCount\":2,\"enableFloat\":false,\"title\":\"预计18:26送达\","
+                    + "\"content\":\"骑士已接单\",\"timeout\":60,\"scene\":\"foodDelivery\","
+                    + "\"desc1\":\"骑士已接单\",\"desc2\":\"距商家228m，预计4分钟到达 \","
+                    + "\"protocol\":1,\"progress\":35,\"updatable\":true,"
+                    + "\"param_v2\":{\"baseInfo\":{\"showDivider\":true,"
+                    + "\"title\":\"预计<font color='#0FAD50'>18:26</font>送达\",\"type\":2,"
+                    + "\"colorSubTitle\":\"#FF6200\",\"content\":\"骑士已接单\","
+                    + "\"subContent\":\"干饭人·小炒快餐(兴业店)\"},"
+                    + "\"param_island\":{\"highlightColor\":\"#FF6200\",\"islandProperty\":1,"
+                    + "\"bigIslandArea\":{\"imageTextInfoLeft\":{\"textInfo\":{"
+                    + "\"showHighlightColor\":false,\"title\":\"骑士接单\"},"
+                    + "\"picInfo\":{\"pic\":\"miui.focus.pic_app_icon\",\"type\":1},\"type\":1},"
+                    + "\"textInfo\":{\"showHighlightColor\":true,\"title\":\"18:26\","
+                    + "\"content\":\"送达\"}},"
+                    + "\"smallIslandArea\":{\"picInfo\":{\"pic\":\"miui.focus.pic_app_icon\","
+                    + "\"type\":1}}},"
+                    + "\"aodPic\":\"miui.focus.pic_app_icon\",\"business\":\"food_delivery\","
+                    + "\"picInfo\":{\"pic\":\"miui.focus.pic_app_icon\",\"type\":1},"
+                    + "\"enableFloat\":false,\"protocol\":1,\"filterWhenNoPermission\":true,"
+                    + "\"reopen\":\"close\",\"aodTitle\":\"18:26送达\",\"updatable\":true,"
+                    + "\"progressInfo\":{\"picEnd\":\"miui.focus.pic_end\","
+                    + "\"picEndUnselected\":\"miui.focus.pic_end_unselected\","
+                    + "\"colorProgressEnd\":\"#FF6200\",\"picForward\":\"miui.focus.pic_forward\","
+                    + "\"progress\":35,\"colorProgress\":\"#FF6200\","
+                    + "\"picMiddleUnselected\":\"miui.focus.pic_middel_unselected\","
+                    + "\"picMiddle\":\"miui.focus.pic_middle\"},\"islandFirstFloat\":false},"
+                    + "\"colorDesc\":\"#FF48D0FF\",\"colorDescDark\":\"#FF0073DD\","
+                    + "\"islandFirstFloat\":false}";
 
     private FocusPayloads() {
     }

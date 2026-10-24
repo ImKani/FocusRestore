@@ -31,6 +31,7 @@ public class ExperimentalSettingsTest {
         assertEquals(160, defaults.widthDp);
         assertEquals(600, defaults.widthLandscapeDp);
         assertTrue(defaults.islandCompat);
+        assertTrue(defaults.islandRichText);
         assertTrue(defaults.limitWidth);
         assertTrue(defaults.independentFocusBanner);
         assertEquals(0, defaults.focusIconSizeDp);
@@ -742,6 +743,7 @@ public class ExperimentalSettingsTest {
                 .compatRetry(true)
                 .marqueeBounce(false)
                 .islandCompat(true)
+                .islandRichText(false)
                 .disableIslandProperty(false)
                 .disableIslandFeatureCache(false)
                 .allowFocusClick(true)
@@ -767,6 +769,7 @@ public class ExperimentalSettingsTest {
         assertTrue(all.compatRetry);
         assertFalse(all.marqueeBounce);
         assertTrue(all.islandCompat);
+        assertFalse(all.islandRichText);
         assertFalse(all.disableIslandProperty);
         assertFalse(all.disableIslandFeatureCache);
         assertTrue(all.allowFocusClick);
@@ -801,6 +804,7 @@ public class ExperimentalSettingsTest {
         HookSettings hookDefaults = HookSettings.defaults();
         FocusRestoreSettings defaults = FocusRestoreSettings.defaults();
         assertEquals(defaults.islandCompat, hookDefaults.islandCompat);
+        assertEquals(defaults.islandRichText, hookDefaults.islandRichText);
         assertEquals(defaults.islandTextMode, hookDefaults.islandTextMode);
         assertEquals(defaults.focusMaxDisplaySeconds, hookDefaults.focusMaxDisplaySeconds, 0.0001f);
         assertEquals(defaults.showIslandIcon, hookDefaults.showIslandIcon);

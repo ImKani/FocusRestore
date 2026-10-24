@@ -110,6 +110,12 @@ final class FocusTestNotifier {
                         + "不再是 applicationIcon）",
                 "miui.focus.param", FocusPayloads.ISLAND_ICON_PARAM,
                 null, false, false, true, true));
+        specs.add(new Spec(9, "外卖通知（彩色字体，不加白名单即可）",
+                "开启“渲染彩色字体”后胶囊显示：骑士接单·预计18:26送达·骑士已接单·"
+                        + "干饭人·小炒快餐(兴业店)·35%·骑士接单·18:26·送达，其中 18:26 为绿色；"
+                        + "关闭后显示原始 <font color='#0FAD50'> 标记",
+                "miui.focus.param", FocusPayloads.TAKEOUT_COLORED_FONT,
+                null, false, false, false, false));
         return specs;
     }
 
@@ -201,7 +207,8 @@ final class FocusTestNotifier {
                 "miui.focus.pic_island_pic", "miui.focus.pic_island_pic_small",
                 "miui.focus.pic_travel_aod_pic", "miui.focus.pic_ticker",
                 "miui.focus.pic_key_island_icon", "miui.focus.pic_key_focus_icon",
-                "miui.focus.pic_aod", "miui.focus.pic_island_test"
+                "miui.focus.pic_aod", "miui.focus.pic_island_test",
+                "miui.focus.pic_app_icon"
         };
         for (String key : keys) {
             pictures.putParcelable(key, icon);
