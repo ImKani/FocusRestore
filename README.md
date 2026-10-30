@@ -20,7 +20,9 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-当前版本：`0.41.0`（versionCode 311）。新增可选的彩色字体渲染，默认开启：超级岛文本中的 `<font color='#RRGGBB'>` 标记会按对应颜色显示，关闭后恢复按原始标记文本显示。最低 Android 版本仍为 8.1（API 27），无新增第三方运行时依赖。clean Debug/Release 构建及 46 类／365 项测试通过，两包内部版本、包名和作者签名核验通过；Release 按当前工具环境约定跳过 `lintVitalAnalyzeRelease`，未完成完整 lint。状态栏焦点中的实际着色、关闭开关后的原始文本及不同 ROM 的显示差异仍待实机确认。
+当前版本：`0.41.2`（versionCode 313）。修复 OS4 小爱记忆退出后透明全屏窗口可能继续拦截点击的问题：在模块覆盖之前保存 ROM 原本的岛能力，避免 SystemUI 本地禁用状态被 ROM 发布成设备全局不支持；仅处理已核对的启动／用户切换发布调用，原本不支持时仍保留不支持，不强制开启设备能力。继续保留两层岛屏蔽、原生岛内容入口和黑色背景屏蔽，以及收起协议兼容。作者使用 Debug 包按原故障流程连续复测，两份采集共四次操作均未出现点击失效，日志确认全局能力发布保留原值、四个小爱全屏窗口均正常移除；其他 ROM、用户切换、Release 实机表现及黑底／原生岛视觉仍待确认。最低 Android 版本仍为 8.1（API 27），无新增第三方运行时依赖。clean Debug/Release 构建及 48 类／379 项测试通过，两包内部版本、包名和作者签名核验通过；Release 按当前工具环境约定跳过 `lintVitalAnalyzeRelease`，未完成完整 lint。
+
+- Debug 保留 `DIAG island-lifecycle`，新增 `DIAG island-capability`：记录原生能力、发布 Hook 就绪、ROM 请求值、实际参数值及属性回读，并在小爱通知到达时补记快照。启动前段没有采集到时可据此核对发布状态；属性写入成功不等于小爱已走正常退出或窗口已关闭。
 
 - 超级岛转换后的焦点文字支持 `<font color>` 彩色标记，默认开启；模块写入状态栏及 OS4 文本兜底时应用对应颜色。
 - 关闭“渲染彩色字体”后不解析标记，按原始文本显示，便于对照或排查 ROM 解析差异。
@@ -189,7 +191,7 @@ HyperOS 4 媒体焦点使用原生媒体卡片选出的当前媒体：首次加�
 
 导入先完整检查文件，再确认覆盖全部当前设置；文件中缺少的设置恢复兼容默认值，不与当前配置混合。旧显示横屏宽度缺失时继承所导入的显示竖屏宽度，旧连接符可作为两种连接符的回退；新增触控开关缺失时关闭，两种触控宽度缺失时分别使用160dp／600dp，不继承自定义显示宽度。取消或文件校验失败不写设置；保存失败会提示，双存储写入不保证跨存储事务。恢复后仍需手动重启系统界面完整生效。
 
-配置文件带格式版本 `formatVersion` 和导出软件版本 `appVersion`（例如 `0.41.0(311)`），软件版本随实际导出构建自动填写，仅说明来源，不决定能否导入。手工编辑时 `appVersion` 必须保留为非空、最多64字符且不含控制符的文本；设置仍按字段类型、范围和结构校验。兼容基线为0.30.4的持久设置，不为0.31.0～0.31.3测试期间缺少软件版本字段的旧JSON增加迁移；旧版不保证能导入新增字段的新版备份。文件最多16 MiB，两份应用名单的包名文本合计最多64 Ki字符，避免页面状态保存超限；导入和导出使用相同限制。冲突的点击选项按设置界面现有优先级处理。文件包含应用名单等个人设置，请妥善保管。
+配置文件带格式版本 `formatVersion` 和导出软件版本 `appVersion`（例如 `0.41.2(313)`），软件版本随实际导出构建自动填写，仅说明来源，不决定能否导入。手工编辑时 `appVersion` 必须保留为非空、最多64字符且不含控制符的文本；设置仍按字段类型、范围和结构校验。兼容基线为0.30.4的持久设置，不为0.31.0～0.31.3测试期间缺少软件版本字段的旧JSON增加迁移；旧版不保证能导入新增字段的新版备份。文件最多16 MiB，两份应用名单的包名文本合计最多64 Ki字符，避免页面状态保存超限；导入和导出使用相同限制。冲突的点击选项按设置界面现有优先级处理。文件包含应用名单等个人设置，请妥善保管。
 
 ### 高级：Debug 测试版内部兼容开关
 
@@ -223,13 +225,13 @@ Debug 和 Release 均保留模块加载版本、横幅点击与失败原因等�
 ```sh
 su
 /system/bin/logcat -c
-/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.41.0.log
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.41.2.log
 ```
 
 保持命令运行，然后通过设备上的方式手动重启系统界面。完成复现后回到 MT 终端，按 `Ctrl+C` 停止抓取。日志保存在：
 
 ```text
-/sdcard/focus-restore-0.41.0.log
+/sdcard/focus-restore-0.41.2.log
 ```
 
 ### 电脑端：ADB + PowerShell
@@ -306,13 +308,13 @@ gradle :app:clean :app:assembleDebug :app:assembleRelease
 > **签名变更（0.34.2 起）**：本项目自 0.34.2 起改用作者签名证书，与此前各版本使用的固定测试证书签名不同，无法直接覆盖安装。从旧版本升级请先在模块“关于”页导出配置，再卸载旧版本、安装本版本，最后导入配置；卸载会清除模块内保存的设置，未导出的配置无法恢复。
 
 ```powershell
-adb install -r '.\FocusRestore-0.41.0-debug.apk'
+adb install -r '.\FocusRestore-0.41.2-debug.apk'
 ```
 
 或安装 Release：
 
 ```powershell
-adb install -r '.\FocusRestore-0.41.0-release.apk'
+adb install -r '.\FocusRestore-0.41.2-release.apk'
 ```
 
 安装后：

@@ -121,6 +121,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private ClassLoader classLoader;
     /** Island view blocking is installed per plugin loader and re-armed when the plugin unloads. */
     private volatile boolean islandViewsBlocked;
+    private volatile int islandControllerAddHooks;
+    private SuppressedIslandLifecycle suppressedIslandLifecycle;
+    private IslandCapabilityPublication islandCapabilityPublication;
     /** 设备通知的构造焦点通知通路；首次使用时创建。 */
     private DeviceNotificationFocusPoster deviceNotificationFocusPoster;
     /** 每次设备通知请求的代次与已确认投递的代次，只用于把投递结果按次记录，不参与任何呈现决策。 */
@@ -234,6 +237,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 + " version=" + BuildConfig.VERSION_NAME + " code=" + BuildConfig.VERSION_CODE
                 + " debug=" + BuildConfig.DEBUG + " pid=" + android.os.Process.myPid()
                 + " bannerEngine=native-template-v1");
+        // ROM 会把本地 FEATURE_DYNAMIC_ISLAND 写成全局属性；先记录未经模块覆盖的原生能力。
+        islandCapabilityPublication = new IslandCapabilityPublication(new IslandCapabilityPublication.Host() {
+            @Override public boolean localSuppression() {
+                return !BuildConfig.DEBUG || currentSettings.disableIslandProperty || currentSettings.disableIslandFeatureCache;
+            }
+            @Override public void debug(String message) { HyperOS3FocusRestoreHook.debug(message); }
+            @Override public void error(String stage, Throwable failure) { HyperOS3FocusRestoreHook.this.error(stage, failure); }
+        });
+        islandCapabilityPublication.install(classLoader);
         hookNativeBannerPlugin();
         hookApplicationAttach();
         hookDynamicIslandSystemProperty();
@@ -284,6 +296,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     if (deviceNotificationFocusPoster != null) deviceNotificationFocusPoster.cancel();
                     nativeBannerRenderer.onPluginDisconnected(loader);
                     islandViewsBlocked = false;
+                    islandControllerAddHooks = 0;
                 }
                 @Override public void log(String message) {
                     HyperOS3FocusRestoreHook.this.log(message);
@@ -340,6 +353,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             error("logCapabilities", throwable);
         }
         if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4) {
+            installSuppressedIslandLifecycle();
             installOS4Hooks();
         } else {
             installOS3Hooks();
@@ -359,6 +373,23 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 HyperOS3FocusRestoreHook.this.error(stage, error);
             }
         }).install(classLoader, installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4);
+    }
+
+    private void installSuppressedIslandLifecycle() {
+        suppressedIslandLifecycle = new SuppressedIslandLifecycle(new SuppressedIslandLifecycle.Host() {
+            @Override public boolean isSuppressed() {
+                HookSettings settings = currentSettings;
+                return SuppressedIslandPolicy.active(
+                        installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4, BuildConfig.DEBUG,
+                        settings.disableIslandProperty, settings.disableIslandFeatureCache,
+                        islandViewsBlocked, islandControllerAddHooks);
+            }
+            @Override public void debug(String message) { HyperOS3FocusRestoreHook.debug(message); }
+            @Override public void error(String stage, Throwable failure) {
+                HyperOS3FocusRestoreHook.error(stage, failure);
+            }
+        });
+        suppressedIslandLifecycle.install(classLoader, systemUiContext, mainHandler);
     }
 
     /**
@@ -781,6 +812,21 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         (android.service.notification.StatusBarNotification) sbn;
                 // 交付确认与横幅宿主无关：重启后还没画过横幅时也必须能确认构造的焦点通知已经生效。
                 noteConstructedFocusNotification(notification);
+                if (BuildConfig.DEBUG && "com.miui.voiceassist".equals(notification.getPackageName())
+                        && firstDiagnosis("xiaoai-session|" + key + "|" + notification.getPostTime())) {
+                    if (suppressedIslandLifecycle != null) {
+                        suppressedIslandLifecycle.diagnose("xiaoai-notification");
+                    }
+                    if (islandCapabilityPublication != null) {
+                        islandCapabilityPublication.diagnose("xiaoai-notification");
+                    }
+                    debug("island-lifecycle stage=xiaoai-notification key=" + key
+                            + " postTime=" + notification.getPostTime()
+                            + " islandViewsBlocked=" + islandViewsBlocked
+                            + " controllerAddHooks=" + islandControllerAddHooks
+                            + " propertySuppressed=" + currentSettings.disableIslandProperty
+                            + " featureSuppressed=" + currentSettings.disableIslandFeatureCache);
+                }
                 FocusBannerController controller = bannerController;
                 if (controller != null) controller.onNotificationChanged(key, notification);
             }
@@ -2766,7 +2812,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * <p>{@code FEATURE_DYNAMIC_ISLAND=false} 只挡住 SystemUI 侧的内容下发与图标归并；岛窗口仍可能被
      * 插件创建出来，此时没有内容、只剩插件 {@code DynamicIslandBackgroundView} 画的那块黑色圆角背景，
      * 表现就是整个状态栏全黑显示"脑门"。所以这里在插件入口拦截：不新增、不更新岛视图，
-     * 并把背景透明度钉为 0（只让黑底不可见，不改动插件的布局与状态计算）。
+     * 并把背景透明度钉为 0。add/update 拦截也会阻止依赖视图执行的状态流转，
+     * OS4 小爱的展开查询与收起完成由 SuppressedIslandLifecycle 限定范围补齐。
      *
      * <p>岛内容转焦点通知由 {@code islandCompat} 通路负责，这里不做任何转换。
      */
@@ -2787,12 +2834,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         + " controller=" + (windowController != null) + " background=null");
                 return;
             }
-            suppressIslandViewCall(contentPlugin, "addDynamicIslandView");
-            suppressIslandViewCall(contentPlugin, "updateDynamicIslandView");
-            suppressIslandViewCall(windowView, "updateDynamicIslandView");
-            suppressIslandViewCall(windowView, "updateDynamicIslandViewSuspend");
-            suppressIslandViewCall(windowController, "addDynamicIslandView");
-            suppressIslandViewCall(windowController, "updateDynamicIslandView");
+            // Debug/Release 使用相同屏蔽路径；上一版整组放行未证实有效，且会恢复原生岛内容。
+            int contentHooks = suppressIslandViewCall(contentPlugin, "addDynamicIslandView")
+                    + suppressIslandViewCall(contentPlugin, "updateDynamicIslandView");
+            int viewHooks = suppressIslandViewCall(windowView, "updateDynamicIslandView")
+                    + suppressIslandViewCall(windowView, "updateDynamicIslandViewSuspend");
+            islandControllerAddHooks = suppressIslandViewCall(windowController, "addDynamicIslandView");
+            int controllerHooks = islandControllerAddHooks
+                    + suppressIslandViewCall(windowController, "updateDynamicIslandView");
             // 兜底：黑色圆角底由该 View 的 onDraw 画，直接不画；并让它始终不可见、透明。
             XposedBridge.hookAllMethods(background, "onDraw", new XC_MethodHook() {
                 @Override
@@ -2814,34 +2863,60 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     if (param.args.length == 1 && param.args[0] instanceof Float) param.args[0] = 0f;
                 }
             });
-            if (contentPlugin != null) {
-                XposedBridge.hookAllMethods(contentPlugin, "handleDynamicIsland", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) {
-                        log("Dynamic Island command "
-                                + (param.args.length > 0 ? islandCommand(param.args[0]) : "<none>"));
-                    }
-                });
-            }
+            // OS4 18.3.2.22.0 的命令实际位于 controller/proxy，通知插件本身无此方法。
+            // 接口来源及版本见 SuppressedIslandLifecycle；诊断不改变命令的结果和时序。
+            int commandHooks = observeIslandCommands(windowController);
+            Class<?> proxy = FocusReflection.findClass(pluginLoader,
+                    "miui.systemui.dynamicisland.window.DynamicIslandWindowViewCreator$dynamicIslandContentProxy$2$1");
+            commandHooks += observeIslandCommands(proxy);
             islandViewsBlocked = true;
             log("Dynamic Island views blocked: entries suppressed, background never drawn"
                     + " contentPlugin=" + (contentPlugin != null) + " windowView=" + (windowView != null)
                     + " controller=" + (windowController != null));
+            debug("island-lifecycle stage=view-install mode=blocked contentHooks=" + contentHooks
+                    + " viewHooks=" + viewHooks + " controllerHooks=" + controllerHooks
+                    + " controllerAddHooks=" + islandControllerAddHooks + " commandHooks=" + commandHooks);
+            if (islandControllerAddHooks == 0) {
+                log("island lifecycle completion disabled: controller add hook missing");
+            }
+            if (suppressedIslandLifecycle != null) suppressedIslandLifecycle.diagnose("plugin-ready");
         } catch (Throwable t) {
             error("blockDynamicIslandViews", t);
         }
     }
 
     /** 按方法名整组拦截，避免依赖只在插件 ClassLoader 里可见的参数类型。 */
-    private void suppressIslandViewCall(Class<?> owner, String name) {
-        if (owner == null) return;
-        XposedBridge.hookAllMethods(owner, name, new XC_MethodHook() {
+    private int suppressIslandViewCall(Class<?> owner, String name) {
+        if (owner == null) return 0;
+        return XposedBridge.hookAllMethods(owner, name, new XC_MethodHook() {
+            private boolean reported;
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
                 param.setResult(null);
-                log("Dynamic Island view suppressed: " + owner.getSimpleName() + "#" + name);
+                if (reported) return;
+                reported = true;
+                debug("island-lifecycle stage=view-blocked method=" + owner.getSimpleName() + "#" + name);
             }
-        });
+        }).size();
+    }
+
+    private int observeIslandCommands(Class<?> owner) {
+        if (!BuildConfig.DEBUG || owner == null) return 0;
+        return XposedBridge.hookAllMethods(owner, "handleDynamicIsland", new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam param) {
+                if (param.args.length == 0 || !(param.args[0] instanceof Bundle)) return;
+                Bundle command = (Bundle) param.args[0];
+                String action = command.getString("action_key", "");
+                // 高度/宽度/触摸更新会逐帧到达，只记录收起、移除及是否存在岛的请求。
+                if (!"action_collapse_expanded".equals(action)
+                        && !"action_remove_island".equals(action)
+                        && !"action_request_has_island".equals(action)
+                        && !"action_request_need_return_island".equals(action)) return;
+                debug("island-lifecycle stage=command owner=" + owner.getSimpleName()
+                        + " " + islandCommand(command) + " failed=" + param.hasThrowable());
+                if (param.hasThrowable()) error("island-lifecycle command " + action, param.getThrowable());
+            }
+        }).size();
     }
 
     /** 打印插件命令的 action 与标量参数，用于定位设备通知等真实入口。 */
