@@ -27,6 +27,7 @@ import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -45,6 +46,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
@@ -64,6 +66,7 @@ import android.widget.Toast;
 
 import android.text.Editable;
 import android.text.InputType;
+import android.text.InputFilter;
 import android.text.TextWatcher;
 
 import java.util.function.IntConsumer;
@@ -172,6 +175,12 @@ public final class SettingsActivity extends Activity {
     private ScrollView pageScroll;
     private final int[] scrollPositions = new int[3];
     private final Set<String> expandedSections = new HashSet<>();
+    private final Map<String, View> searchTargets = new java.util.HashMap<>();
+    private Dialog settingsSearchDialog;
+    private String settingsSearchQuery = "";
+    private View searchHighlightTarget;
+    private Drawable searchHighlightOriginal;
+    private Runnable clearSearchHighlight;
     /** 文本框输入合并保存；字段与 Handler 同生命周期，onDestroy 时清空回调。 */
     private static final long TEXT_SAVE_DEBOUNCE_MS = 400L;
     private final Handler textSaveHandler = new Handler(Looper.getMainLooper());
@@ -330,6 +339,10 @@ public final class SettingsActivity extends Activity {
             }
         }
         showPage(currentPage);
+        if (savedInstanceState != null && savedInstanceState.getBoolean("ui.settingsSearchOpen", false)) {
+            settingsSearchQuery = savedInstanceState.getString("ui.settingsSearchQuery", "");
+            showSettingsSearch();
+        }
         if (savedInstanceState != null) resumeInterruptedSave(savedInstanceState);
     }
 
@@ -349,6 +362,7 @@ public final class SettingsActivity extends Activity {
         sectionAnimating = false;
         if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
         if (mediaFieldDragHandler != null) mediaFieldDragHandler.finish(false);
+        clearSettingsSearchHighlight();
         super.onPause();
     }
 
@@ -385,6 +399,7 @@ public final class SettingsActivity extends Activity {
         importDialog = null;
         importCandidate = null;
         if (activeDialog != null) activeDialog.dismiss();
+        if (settingsSearchDialog != null) settingsSearchDialog.dismiss();
         clearPageControls();
         if (feedbackToast != null) feedbackToast.cancel();
         // 已确认的设置提交继续排空；文件 IO 的取消不撤销已经接受的设置保存。
@@ -515,6 +530,17 @@ public final class SettingsActivity extends Activity {
         LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(0, -2, 1f);
         brandParams.leftMargin = dp(10);
         bar.addView(brand, brandParams);
+        ImageButton search = new ImageButton(this);
+        search.setImageDrawable(new SettingsSearchIconDrawable(COLOR_TEXT_PRIMARY,
+                getResources().getDisplayMetrics().density));
+        search.setScaleType(ImageView.ScaleType.CENTER);
+        search.setPadding(0, 0, 0, 0);
+        search.setContentDescription("搜索设置");
+        search.setTooltipText("搜索设置");
+        search.setBackground(new RippleDrawable(ColorStateList.valueOf(COLOR_NAV_SELECTED),
+                null, roundedBg(Color.WHITE, 24)));
+        search.setOnClickListener(view -> showSettingsSearch());
+        bar.addView(search, new LinearLayout.LayoutParams(dp(48), dp(48)));
         return bar;
     }
 
@@ -546,6 +572,253 @@ public final class SettingsActivity extends Activity {
         return nav;
     }
 
+    private void showSettingsSearch() {
+        if (destroyed || isFinishing() || settingsSearchDialog != null) return;
+        if (importSaveGeneration >= 0L) {
+            showFeedback("正在导入配置，请稍候。");
+            return;
+        }
+        captureCurrentInputs();
+        if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
+        if (mediaFieldDragHandler != null) mediaFieldDragHandler.finish(false);
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(16), dp(16), dp(12));
+        root.setBackground(roundedBg(COLOR_SURFACE_HIGH, 16));
+        if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
+        TextView title = text("搜索设置", 18, COLOR_TEXT_PRIMARY);
+        title.setTypeface(title.getTypeface(), 1);
+        root.addView(title, matchWrap(dp(12)));
+        LinearLayout searchRow = new LinearLayout(this);
+        searchRow.setGravity(Gravity.CENTER_VERTICAL);
+        EditText query = input("搜索名称或关键词，如图标、间距、妙播");
+        query.setSingleLine(true);
+        query.setInputType(InputType.TYPE_CLASS_TEXT);
+        query.setFilters(new InputFilter[]{new InputFilter.LengthFilter(256)});
+        query.setContentDescription("搜索设置名称或关键词");
+        query.setBackground(roundedBg(COLOR_SURFACE, 10));
+        query.setText(settingsSearchQuery);
+        query.setSelection(query.length());
+        searchRow.addView(query, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        Button clear = actionButton("清空", Color.TRANSPARENT, COLOR_TEXT_SECONDARY);
+        clear.setContentDescription("清空设置搜索内容");
+        clear.setPadding(dp(12), 0, dp(12), 0);
+        clear.setEnabled(query.length() > 0);
+        searchRow.addView(clear, new LinearLayout.LayoutParams(-2, dp(48)));
+        root.addView(searchRow, matchWrap(dp(8)));
+        TextView status = text("", 13, COLOR_TEXT_SECONDARY);
+        status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        root.addView(status, matchWrap(dp(4)));
+        FrameLayout results = new FrameLayout(this);
+        ListView list = new ListView(this);
+        list.setDivider(new ColorDrawable(COLOR_DIVIDER));
+        list.setDividerHeight(1);
+        list.setBackgroundColor(Color.TRANSPARENT);
+        TextView empty = text("没有找到相关设置，试试“宽度”“长按”或“媒体”。", 14, COLOR_TEXT_SECONDARY);
+        empty.setGravity(Gravity.CENTER);
+        empty.setPadding(dp(16), dp(24), dp(16), dp(24));
+        results.addView(list, new FrameLayout.LayoutParams(-1, -1));
+        results.addView(empty, new FrameLayout.LayoutParams(-1, -1));
+        list.setEmptyView(empty);
+        SettingsSearchAdapter adapter = new SettingsSearchAdapter();
+        list.setAdapter(adapter);
+        root.addView(results, new LinearLayout.LayoutParams(-1, 0, 1f));
+        Runnable filter = () -> {
+            adapter.update(query.getText().toString());
+            status.setText(query.length() == 0 ? "全部设置 · 点击结果定位"
+                    : "找到 " + adapter.getCount() + " 项设置");
+            clear.setEnabled(query.length() > 0);
+        };
+        TextWatcher watcher = new TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                settingsSearchQuery = s.toString();
+                filter.run();
+            }
+            public void afterTextChanged(Editable value) { }
+        };
+        query.addTextChangedListener(watcher);
+        clear.setOnClickListener(view -> { query.setText(""); query.requestFocus(); });
+        Button close = actionButton("关闭", Color.TRANSPARENT, COLOR_PRIMARY);
+        close.setOnClickListener(view -> dialog.dismiss());
+        root.addView(close, new LinearLayout.LayoutParams(-1, dp(44)));
+        list.setOnItemClickListener((parent, view, position, id) -> {
+            SettingsSearchIndex.Entry entry = adapter.getItem(position);
+            InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (keyboard != null) keyboard.hideSoftInputFromWindow(query.getWindowToken(), 0);
+            dialog.dismiss();
+            navigateToSetting(entry);
+        });
+        dialog.setContentView(root);
+        settingsSearchDialog = dialog;
+        dialog.setOnDismissListener(ignored -> {
+            query.removeTextChangedListener(watcher);
+            clear.setOnClickListener(null);
+            close.setOnClickListener(null);
+            list.setOnItemClickListener(null);
+            list.setAdapter(null);
+            if (settingsSearchDialog == dialog) settingsSearchDialog = null;
+        });
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                    | WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+        }
+        filter.run();
+        query.requestFocus();
+        dialog.show();
+        window = dialog.getWindow();
+        if (window != null) {
+            android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+            window.setLayout(Math.max(1, Math.min(dp(560), metrics.widthPixels - dp(24))),
+                    Math.max(1, (int) (metrics.heightPixels * 0.78f)));
+        }
+    }
+
+    private final class SettingsSearchAdapter extends BaseAdapter {
+        private List<SettingsSearchIndex.Entry> entries = Collections.emptyList();
+
+        void update(String query) {
+            entries = SettingsSearchIndex.search(query, BuildConfig.DEBUG);
+            notifyDataSetChanged();
+        }
+
+        @Override public int getCount() { return entries.size(); }
+        @Override public SettingsSearchIndex.Entry getItem(int position) { return entries.get(position); }
+        @Override public long getItemId(int position) { return position; }
+        @Override public View getView(int position, View recycled, ViewGroup parent) {
+            LinearLayout row;
+            if (recycled instanceof LinearLayout) {
+                row = (LinearLayout) recycled;
+            } else {
+                row = new LinearLayout(SettingsActivity.this);
+                row.setOrientation(LinearLayout.VERTICAL);
+                row.setPadding(dp(10), dp(12), dp(10), dp(12));
+                row.setMinimumHeight(dp(64));
+                row.addView(text("", 15, COLOR_TEXT_PRIMARY), matchWrap(dp(4)));
+                row.addView(text("", 12, COLOR_TEXT_SECONDARY), matchWrap(0));
+            }
+            SettingsSearchIndex.Entry entry = getItem(position);
+            ((TextView) row.getChildAt(0)).setText(entry.title);
+            ((TextView) row.getChildAt(1)).setText(entry.location());
+            return row;
+        }
+    }
+
+    private void navigateToSetting(SettingsSearchIndex.Entry entry) {
+        // 先展开再重建，只定位，不自动修改模式、依赖开关或任何配置值。
+        expandedSections.add(entry.section);
+        showPage(entry.page);
+        ScrollView scroll = pageScroll;
+        View target = searchTargets.get(entry.id);
+        if (target == null) {
+            android.util.Log.w(TAG, "settings search target missing id=" + entry.id);
+            showFeedback("暂时无法定位这项设置，请在“" + entry.section + "”中查看。");
+            return;
+        }
+        scroll.post(() -> {
+            if (destroyed || pageScroll != scroll || searchTargets.get(entry.id) != target) return;
+            View visibleTarget = target;
+            while (!visibleTarget.isShown() && visibleTarget.getParent() instanceof View
+                    && visibleTarget.getParent() != scroll) {
+                visibleTarget = (View) visibleTarget.getParent();
+            }
+            if (visibleTarget != target || !target.isEnabled()) {
+                showFeedback("已定位；此项需先开启所属功能。");
+            }
+            android.graphics.Rect rect = new android.graphics.Rect();
+            visibleTarget.getDrawingRect(rect);
+            scroll.offsetDescendantRectToMyCoords(visibleTarget, rect);
+            scroll.scrollTo(0, Math.max(0, rect.top - dp(64)));
+            scrollPositions[entry.page] = scroll.getScrollY();
+            highlightSettingsSearchTarget(visibleTarget);
+        });
+    }
+
+    private void highlightSettingsSearchTarget(View target) {
+        clearSettingsSearchHighlight();
+        searchHighlightTarget = target;
+        searchHighlightOriginal = target.getForeground();
+        GradientDrawable highlight = new GradientDrawable();
+        highlight.setColor(Color.TRANSPARENT);
+        highlight.setCornerRadius(dp(8));
+        highlight.setStroke(dp(2), COLOR_PRIMARY);
+        target.setForeground(highlight);
+        clearSearchHighlight = this::clearSettingsSearchHighlight;
+        target.postDelayed(clearSearchHighlight, 1800L);
+        target.announceForAccessibility("已定位设置");
+    }
+
+    private void clearSettingsSearchHighlight() {
+        if (searchHighlightTarget != null) {
+            if (clearSearchHighlight != null) searchHighlightTarget.removeCallbacks(clearSearchHighlight);
+            searchHighlightTarget.setForeground(searchHighlightOriginal);
+        }
+        searchHighlightTarget = null;
+        searchHighlightOriginal = null;
+        clearSearchHighlight = null;
+    }
+
+    private void bindSettingsSearchTargets() {
+        searchTarget("mode", os3ModeButton);
+        searchTarget("island", islandCompatSwitch);
+        searchTarget("forcePackages", forcePackagesButton);
+        searchTarget("limitWidth", manualWidthSwitch);
+        searchTarget("width", widthValueRow);
+        searchTarget("landscapeWidth", landscapeWidthValueRow);
+        searchTarget("maxDisplay", focusMaxDisplayInput);
+        searchTarget("timeoutExempt", timeoutExemptButton);
+        searchTarget("iconOrder", focusIconOrderContainer);
+        searchTarget("islandIcon", showIslandIconSwitch);
+        searchTarget("iconTint", tintIslandIconSwitch);
+        searchTarget("deviceTint", tintDeviceIconSwitch);
+        searchTarget("iconSize", focusIconSizeSeekBar);
+        searchTarget("iconGap", focusIconTextGapSeekBar);
+        searchTarget("divider", showFocusDividerSwitch);
+        searchTarget("dividerStyle", focusDividerStyleField == null ? null : focusDividerStyleField.spinner);
+        searchTarget("dividerStart", focusDividerStartSeekBar);
+        searchTarget("dividerEnd", focusDividerEndSeekBar);
+        searchTarget("dividerWidth", focusDividerWidthSeekBar);
+        searchTarget("contentMode", islandTextModeField == null ? null : islandTextModeField.spinner);
+        searchTarget("richText", islandRichTextSwitch);
+        searchTarget("generalSeparator", generalSeparatorInput);
+        searchTarget("sideSeparator", sideSeparatorInput);
+        searchTarget("banner", independentFocusBannerSwitch);
+        searchTarget("bannerBackground", bannerBackgroundLabel);
+        searchTarget("longPress", longPressNotificationRowClickSwitch);
+        searchTarget("longPressTime", longPressSecondsLabel);
+        searchTarget("swipe", focusSwipeEnabledSwitch);
+        searchTarget("legacyClick", allowFocusClickSwitch);
+        searchTarget("rowClick", notificationRowClickFallbackSwitch);
+        searchTarget("media", mediaFocusSwitch);
+        searchTarget("mediaBrief", mediaBriefDisplaySwitch);
+        searchTarget("mediaFields", mediaBriefFieldsContainer);
+        searchTarget("mediaClick", mediaFocusClickLabel);
+        searchTarget("mediaCast", mediaFocusCastPickerLabel);
+        searchTarget("hideIcons", hideNotificationIconsSwitch);
+        searchTarget("hideTimeNormal", hideTimeNormalSwitch);
+        searchTarget("hideTimeMedia", hideTimeMediaSwitch);
+        searchTarget("hideTimeDevice", hideTimeDeviceSwitch);
+        searchTarget("touch", customTouchWidthSwitch);
+        searchTarget("touchWidth", touchWidthSeekBar);
+        searchTarget("touchLandscape", touchWidthLandscapeSeekBar);
+        searchTarget("bounce", marqueeBounceSwitch);
+        searchTarget("delay", delaySeekBar);
+        searchTarget("retry", compatRetrySwitch);
+        searchTarget("elementAnimation", interceptElementAnimationSwitch);
+        searchTarget("export", exportSettingsButton);
+        searchTarget("import", importSettingsButton);
+        searchTarget("debugProperty", disableIslandPropertySwitch);
+        searchTarget("debugFeature", disableIslandFeatureCacheSwitch);
+    }
+
+    private void searchTarget(String id, View target) {
+        if (target != null) searchTargets.put(id, target);
+    }
+
     private void showPage(int page) {
         captureCurrentInputs();
         if (pageScroll != null) scrollPositions[currentPage] = pageScroll.getScrollY();
@@ -564,6 +837,7 @@ public final class SettingsActivity extends Activity {
             if (page == 0) buildSettingsPage(content);
             else if (page == 1) buildAdvancedPage(content);
             else buildAboutSections(content);
+            bindSettingsSearchTargets();
             scroll.addView(content);
             pageContainer.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
             scroll.post(() -> {
@@ -576,6 +850,8 @@ public final class SettingsActivity extends Activity {
 
     private void clearPageControls() {
         defaultActionRefreshers.clear();
+        clearSettingsSearchHighlight();
+        searchTargets.clear();
         // 挂起过渡也可能尚未触发结束回调，切页/导入/销毁统一释放页面闸门。
         if (sectionTransitionRoot != null) TransitionManager.endTransitions(sectionTransitionRoot);
         sectionTransitionRoot = null;
@@ -1599,6 +1875,7 @@ public final class SettingsActivity extends Activity {
     private void confirmSettingsImport() {
         if (destroyed || isFinishing() || !backupUiResumed || importCandidate == null || importDialog != null) return;
         if (activeDialog != null) activeDialog.dismiss();
+        if (settingsSearchDialog != null) settingsSearchDialog.dismiss();
         captureCurrentInputs();
         final long confirmedGeneration = settingsGeneration;
         final long confirmedPersistedGeneration = persistedGeneration();
@@ -1728,6 +2005,9 @@ public final class SettingsActivity extends Activity {
         captureCurrentInputs();
         if (pageScroll != null) scrollPositions[currentPage] = pageScroll.getScrollY();
         outState.putInt("m3.page", currentPage);
+        outState.putBoolean("ui.settingsSearchOpen", settingsSearchDialog != null
+                && settingsSearchDialog.isShowing());
+        outState.putString("ui.settingsSearchQuery", settingsSearchQuery);
         outState.putStringArrayList("ui.expandedSections", new ArrayList<>(expandedSections));
         outState.putInt("m3.mode", pendingHookMode);
         outState.putBoolean("m3.manual", pendingManual);
@@ -1828,8 +2108,8 @@ public final class SettingsActivity extends Activity {
         pendingHideTimeMedia = state.getBoolean("m3.hideTimeMedia", pendingHideTimeMedia);
         pendingHideTimeDevice = state.getBoolean("m3.hideTimeDevice", pendingHideTimeDevice);
         pendingMediaBriefDisplay = state.getBoolean("m3.mediaBriefDisplay", pendingMediaBriefDisplay);
-        pendingMediaBriefFields = MediaBriefFields.parse(state.getString("m3.mediaBriefFields",
-                MediaBriefFields.DEFAULT_ENCODED));
+        pendingMediaBriefFields = MediaBriefFields.parseOrKeepLoaded(
+                state.getString("m3.mediaBriefFields"), pendingMediaBriefFields);
         pendingInterceptElementAnimation = state.getBoolean("m3.interceptElementAnimation",
                 pendingInterceptElementAnimation);
         

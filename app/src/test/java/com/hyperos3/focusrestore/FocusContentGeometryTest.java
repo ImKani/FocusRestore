@@ -68,4 +68,26 @@ public class FocusContentGeometryTest {
         assertEquals(12, FocusContentGeometry.focusStart(4, 2, 6));
         assertEquals(0, FocusContentGeometry.textStart(0, 0, 0));
     }
+
+    @Test public void clippingOnlyTrailingPaddingDoesNotShrinkVisibleTextAgain() {
+        // OS3 的 160px 槽含 8px 尾部留白；父层裁掉留白后仍可显示完整的 152px 文字。
+        assertEquals(152, FocusContentGeometry.visibleTextWidth(160, 0, 8, 0, 160));
+        assertEquals(152, FocusContentGeometry.visibleTextWidth(160, 0, 8, 0, 152));
+        assertEquals(140, FocusContentGeometry.visibleTextWidth(160, 0, 8, 0, 140));
+    }
+
+    @Test public void clippedPaddingAndTextAreIntersectedOnBothSides() {
+        // RTL 把留白放在左侧；裁掉部分或全部留白不应再次扣完整 padding。
+        assertEquals(152, FocusContentGeometry.visibleTextWidth(160, 8, 0, 4, 160));
+        assertEquals(152, FocusContentGeometry.visibleTextWidth(160, 8, 0, 8, 160));
+        assertEquals(140, FocusContentGeometry.visibleTextWidth(160, 8, 0, 20, 160));
+        assertEquals(130, FocusContentGeometry.visibleTextWidth(160, 6, 8, 10, 140));
+    }
+
+    @Test public void missingViewportOrPaddingWiderThanViewProducesNoTextArea() {
+        assertEquals(0, FocusContentGeometry.visibleTextWidth(160, 0, 8, 152, 160));
+        assertEquals(0, FocusContentGeometry.visibleTextWidth(160, 0, 8, 180, 200));
+        assertEquals(0, FocusContentGeometry.visibleTextWidth(160, 0, 8, 30, 20));
+        assertEquals(0, FocusContentGeometry.visibleTextWidth(4, 3, 3, 0, 4));
+    }
 }

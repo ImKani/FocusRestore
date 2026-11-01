@@ -9,11 +9,13 @@ package com.hyperos3.focusrestore;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 /** 媒体简短显示的字段顺序与正文拼装回归。 */
@@ -42,6 +44,39 @@ public class MediaBriefFieldsTest {
         assertEquals("2,0,4", MediaBriefFields.encode(fields));
         assertEquals(Arrays.asList(2, 0, 4), MediaBriefFields.parse(MediaBriefFields.encode(fields)));
         assertEquals("", MediaBriefFields.encode(Collections.<Integer>emptyList()));
+    }
+
+    @Test
+    public void missingSnapshotFieldKeepsLoadedOrderAndAllOffSelection() {
+        List<Integer> loaded = Arrays.asList(MediaBriefFields.PLAY_STATE,
+                MediaBriefFields.APP_NAME, MediaBriefFields.TITLE);
+        assertEquals(loaded, MediaBriefFields.parseOrKeepLoaded(null, loaded));
+        assertEquals(Collections.<Integer>emptyList(), MediaBriefFields.parseOrKeepLoaded(
+                null, Collections.<Integer>emptyList()));
+        // 缺字段恢复后保存、再读取，也不能把自定义顺序或全关闭改成默认选项。
+        assertEquals(loaded, MediaBriefFields.parse(MediaBriefFields.encode(
+                MediaBriefFields.parseOrKeepLoaded(null, loaded))));
+        assertEquals(Collections.<Integer>emptyList(), MediaBriefFields.parse(MediaBriefFields.encode(
+                MediaBriefFields.parseOrKeepLoaded(null, Collections.<Integer>emptyList()))));
+    }
+
+    @Test
+    public void explicitSnapshotFieldOverridesLoadedSelectionIncludingAllOff() {
+        List<Integer> loaded = Arrays.asList(MediaBriefFields.TITLE, MediaBriefFields.APP_NAME);
+        assertEquals(Collections.<Integer>emptyList(), MediaBriefFields.parseOrKeepLoaded("", loaded));
+        assertEquals(Arrays.asList(MediaBriefFields.TEXT, MediaBriefFields.TITLE),
+                MediaBriefFields.parseOrKeepLoaded("2,0", loaded));
+        assertEquals(MediaBriefFields.defaultOrder(),
+                MediaBriefFields.parseOrKeepLoaded("broken", loaded));
+    }
+
+    @Test
+    public void missingSnapshotFieldNormalizesAndDetachesLoadedList() {
+        List<Integer> loaded = new ArrayList<>(Arrays.asList(4, 0, 4, null, -1, 9));
+        List<Integer> restored = MediaBriefFields.parseOrKeepLoaded(null, loaded);
+        loaded.clear();
+        assertEquals(Arrays.asList(4, 0), restored);
+        assertThrows(UnsupportedOperationException.class, () -> restored.add(1));
     }
 
     @Test

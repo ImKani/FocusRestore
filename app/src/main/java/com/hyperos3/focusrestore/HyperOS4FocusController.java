@@ -897,6 +897,11 @@ final class HyperOS4FocusController {
     private final class FocusHostView extends FrameLayout {
         private ValueAnimator animator;
         private Runnable pendingAnimation;
+        private final FocusMarqueeLayout marqueeLayout = new FocusMarqueeLayout();
+        private long marqueeDelayMs;
+        private boolean marqueeBounce;
+        private int lastWidthMeasureSpec;
+        private int naturalWidthPx;
         private View content;
         private View divider;
         private ImageView iconView;
@@ -1053,12 +1058,9 @@ final class HyperOS4FocusController {
             addView(nextContent, params);
             applyTint(nextContent);
             if (!(nextContent instanceof ViewGroup)) bindClick(nextContent, item, settings);
+            marqueeDelayMs = Math.max(0L, Math.min(5000L, settings.marqueeDelayMs));
+            marqueeBounce = settings.marqueeBounce;
             requestLayout();
-            long delay = Math.max(0L, Math.min(5000L, settings.marqueeDelayMs));
-            pendingAnimation = () -> startScroll(settings.marqueeBounce);
-            postDelayed(pendingAnimation, delay);
-            logger.log("OS4 marquee scheduled key=" + item.key + " delayMs=" + delay
-                    + " bounce=" + settings.marqueeBounce);
         }
 
         private void bindClick(View target, DisplayItem item, HookSettings settings) {
@@ -1104,15 +1106,8 @@ final class HyperOS4FocusController {
                 setPressed(false);
                 bannerGestureCancelled = true;
             }
-            if (pendingAnimation != null) {
-                removeCallbacks(pendingAnimation);
-                pendingAnimation = null;
-            }
-            if (animator != null) {
-                animator.cancel();
-                animator = null;
-            }
-            if (content != null) content.setTranslationX(0f);
+            marqueeLayout.clear();
+            cancelMarquee();
             removeAllViews();
             content = null;
             divider = null;
@@ -1121,6 +1116,8 @@ final class HyperOS4FocusController {
             currentIslandIcon = false;
             currentIcon = null;
             currentIconSizePx = 0;
+            displayWidthPx = 0;
+            naturalWidthPx = 0;
             contentInsetPx = 0;
             overlapStartPx = 0;
             dividerOverlap = false;
@@ -1136,10 +1133,28 @@ final class HyperOS4FocusController {
             setContentDescription(null);
         }
 
-        private void startScroll(boolean bounce) {
+        private void cancelMarquee() {
+            if (pendingAnimation != null) {
+                removeCallbacks(pendingAnimation);
+                pendingAnimation = null;
+            }
+            if (animator != null) {
+                animator.cancel();
+                animator = null;
+            }
+            if (content != null) content.setTranslationX(0f);
+        }
+
+        private void startScroll(boolean bounce, View child, long revision) {
+            // 旧内容或旧测量的回调不能消费新一轮视口，也不能清掉新回调的引用。
+            if (!marqueeLayout.isCurrent(child, revision) || content != child) return;
             pendingAnimation = null;
-            View child = content;
-            if (child == null || getVisibility() != View.VISIBLE) return;
+            if (!isAttachedToWindow() || !isShown()) return;
+            if (isLayoutRequested() || child.isLayoutRequested()) {
+                // 等现有布局请求完成后由 onLayout 重新安排，不轮询也不使用尚未更新的宽度。
+                marqueeLayout.clear();
+                return;
+            }
             int availableWidth = Math.max(1, displayWidthPx - contentInsetPx);
             int distance = child.getMeasuredWidth() - availableWidth;
             if (distance <= 0 && child instanceof TextView) {
@@ -1161,7 +1176,8 @@ final class HyperOS4FocusController {
             animator.setInterpolator(new LinearInterpolator());
             animator.setRepeatCount(ValueAnimator.INFINITE);
             animator.addUpdateListener(value -> {
-                if (content == child && getVisibility() == View.VISIBLE) {
+                if (marqueeLayout.isCurrent(child, revision) && content == child
+                        && getVisibility() == View.VISIBLE) {
                     child.setTranslationX((Float) value.getAnimatedValue());
                 }
             });
@@ -1320,8 +1336,10 @@ final class HyperOS4FocusController {
 
         @Override
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            lastWidthMeasureSpec = widthMeasureSpec;
             int unlimitedWidth = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
             super.onMeasure(unlimitedWidth, heightMeasureSpec);
+            naturalWidthPx = getMeasuredWidth();
             int availableWidth = Integer.MAX_VALUE;
             int mode = MeasureSpec.getMode(widthMeasureSpec);
             if (mode != MeasureSpec.UNSPECIFIED) {
@@ -1333,6 +1351,46 @@ final class HyperOS4FocusController {
             int width = FocusTouchWidth.measured(getMeasuredWidth(), touchWidthPx,
                     maxWidthPx, availableWidth);
             setMeasuredDimension(width, getMeasuredHeight());
+        }
+
+        @Override
+        protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+            super.onLayout(changed, left, top, right, bottom);
+            View child = content;
+            if (child == null) return;
+            if (displayWidthPx <= 0 || getWidth() <= 0) {
+                marqueeLayout.clear();
+                cancelMarquee();
+                return;
+            }
+            long revision = marqueeLayout.update(child, child.getMeasuredWidth(),
+                    displayWidthPx, contentInsetPx, getWidth());
+            if (revision == 0L) return;
+            // 延迟从当前内容有效布局后计算；父约束变化也须作废旧距离，不能沿用上一轮视口。
+            cancelMarquee();
+            if (BuildConfig.DEBUG) logger.log("DIAG OS4 focus layout key=" + currentItemKey
+                    + " revision=" + revision + " naturalContentPx=" + child.getMeasuredWidth()
+                    + " naturalGroupPx=" + naturalWidthPx
+                    + " displayPx=" + displayWidthPx + " hostPx=" + getWidth()
+                    + " contentViewportPx=" + Math.max(0, displayWidthPx - contentInsetPx)
+                    + " contentType=" + child.getClass().getName()
+                    + " textViewportPx=" + (child instanceof TextView
+                            ? FocusContentGeometry.visibleTextWidth(child.getMeasuredWidth(),
+                                    ((TextView) child).getCompoundPaddingLeft(),
+                                    ((TextView) child).getCompoundPaddingRight(), 0,
+                                    Math.max(0, displayWidthPx - contentInsetPx)) : -1)
+                    + " iconPx=" + (iconView == null ? 0 : currentIconSizePx)
+                    + " contentInsetPx=" + contentInsetPx
+                    + " touchPx=" + touchWidthPx + " maxPx=" + maxWidthPx
+                    + " density=" + getResources().getDisplayMetrics().density
+                    + " fontScale=" + getResources().getConfiguration().fontScale
+                    + " direction=" + getLayoutDirection()
+                    + " textSizePx=" + (child instanceof TextView ? ((TextView) child).getTextSize() : -1f)
+                    + " parentWidthSpec=" + MeasureSpec.toString(lastWidthMeasureSpec));
+            pendingAnimation = () -> startScroll(marqueeBounce, child, revision);
+            postDelayed(pendingAnimation, marqueeDelayMs);
+            logger.log("OS4 marquee scheduled key=" + currentItemKey + " delayMs=" + marqueeDelayMs
+                    + " bounce=" + marqueeBounce);
         }
 
         @Override

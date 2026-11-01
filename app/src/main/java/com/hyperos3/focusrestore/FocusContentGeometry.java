@@ -10,6 +10,14 @@ package com.hyperos3.focusrestore;
 final class FocusContentGeometry {
     private FocusContentGeometry() { }
 
+    /** 先得到文字区再与可见区相交；已被父层裁掉的 padding 不能重复扣除。 */
+    static int visibleTextWidth(int viewWidth, int paddingLeft, int paddingRight,
+                                int clipLeft, int clipRight) {
+        int contentLeft = Math.max(0, paddingLeft);
+        int contentRight = Math.max(contentLeft, viewWidth - Math.max(0, paddingRight));
+        return Math.max(0, Math.min(contentRight, clipRight) - Math.max(contentLeft, clipLeft));
+    }
+
     static int focusStart(int timeGap, int dividerWidth, int focusGap) {
         return timeGap + dividerWidth + focusGap;
     }

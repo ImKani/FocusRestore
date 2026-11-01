@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-only; ImKani, FocusRestore https://github.com/ImKani/FocusRestore -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/notification_test_title"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:maxLines="1"
+    android:textSize="14sp"
+    android:textColor="#FFFFFFFF"
+    android:text="原生焦点测试" />

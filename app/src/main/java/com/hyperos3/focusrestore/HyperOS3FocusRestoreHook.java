@@ -3582,6 +3582,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             float textWidth = content == null ? 0f
                     : textView.getPaint().measureText(content.toString());
             float visibleContentWidth = getVisibleContentWidth(textView);
+            logOS3TextViewport(textView, visibleContentWidth);
             // 装得下就静态显示。0.25.3 真机（竖屏、关闭宽度限制）：textWidth=126.0 与
             // visibleContentWidth=126.0 相等，此时启动 MARQUEE 会把文字推出可见区，界面上只剩
             // 焦点分隔竖线；横屏可见区足够宽才不会出现。空文本同样不启动。
@@ -3732,6 +3733,36 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    private void logOS3TextViewport(TextView textView, float viewportPx) {
+        if (!BuildConfig.DEBUG) return;
+        ViewParent parent = textView.getParent();
+        ViewParent promptParent = parent instanceof View ? ((View) parent).getParent() : null;
+        View prompt = promptParent instanceof View ? (View) promptParent : null;
+        Object icon = prompt == null ? null : getField(prompt, "mIcon");
+        android.util.DisplayMetrics metrics = textView.getResources().getDisplayMetrics();
+        String geometry = "textViewPx=" + textView.getWidth()
+                + " measuredTextViewPx=" + textView.getMeasuredWidth()
+                + " textViewportPx=" + viewportPx
+                + " layoutTextPx=" + (textView.getLayout() == null
+                        || textView.getLayout().getLineCount() == 0
+                        ? -1f : textView.getLayout().getLineWidth(0))
+                + " paddingLeftPx=" + textView.getCompoundPaddingLeft()
+                + " paddingRightPx=" + textView.getCompoundPaddingRight()
+                + " contentPx=" + (parent instanceof View ? ((View) parent).getWidth() : -1)
+                + " promptPx=" + (prompt == null ? -1 : prompt.getWidth())
+                + " parentPx=" + (prompt != null && prompt.getParent() instanceof View
+                        ? ((View) prompt.getParent()).getWidth() : -1)
+                + " iconPx=" + (icon instanceof View ? ((View) icon).getWidth() : -1)
+                + " density=" + metrics.density
+                + " fontScale=" + textView.getResources().getConfiguration().fontScale
+                + " textSizePx=" + textView.getTextSize()
+                + " direction=" + textView.getLayoutDirection();
+        String stateKey = "focusRestoreTextViewportDiagnostic";
+        if (geometry.equals(XposedHelpers.getAdditionalInstanceField(textView, stateKey))) return;
+        XposedHelpers.setAdditionalInstanceField(textView, stateKey, geometry);
+        debug("DIAG OS3 focus layout owner=" + System.identityHashCode(textView) + " " + geometry);
+    }
+
     private boolean hasMarqueeOverflow(TextView textView) {
         float textWidth = textView.getPaint().measureText(textView.getText().toString());
         float layoutWidth = textView.getLayout() == null
@@ -3741,11 +3772,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     private float getVisibleContentWidth(TextView textView) {
-        float localWidth = textView.getWidth()
-                - textView.getCompoundPaddingLeft() - textView.getCompoundPaddingRight();
         int[] location = new int[2];
         textView.getLocationOnScreen(location);
-        int visibleLeft = location[0];
+        int textScreenLeft = location[0];
+        int visibleLeft = textScreenLeft;
         int visibleRight = visibleLeft + textView.getWidth();
 
         Rect visibleRect = new Rect();
@@ -3763,9 +3793,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             ancestor = parent.getParent();
         }
 
-        float visibleWidth = visibleRight - visibleLeft
-                - textView.getCompoundPaddingLeft() - textView.getCompoundPaddingRight();
-        return Math.max(0f, Math.min(localWidth, visibleWidth));
+        // OS3 原生文字带尾部 padding；父层先裁掉这段留白时，不能再从裁后宽度扣一遍。
+        // 来源与尺寸核对：2026-10-31 MT APK MCP，SystemUI 16.03.251211.r，
+        // status_bar.xml / FocusedTextView；小米及 Android 上游，私有许可未确认。
+        // 只依据布局事实独立计算文字区交集，不改变原生 padding 或持久宽度语义。
+        return FocusContentGeometry.visibleTextWidth(textView.getWidth(),
+                textView.getCompoundPaddingLeft(), textView.getCompoundPaddingRight(),
+                visibleLeft - textScreenLeft, visibleRight - textScreenLeft);
     }
 
     private void stopNativeMarquee(TextView textView) {

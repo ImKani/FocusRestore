@@ -73,6 +73,11 @@ final class MediaBriefFields {
         return Collections.unmodifiableList(fields);
     }
 
+    /** 旧界面快照缺字段时保留已加载配置；显式空串仍表示用户关闭全部字段。 */
+    static List<Integer> parseOrKeepLoaded(String encoded, List<Integer> loaded) {
+        return encoded == null ? normalize(loaded) : parse(encoded);
+    }
+
     /** 去重、丢弃越界项；空列表允许，表示"全部关闭"。 */
     static List<Integer> normalize(List<Integer> fields) {
         if (fields == null) return Collections.emptyList();
