@@ -8,18 +8,14 @@
 package com.hyperos3.focustestnotifier;
 
 /**
- * Focus/island payloads captured from the device with
- * {@code adb shell dumpsys notification --noredact} or the module's bounded payload log, plus small
- * derived variants.
- *
- * <p>Keeping the observed strings here is the point: the module's parser and banner behaviour were
- * debugged against exactly these values, so a test notification built from them reproduces field
- * behaviour (including the duplicated {@code aodTitle}) instead of an idealised approximation.
- * The takeout payload is de-identified by removing its real order URL/ID; its visible text and
- * island structure are unchanged.
+ * 基于设备日志已观测的Focus/岛协议结构独立构造测试载荷。
+ * 商家、分店、车次、站名、配送时间/距离/进度均使用明确的虚构测试值，
+ * 不保留真实订单URL/ID、序列号、用户或地址标识。字段层级、图标引用、
+ * 彩色font标记和重复aodTitle结构继续用于解析与横幅回归。
+ * 原始日志证据留在工作区，不作为本工具发布数据。
  */
 final class FocusPayloads {
-    /** {@code miui.focus.param.custom} of 0|com.miui.personalassistant|0|火车_sdk#...|10138. */
+    /** 出行协议结构来自已观测通知；可见车次等内容均为虚构测试值。 */
     static final String TRAVEL_PARAM_CUSTOM =
             "{\"timeout\":470,\"enableFloat\":true,\"updatable\":true,\"reopen\":\"reopen\","
                     + "\"business\":\"train\",\"protocol\":1,\"scene\":\"personal-assistant-travel\","
@@ -27,12 +23,12 @@ final class FocusPayloads {
                     + "\"param_island\":{\"islandProperty\":1,\"highlightColor\":\"#3482FF\","
                     + "\"islandTimeout\":28200,\"bigIslandArea\":{"
                     + "\"imageTextInfoLeft\":{\"type\":1,\"picInfo\":{\"type\":1,\"pic\":\"island_pic\"},"
-                    + "\"textInfo\":{\"title\":\"D8396\",\"showHighlightColor\":true}},"
+                    + "\"textInfo\":{\"title\":\"测试车次\",\"showHighlightColor\":true}},"
                     + "\"textInfo\":{\"title\":\"检票口\",\"showHighlightColor\":true}},"
                     + "\"smallIslandArea\":{\"picInfo\":{\"type\":1,\"pic\":\"island_pic_small\"}}}}";
 
     /**
-     * Same payload without {@code aodTitle}. Full mode should yield exactly {@code D8396·检票口};
+     * Same payload without {@code aodTitle}. Full mode should yield exactly {@code 测试车次·检票口};
      * this isolates the parser from the always-on-display label.
      */
     static final String TRAVEL_WITHOUT_AOD_TITLE =
@@ -65,8 +61,8 @@ final class FocusPayloads {
      */
     static final String ISLAND_SIDES =
             "{\"param_v2\":{\"param_island\":{\"bigIslandArea\":{"
-                    + "\"imageTextInfoLeft\":{\"textInfo\":{\"title\":\"北京南\"}},"
-                    + "\"imageTextInfoRight\":{\"textInfo\":{\"title\":\"上海虹桥\"}}}}}}";
+                    + "\"imageTextInfoLeft\":{\"textInfo\":{\"title\":\"测试起点站\"}},"
+                    + "\"imageTextInfoRight\":{\"textInfo\":{\"title\":\"测试终点站\"}}}}}}";
 
     /** Island content that only exists in the compact/small area. */
     static final String ISLAND_SMALL_ONLY =
@@ -89,37 +85,37 @@ final class FocusPayloads {
 
     /**
      * 0.40.2 日志中 {@code com.taobao.taobao} 外卖通知的 {@code miui.focus.param} 结构
-     * （{@code log/focus-restore-os3-0.40.2.log}）：标题含
-     * {@code <font color='#0FAD50'>18:26</font>}，用于验证彩色字体渲染。
+     * （{@code log/focus-restore-os3-0.40.2.log}）；本样本使用虚构配送时间
+     * {@code <font color='#0FAD50'>12:00</font>}，用于验证彩色字体渲染。
      *
      * <p>为避免把真实订单地址写入本地测试工具，去掉了 {@code url}/{@code orderId}/{@code sequence}；
-     * 标题、进度、岛区域和 aodTitle 保持日志观测值。
+     * 商家及分店改为虚构名称，时间/距离/进度为合成值；保留协议层级与font标记。
      */
     static final String TAKEOUT_COLORED_FONT =
-            "{\"progressCount\":2,\"enableFloat\":false,\"title\":\"预计18:26送达\","
+            "{\"progressCount\":2,\"enableFloat\":false,\"title\":\"预计12:00送达\","
                     + "\"content\":\"骑士已接单\",\"timeout\":60,\"scene\":\"foodDelivery\","
-                    + "\"desc1\":\"骑士已接单\",\"desc2\":\"距商家228m，预计4分钟到达 \","
-                    + "\"protocol\":1,\"progress\":35,\"updatable\":true,"
+                    + "\"desc1\":\"骑士已接单\",\"desc2\":\"距测试商家100m，预计2分钟到达 \","
+                    + "\"protocol\":1,\"progress\":50,\"updatable\":true,"
                     + "\"param_v2\":{\"baseInfo\":{\"showDivider\":true,"
-                    + "\"title\":\"预计<font color='#0FAD50'>18:26</font>送达\",\"type\":2,"
+                    + "\"title\":\"预计<font color='#0FAD50'>12:00</font>送达\",\"type\":2,"
                     + "\"colorSubTitle\":\"#FF6200\",\"content\":\"骑士已接单\","
-                    + "\"subContent\":\"干饭人·小炒快餐(兴业店)\"},"
+                    + "\"subContent\":\"测试餐厅·示例分店\"},"
                     + "\"param_island\":{\"highlightColor\":\"#FF6200\",\"islandProperty\":1,"
                     + "\"bigIslandArea\":{\"imageTextInfoLeft\":{\"textInfo\":{"
                     + "\"showHighlightColor\":false,\"title\":\"骑士接单\"},"
                     + "\"picInfo\":{\"pic\":\"miui.focus.pic_app_icon\",\"type\":1},\"type\":1},"
-                    + "\"textInfo\":{\"showHighlightColor\":true,\"title\":\"18:26\","
+                    + "\"textInfo\":{\"showHighlightColor\":true,\"title\":\"12:00\","
                     + "\"content\":\"送达\"}},"
                     + "\"smallIslandArea\":{\"picInfo\":{\"pic\":\"miui.focus.pic_app_icon\","
                     + "\"type\":1}}},"
                     + "\"aodPic\":\"miui.focus.pic_app_icon\",\"business\":\"food_delivery\","
                     + "\"picInfo\":{\"pic\":\"miui.focus.pic_app_icon\",\"type\":1},"
                     + "\"enableFloat\":false,\"protocol\":1,\"filterWhenNoPermission\":true,"
-                    + "\"reopen\":\"close\",\"aodTitle\":\"18:26送达\",\"updatable\":true,"
+                    + "\"reopen\":\"close\",\"aodTitle\":\"12:00送达\",\"updatable\":true,"
                     + "\"progressInfo\":{\"picEnd\":\"miui.focus.pic_end\","
                     + "\"picEndUnselected\":\"miui.focus.pic_end_unselected\","
                     + "\"colorProgressEnd\":\"#FF6200\",\"picForward\":\"miui.focus.pic_forward\","
-                    + "\"progress\":35,\"colorProgress\":\"#FF6200\","
+                    + "\"progress\":50,\"colorProgress\":\"#FF6200\","
                     + "\"picMiddleUnselected\":\"miui.focus.pic_middel_unselected\","
                     + "\"picMiddle\":\"miui.focus.pic_middle\"},\"islandFirstFloat\":false},"
                     + "\"colorDesc\":\"#FF48D0FF\",\"colorDescDark\":\"#FF0073DD\","

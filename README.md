@@ -20,7 +20,7 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-当前源码：`0.42.0`（versionCode 318）。按作者决定恢复设置搜索版本，主模块首页不提供通知发送测试。测试能力集中到独立的 [testnotifier](testnotifier/README.md) 1.1.0/code6；设置模拟预览暂缓。版本名回退，versionCode继续递增。
+当前源码：`0.42.0`（versionCode 318）。按作者决定恢复设置搜索版本，主模块首页不提供通知发送测试。测试能力集中到独立的 [testnotifier](testnotifier/README.md) 1.1.1/code7；设置模拟预览暂缓。版本名回退，versionCode继续递增。
 
 顶栏右侧自绘放大镜提供设置搜索：
 
@@ -34,7 +34,7 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 - OS4 滚动在当前内容完成布局后安排，视口改变时重算距离，取消旧内容和旧尺寸对应的动画。
 - 恢复旧页面状态时保留已保存的媒体字段选择与排序，避免缺字段被默认值覆盖。
 
-继续保留 0.41.2 的小爱退出兼容和两层岛屏蔽。最低 Android 版本仍为 8.1（API 27），无新增第三方运行时依赖。本轮 clean Debug/Release 构建、50类397项JVM/源码回归、双包版本/API27/作者签名核验通过；Release跳过 `lintVitalAnalyzeRelease`，未完成完整lint。搜索界面、定位和此前布局修补仍待设备验收；独立工具另有7项样本合同测试通过，ROM实际显示尚待确认。
+继续保留 0.41.2 的小爱退出兼容和两层岛屏蔽。主模块与独立测试工具最低 Android 版本统一提高至 Android 12（API 31），不再支持 Android 11 及以下；无新增第三方运行时依赖。clean Debug/Release 构建、50类397项JVM/源码回归及作者签名核验通过；Release跳过 `lintVitalAnalyzeRelease`，未完成完整lint。搜索界面、定位和此前布局修补仍待设备验收；独立工具另有12项样本合同及脱敏回归测试通过，ROM实际显示尚待确认。
 
 Debug增加去重的 `DIAG OS3 focus layout` / `DIAG OS4 focus layout`，仍由 `HyperOS3FocusRestore` 标签输出INFO，记录测量宽、显示/文字视口、图标尺寸、字体和父约束等。OS3点位限于文字流程；OS4非TextView的正文内部文字视口记为-1，不能据日志推断任意RemoteViews的内部布局已经准确预览。
 
@@ -225,7 +225,7 @@ Debug 版本额外提供以下兼容选项，普通用户通常不需要修改�
 - **Xposed 入口类**：`com.hyperos3.focusrestore.HyperOS3FocusRestoreHook`
 - **日志 Tag**：`HyperOS3FocusRestore`
 - **设置页**：从 LSPosed 模块详情进入，不提供桌面启动图标
-- **最低 Android 版本**：Android 8.1（API 27）
+- **最低 Android 版本**：Android 12（API 31）
 - **目标 Android 版本**：API 35
 
 模块只注入 `com.android.systemui`，不需要 KernelSU。设置页和配置 Provider 属于模块自身应用组件，不代表额外的 SystemUI 作用域。

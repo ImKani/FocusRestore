@@ -19,11 +19,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Posts focus/island notifications that mirror the real field notifications.
- *
- * <p>Extras are copied from the captured {@code dumpsys notification --noredact} output: the param
- * payload itself, the notification's own {@code miui.focus.rv*} RemoteViews set, {@code
- * miui.focus.pics}, and the scalar flags the travel notification carries.
+ * 独立构造已观测Focus/岛协议字段，商家、车次、地点等可见内容使用虚构测试值。
+ * 保留param层级、miui.focus.rv*、图片引用与标记组合，用于协议回归，
+ * 不把原始通知内容作为发布样本；原始来源和处理边界见FocusPayloads。
  */
 final class FocusTestNotifier {
     static final String CHANNEL_ID = "focus_test";
@@ -78,14 +76,14 @@ final class FocusTestNotifier {
     static List<Spec> specs() {
         List<Spec> specs = new ArrayList<>();
         specs.add(new Spec(1, "出行通知（不加白名单即可）",
-                "胶囊显示模块解析文本：D8396·检票口",
+                "胶囊显示模块解析文本：测试车次·检票口",
                 "miui.focus.param.custom", FocusPayloads.TRAVEL_PARAM_CUSTOM,
                 "travel01", false, false, false, false));
         specs.add(new Spec(2, "出行通知（去掉 aodTitle）",
-                "完整模式应为 D8396·检票口（无重复）",
+                "完整模式应为 测试车次·检票口（无重复）",
                 "miui.focus.param.custom", FocusPayloads.TRAVEL_WITHOUT_AOD_TITLE,
                 "travel01", false, false, false, false));
-        specs.add(new Spec(3, "出行通知（原样，带自带 RemoteViews）【需白名单】",
+        specs.add(new Spec(3, "出行通知（脱敏样本，带自带 RemoteViews）【需白名单】",
                 "胶囊显示 App 自带布局「检票口 检票口」，解析文本被遮住",
                 "miui.focus.param.custom", FocusPayloads.TRAVEL_PARAM_CUSTOM,
                 "travel01", true, false, false, false));
@@ -98,7 +96,7 @@ final class FocusTestNotifier {
                 "miui.focus.param", FocusPayloads.ISLAND_PARAM,
                 null, false, false, true, false));
         specs.add(new Spec(6, "左右分区（对比分隔符）",
-                "完整模式：北京南·上海虹桥；紧凑模式：北京南 | 上海虹桥",
+                "完整模式：测试起点站·测试终点站；紧凑模式：测试起点站 | 测试终点站",
                 "miui.focus.param", FocusPayloads.ISLAND_SIDES,
                 null, false, false, false, false));
         specs.add(new Spec(7, "仅紧凑区文本",
@@ -111,8 +109,8 @@ final class FocusTestNotifier {
                 "miui.focus.param", FocusPayloads.ISLAND_ICON_PARAM,
                 null, false, false, true, true));
         specs.add(new Spec(9, "外卖通知（彩色字体，不加白名单即可）",
-                "开启“渲染彩色字体”后胶囊显示：骑士接单·预计18:26送达·骑士已接单·"
-                        + "干饭人·小炒快餐(兴业店)·35%·骑士接单·18:26·送达，其中 18:26 为绿色；"
+                "开启“渲染彩色字体”后胶囊显示：骑士接单·预计12:00送达·骑士已接单·"
+                        + "测试餐厅·示例分店·50%·骑士接单·12:00·送达，其中 12:00 为绿色；"
                         + "关闭后显示原始 <font color='#0FAD50'> 标记",
                 "miui.focus.param", FocusPayloads.TAKEOUT_COLORED_FONT,
                 null, false, false, false, false));
@@ -195,7 +193,7 @@ final class FocusTestNotifier {
     private static RemoteViews remoteViews(Context context) {
         RemoteViews views = new RemoteViews(context.getPackageName(), R.layout.focus_test_rv);
         views.setTextViewText(R.id.rv_title, "检票口 检票口");
-        views.setTextViewText(R.id.rv_sub, "D8396");
+        views.setTextViewText(R.id.rv_sub, "测试车次");
         return views;
     }
 
