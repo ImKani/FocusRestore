@@ -1,5 +1,12 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     FocusRestore - Copyright (C) ImKani - https://github.com/ImKani/FocusRestore -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- 强制转换/超时豁免选择器需枚举未知包名及无启动入口的系统应用，固定 queries 无法覆盖。
+         仅在此权限声明记录用途，不关闭全局检查；不代表任何应用商店的审核结论。
+         Android 包可见性：https://developer.android.com/training/package-visibility/declaring -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="com.android.permission.GET_INSTALLED_APPS" />
     <application android:theme="@android:style/Theme.Material.Light.NoActionBar" android:label="FocusRestore" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false">
         <activity

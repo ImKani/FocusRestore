@@ -14,4 +14,4 @@ Android 13 及以上首次发送按需申请通知权限，允许后再次点击
 
 Debug 沿用 `HyperOS3FocusRestore` INFO 标签，输出发送版本/code、合成载荷和 escaped 副本。日志来自本工具进程；仅抓 SystemUI 的 capture 不自动包含工具发送日志。notify 返回成功不代表 ROM 已显示，需要结合 SystemUI 实际加载版本、模板处理和设备画面判断。
 
-纯 Java 样本合同和脱敏回归测试位于 src/test，使用工作区已有的 JUnit4/JSON jar，通过 javac 和 JUnitCore 运行；未给工具添加依赖。APK 构建使用 `:testnotifier:clean :testnotifier:assembleDebug :testnotifier:assembleRelease -x lintVitalAnalyzeRelease`，签名与主模块共用现有作者证书。构建、合同测试与 ROM 实机显示分别验收。
+纯 Java 样本合同和脱敏回归测试位于 src/test，使用工作区已有的 JUnit4/JSON jar，通过 javac 和 JUnitCore 运行；未给工具添加依赖。使用主仓库说明的 JDK 21 环境，APK 构建及完整 lint 任务为 `:testnotifier:clean :testnotifier:assembleDebug :testnotifier:assembleRelease :testnotifier:lintDebug :testnotifier:lintRelease`，签名与主模块共用现有作者证书。2026-11-01随主模块0.42.1重新clean构建，实际执行lintVitalAnalyzeRelease，Debug/Release完整lint各0错误、6警告，12项合同/脱敏测试及双包版本/API31/签名核验通过。工具仍为1.1.1/code7；构建、合同测试与ROM实机显示分别验收。

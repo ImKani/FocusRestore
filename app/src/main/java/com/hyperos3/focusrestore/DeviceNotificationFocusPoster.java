@@ -15,6 +15,7 @@
 
 package com.hyperos3.focusrestore;
 
+import android.annotation.SuppressLint;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -142,6 +143,9 @@ final class DeviceNotificationFocusPoster {
         return post(text, iconResName, visibleMs, target, updateExisting, null, null, null);
     }
 
+    // 此处运行在 SystemUI 宿主并使用其通知权限，不以模块 Manifest 判断；isAvailable 检查宿主开关，
+    // notify 的权限竞态仍由下方带阶段的异常处理降级，不向设置进程增加通知权限。
+    @SuppressLint("NotificationPermission")
     boolean post(String text, String iconResName, long visibleMs, PendingIntent target,
                  boolean updateExisting, String sourcePackage, String category, String format) {
         if (notificationManager == null || text == null || text.trim().isEmpty()) {

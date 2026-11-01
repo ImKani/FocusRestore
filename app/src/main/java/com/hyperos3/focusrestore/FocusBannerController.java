@@ -7,6 +7,7 @@
 
 package com.hyperos3.focusrestore;
 
+import android.annotation.SuppressLint;
 import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.ComponentCallbacks;
@@ -633,6 +634,9 @@ public final class FocusBannerController {
         anchor.addOnAttachStateChangeListener(anchorListener);
     }
 
+    // Android 13 起明确指定导出标志；旧系统分支保留原注册语义。lint 8.7.3 仍报告旧分支。
+    // Android 平台接口：https://developer.android.com/about/versions/14/behavior-changes-14
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private void registerLifecycle(Context context) {
         receiverContext = context.getApplicationContext();
         if (receiverContext == null) receiverContext = context;

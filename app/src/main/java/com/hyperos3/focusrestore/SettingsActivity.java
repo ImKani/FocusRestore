@@ -24,6 +24,7 @@ import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.ColorDrawable;
@@ -526,7 +527,7 @@ public final class SettingsActivity extends Activity {
         icon.setElevation(0);
         bar.addView(icon, new LinearLayout.LayoutParams(dp(30), dp(30)));
         TextView brand = text("FocusRestore", 19, COLOR_TEXT_PRIMARY);
-        brand.setTypeface(brand.getTypeface(), 1);
+        brand.setTypeface(brand.getTypeface(), Typeface.BOLD);
         LinearLayout.LayoutParams brandParams = new LinearLayout.LayoutParams(0, -2, 1f);
         brandParams.leftMargin = dp(10);
         bar.addView(brand, brandParams);
@@ -589,7 +590,7 @@ public final class SettingsActivity extends Activity {
         root.setBackground(roundedBg(COLOR_SURFACE_HIGH, 16));
         if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
         TextView title = text("搜索设置", 18, COLOR_TEXT_PRIMARY);
-        title.setTypeface(title.getTypeface(), 1);
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
         root.addView(title, matchWrap(dp(12)));
         LinearLayout searchRow = new LinearLayout(this);
         searchRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -971,7 +972,7 @@ public final class SettingsActivity extends Activity {
 
     private TextView sectionHeader(String value) {
         TextView header = text(value, 14, COLOR_TEXT_SECONDARY);
-        header.setTypeface(header.getTypeface(), 1);
+        header.setTypeface(header.getTypeface(), Typeface.BOLD);
         header.setPadding(dp(4), dp(4), dp(4), dp(2));
         return header;
     }
@@ -990,7 +991,7 @@ public final class SettingsActivity extends Activity {
     private void addSettingSubheading(LinearLayout panel, String title) {
         if (panel.getChildCount() > 0) addSettingDivider(panel);
         TextView heading = text(title, 14, COLOR_PRIMARY);
-        heading.setTypeface(heading.getTypeface(), 1);
+        heading.setTypeface(heading.getTypeface(), Typeface.BOLD);
         if (Build.VERSION.SDK_INT >= 28) heading.setAccessibilityHeading(true);
         panel.addView(heading, matchWrap(dp(8)));
     }
@@ -1914,7 +1915,7 @@ public final class SettingsActivity extends Activity {
         root.setPadding(dp(20), dp(18), dp(16), dp(16));
 
         TextView title = text("覆盖当前配置？", 18, COLOR_TEXT_PRIMARY);
-        title.setTypeface(title.getTypeface(), 1);
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
         root.addView(title, matchWrap(dp(8)));
         TextView message = text("此文件将替换全部当前用户设置，未包含的设置恢复默认值。导入后请重启系统界面生效。",
                 14, COLOR_TEXT_SECONDARY);
@@ -1991,7 +1992,7 @@ public final class SettingsActivity extends Activity {
         button.setText(label);
         button.setAllCaps(false);
         button.setTextSize(14);
-        button.setTypeface(button.getTypeface(), 1);
+        button.setTypeface(button.getTypeface(), Typeface.BOLD);
         button.setTextColor(foreground);
         button.setBackground(roundedBg(background, 12));
         flattenButton(button);
@@ -3008,7 +3009,7 @@ public final class SettingsActivity extends Activity {
         root.setPadding(dp(16), dp(16), dp(16), dp(16));
         TextView title = text(dialogEditsExempt ? "最大显示时间豁免应用" : "强制转换超级岛应用",
                 18, COLOR_TEXT_PRIMARY);
-        title.setTypeface(title.getTypeface(), 1);
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
         root.addView(title, matchWrap(dp(8)));
 
         FrameLayout searchBox = new FrameLayout(this);
@@ -3233,7 +3234,7 @@ public final class SettingsActivity extends Activity {
                 textBox.setOrientation(LinearLayout.VERTICAL);
                 textBox.setPadding(dp(14), dp(8), dp(12), dp(8));
                 name = text("", 15, COLOR_TEXT_PRIMARY);
-                name.setTypeface(name.getTypeface(), 1);
+                name.setTypeface(name.getTypeface(), Typeface.BOLD);
                 packageName = text("", 12, COLOR_TEXT_SECONDARY);
                 textBox.addView(name, matchWrap(1));
                 textBox.addView(packageName, matchWrap(0));

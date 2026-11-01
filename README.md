@@ -20,7 +20,7 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 
 ## 当前版本
 
-当前源码：`0.42.0`（versionCode 318）。按作者决定恢复设置搜索版本，主模块首页不提供通知发送测试。测试能力集中到独立的 [testnotifier](testnotifier/README.md) 1.1.1/code7；设置模拟预览暂缓。版本名回退，versionCode继续递增。
+当前源码：`0.42.1`（versionCode 319）。本次补齐 Debug/Release 完整 lint 验证，保留 0.42.0 的设置搜索与功能范围。主模块首页不提供通知发送测试；测试能力集中到独立的 [testnotifier](testnotifier/README.md) 1.1.1/code7，设置模拟预览暂缓。
 
 顶栏右侧自绘放大镜提供设置搜索：
 
@@ -34,7 +34,9 @@ GitHub：<https://github.com/ImKani/FocusRestore>
 - OS4 滚动在当前内容完成布局后安排，视口改变时重算距离，取消旧内容和旧尺寸对应的动画。
 - 恢复旧页面状态时保留已保存的媒体字段选择与排序，避免缺字段被默认值覆盖。
 
-继续保留 0.41.2 的小爱退出兼容和两层岛屏蔽。主模块与独立测试工具最低 Android 版本统一提高至 Android 12（API 31），不再支持 Android 11 及以下；无新增第三方运行时依赖。clean Debug/Release 构建、50类397项JVM/源码回归及作者签名核验通过；Release跳过 `lintVitalAnalyzeRelease`，未完成完整lint。搜索界面、定位和此前布局修补仍待设备验收；独立工具另有12项样本合同及脱敏回归测试通过，ROM实际显示尚待确认。
+继续保留 0.41.2 的小爱退出兼容和两层岛屏蔽。主模块与独立测试工具最低 Android 版本为 Android 12（API 31）；无新增第三方运行时依赖。本次使用 JDK 21 完成双模块 clean Debug/Release 构建，实际执行 `lintVitalAnalyzeRelease`，并完成两模块的 `lintDebug` / `lintRelease`：主模块各 0 错误、97 警告，工具各 0 错误、6 警告。主模块50类397项JVM/源码回归、工具12项样本合同及脱敏回归、四包版本/最低SDK/作者签名核验通过。搜索界面、定位、布局修补和工具ROM实际显示仍待设备验收。
+
+lint 修正将八处字体样式数字改为 `Typeface.BOLD`；SystemUI 宿主通知权限、两处低于 Android 13 的接收器分支，以及任意已安装应用选择所需的全包查询，分别在相邻代码或权限声明局部说明并抑制。没有建立 baseline 或全局关闭 lint 错误；仍保留私有接口、无障碍、硬编码文本等警告，本次不宣称零警告或完整实机验收。
 
 Debug增加去重的 `DIAG OS3 focus layout` / `DIAG OS4 focus layout`，仍由 `HyperOS3FocusRestore` 标签输出INFO，记录测量宽、显示/文字视口、图标尺寸、字体和父约束等。OS3点位限于文字流程；OS4非TextView的正文内部文字视口记为-1，不能据日志推断任意RemoteViews的内部布局已经准确预览。
 
@@ -209,7 +211,7 @@ HyperOS 4 媒体焦点使用原生媒体卡片选出的当前媒体：首次加�
 
 导入先完整检查文件，再确认覆盖全部当前设置；文件中缺少的设置恢复兼容默认值，不与当前配置混合。旧显示横屏宽度缺失时继承所导入的显示竖屏宽度，旧连接符可作为两种连接符的回退；新增触控开关缺失时关闭，两种触控宽度缺失时分别使用160dp／600dp，不继承自定义显示宽度。取消或文件校验失败不写设置；保存失败会提示，双存储写入不保证跨存储事务。恢复后仍需手动重启系统界面完整生效。
 
-配置文件带格式版本 `formatVersion` 和导出软件版本 `appVersion`（例如 `0.42.0(318)`），软件版本随实际导出构建自动填写，仅说明来源，不决定能否导入。手工编辑时 `appVersion` 必须保留为非空、最多64字符且不含控制符的文本；设置仍按字段类型、范围和结构校验。兼容基线为0.30.4的持久设置，不为0.31.0～0.31.3测试期间缺少软件版本字段的旧JSON增加迁移；旧版不保证能导入新增字段的新版备份。文件最多16 MiB，两份应用名单的包名文本合计最多64 Ki字符，避免页面状态保存超限；导入和导出使用相同限制。冲突的点击选项按设置界面现有优先级处理。文件包含应用名单等个人设置，请妥善保管。
+配置文件带格式版本 `formatVersion` 和导出软件版本 `appVersion`（例如 `0.42.1(319)`），软件版本随实际导出构建自动填写，仅说明来源，不决定能否导入。手工编辑时 `appVersion` 必须保留为非空、最多64字符且不含控制符的文本；设置仍按字段类型、范围和结构校验。兼容基线为0.30.4的持久设置，不为0.31.0～0.31.3测试期间缺少软件版本字段的旧JSON增加迁移；旧版不保证能导入新增字段的新版备份。文件最多16 MiB，两份应用名单的包名文本合计最多64 Ki字符，避免页面状态保存超限；导入和导出使用相同限制。冲突的点击选项按设置界面现有优先级处理。文件包含应用名单等个人设置，请妥善保管。
 
 ### 高级：Debug 测试版内部兼容开关
 
@@ -243,13 +245,13 @@ Debug 和 Release 均保留模块加载版本、横幅点击与失败原因等�
 ```sh
 su
 /system/bin/logcat -c
-/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.42.0.log
+/system/bin/logcat -v threadtime HyperOS3FocusRestore:I FocusedNotifPromptView:I PromptViewAnimState:D AndroidRuntime:E '*:S' > /sdcard/focus-restore-0.42.1.log
 ```
 
 保持命令运行，然后通过设备上的方式手动重启系统界面。完成复现后回到 MT 终端，按 `Ctrl+C` 停止抓取。日志保存在：
 
 ```text
-/sdcard/focus-restore-0.42.0.log
+/sdcard/focus-restore-0.42.1.log
 ```
 
 ### 电脑端：ADB + PowerShell
@@ -307,12 +309,12 @@ adb logcat -v threadtime -b main -b system -b crash | Select-String 'HyperOS3Foc
 
 ## 构建
 
-源码使用 Android Gradle Plugin 8.7.3、Android SDK 35，Java 源级兼容 8。仓库未附带 Gradle Wrapper；请准备兼容的 JDK、Gradle 和 Android SDK，并配置 SDK 路径。
+源码使用 Android Gradle Plugin 8.7.3、Android SDK 35，Java 源级兼容 8。本次验证使用 Temurin JDK 21.0.13+9 与 Gradle 9.7.1；AGP 8.7.3 所带 lint 在 JDK 25.0.4 下因 `JavaVersion.parse` 抛出异常，运行完整 lint 请使用已验证的 JDK 21。仓库未附带 Gradle Wrapper，请配置 JDK、Gradle 和 SDK 路径；仅调整 Java 源级兼容不能修复 lint 所在 JVM 的版本解析。
 
 在仓库根目录使用已配置的 Gradle 执行：
 
 ```shell
-gradle :app:clean :app:assembleDebug :app:assembleRelease
+gradle :app:clean :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:lintDebug :app:lintRelease
 ```
 
 构建脚本引用 ImKani 本地保存的固定签名证书，证书私钥不随仓库提供。其他人自行构建时需配置自己的签名；不同签名的 APK 不能直接覆盖官方发布包。
@@ -326,13 +328,13 @@ gradle :app:clean :app:assembleDebug :app:assembleRelease
 > **签名变更（0.34.2 起）**：本项目自 0.34.2 起改用作者签名证书，与此前各版本使用的固定测试证书签名不同，无法直接覆盖安装。从旧版本升级请先在模块“关于”页导出配置，再卸载旧版本、安装本版本，最后导入配置；卸载会清除模块内保存的设置，未导出的配置无法恢复。
 
 ```powershell
-adb install -r '.\FocusRestore-0.42.0-debug.apk'
+adb install -r '.\FocusRestore-0.42.1-debug.apk'
 ```
 
 或安装 Release：
 
 ```powershell
-adb install -r '.\FocusRestore-0.42.0-release.apk'
+adb install -r '.\FocusRestore-0.42.1-release.apk'
 ```
 
 安装后：

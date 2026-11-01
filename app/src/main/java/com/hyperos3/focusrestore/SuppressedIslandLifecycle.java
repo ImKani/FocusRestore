@@ -7,6 +7,7 @@
 
 package com.hyperos3.focusrestore;
 
+import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -55,6 +56,9 @@ final class SuppressedIslandLifecycle {
     }
 
     // SystemUI 进程生命周期注册一次；不绑定通知/View，通知移除不会排队复活旧对象。
+    // Android 13 起使用 EXPORTED 接收小爱请求；更低版本保留原重载，lint 8.7.3 仍报告旧分支。
+    // Android 平台接口：https://developer.android.com/about/versions/14/behavior-changes-14
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     void install(ClassLoader loader, Context context, Handler mainHandler) {
         for (String name : new String[]{
                 "com.android.systemui.statusbar.notification.NotificationProviderPublic",
