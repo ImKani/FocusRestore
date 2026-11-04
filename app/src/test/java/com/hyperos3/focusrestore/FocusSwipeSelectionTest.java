@@ -12,6 +12,17 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class FocusSwipeSelectionTest {
+    @Test public void automaticActionRejectsStaleRevisionAndRestoresCurrentPriority() {
+        FocusSwipeSelection queue = new FocusSwipeSelection();
+        queue.reconcile(Arrays.asList("A", "B"), "A");
+        long stale = queue.revision();
+        queue.swipe(true, stale);
+        assertFalse(queue.automatic(stale));
+        assertTrue(queue.automatic(queue.revision()));
+        assertEquals("B", queue.reconcile(Arrays.asList("A", "B"), "B"));
+        assertFalse(queue.manual());
+        assertEquals("焦点第2项，共2项", queue.positionDescription());
+    }
     @Test public void oneNotificationCanHideAndRestoreFromEitherDirection() {
         for (boolean right : new boolean[]{false, true}) {
             FocusSwipeSelection queue = new FocusSwipeSelection();

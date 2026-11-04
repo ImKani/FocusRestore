@@ -149,9 +149,9 @@ public class MediaControllerBudgetTest {
         // findAndHookMethod 装的 onFocusNotifPromptClicked 在该 ROM 上一轮都没执行过，
         // 点击判定必须改用与 handleTouchEvent 相同的安装方式。
         assertTrue("点击判定入口必须改用 hookMethod + getDeclaredMethod",
-                hook.contains("hookMethod(promptView.getDeclaredMethod(\"onFocusNotifPromptClicked\")"));
+                hook.contains("hookInstaller.method(promptView.getDeclaredMethod(\"onFocusNotifPromptClicked\")"));
         assertFalse("不得再用 findAndHookMethod 装 onFocusNotifPromptClicked",
-                hook.contains("findAndHookMethod(promptView, \"onFocusNotifPromptClicked\""));
+                hook.contains("hookInstaller.exact(promptView, \"onFocusNotifPromptClicked\""));
     }
 
     private static List<File> mainSources() {

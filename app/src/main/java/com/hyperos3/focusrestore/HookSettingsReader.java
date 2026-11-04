@@ -21,6 +21,10 @@ final class HookSettingsReader {
     }
 
     static HookSettings read(Context context) {
+        return read(context, null);
+    }
+
+    static HookSettings read(Context context, java.util.function.LongConsumer generation) {
         if (context == null) return null;
         Cursor cursor = null;
         try {
@@ -28,7 +32,9 @@ final class HookSettingsReader {
             // 不指定列顺序：新版按功能分组，旧 Provider 仍可返回旧顺序，由字段名识别。
             cursor = resolver.query(SettingsProvider.URI, null, null, null, null);
             if (cursor == null || !cursor.moveToFirst()) return null;
-            return HookSettings.fromCursor(cursor);
+            HookSettings settings = HookSettings.fromCursor(cursor);
+            if (generation != null) generation.accept(cursor.getExtras().getLong("saved_generation", 0L));
+            return settings;
         } catch (RuntimeException failure) {
             // 不静默吞掉：缺列或类型不符时保留可定位原因，只记录一次。
             if (!failureLogged) {

@@ -83,6 +83,7 @@ public final class FocusRestoreSettings {
     public static final String KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK = "long_press_notification_row_click";
     public static final String KEY_LONG_PRESS_SECONDS = "long_press_seconds";
     public static final String KEY_FOCUS_SWIPE_ENABLED = "focus_swipe_enabled";
+    public static final String KEY_ADAPTIVE_FOCUS_WIDTH = "adaptive_focus_width";
     public static final String KEY_CUSTOM_TOUCH_WIDTH = "custom_touch_width";
     public static final String KEY_TOUCH_WIDTH_DP = "touch_width_dp";
     public static final String KEY_TOUCH_WIDTH_LANDSCAPE_DP = "touch_width_landscape_dp";
@@ -147,6 +148,7 @@ public final class FocusRestoreSettings {
     public static final boolean DEFAULT_INDEPENDENT_FOCUS_BANNER = true;
     public static final boolean DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK = false;
     public static final boolean DEFAULT_FOCUS_SWIPE_ENABLED = false;
+    public static final boolean DEFAULT_ADAPTIVE_FOCUS_WIDTH = false;
     public static final boolean DEFAULT_CUSTOM_TOUCH_WIDTH = false;
     public static final int DEFAULT_TOUCH_WIDTH_DP = DEFAULT_WIDTH_DP;
     public static final int DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP = DEFAULT_WIDTH_LANDSCAPE_DP;
@@ -204,6 +206,7 @@ public final class FocusRestoreSettings {
     public final boolean longPressNotificationRowClick;
     public final float longPressSeconds;
     public final boolean focusSwipeEnabled;
+    public final boolean adaptiveFocusWidth;
     public final boolean customTouchWidth;
     public final int touchWidthDp;
     public final int touchWidthLandscapeDp;
@@ -262,6 +265,7 @@ public final class FocusRestoreSettings {
         this.longPressNotificationRowClick = editor.longPressNotificationRowClick;
         this.longPressSeconds = normalizeLongPressSeconds(editor.longPressSeconds);
         this.focusSwipeEnabled = editor.focusSwipeEnabled;
+        this.adaptiveFocusWidth = editor.adaptiveFocusWidth;
         this.customTouchWidth = editor.customTouchWidth;
         this.touchWidthDp = clamp(editor.touchWidthDp, MIN_WIDTH_DP, MAX_WIDTH_DP);
         this.touchWidthLandscapeDp = clamp(editor.touchWidthLandscapeDp, MIN_WIDTH_DP,
@@ -324,6 +328,7 @@ public final class FocusRestoreSettings {
         private boolean longPressNotificationRowClick = DEFAULT_LONG_PRESS_NOTIFICATION_ROW_CLICK;
         private float longPressSeconds = DEFAULT_LONG_PRESS_SECONDS;
         private boolean focusSwipeEnabled = DEFAULT_FOCUS_SWIPE_ENABLED;
+        private boolean adaptiveFocusWidth = DEFAULT_ADAPTIVE_FOCUS_WIDTH;
         private boolean customTouchWidth = DEFAULT_CUSTOM_TOUCH_WIDTH;
         private int touchWidthDp = DEFAULT_TOUCH_WIDTH_DP;
         private int touchWidthLandscapeDp = DEFAULT_TOUCH_WIDTH_LANDSCAPE_DP;
@@ -380,6 +385,7 @@ public final class FocusRestoreSettings {
             this.longPressNotificationRowClick = source.longPressNotificationRowClick;
             this.longPressSeconds = source.longPressSeconds;
             this.focusSwipeEnabled = source.focusSwipeEnabled;
+            this.adaptiveFocusWidth = source.adaptiveFocusWidth;
             this.customTouchWidth = source.customTouchWidth;
             this.touchWidthDp = source.touchWidthDp;
             this.touchWidthLandscapeDp = source.touchWidthLandscapeDp;
@@ -452,6 +458,7 @@ public final class FocusRestoreSettings {
         }
         public Editor longPressSeconds(float value) { this.longPressSeconds = value; return this; }
         public Editor focusSwipeEnabled(boolean value) { this.focusSwipeEnabled = value; return this; }
+        public Editor adaptiveFocusWidth(boolean value) { this.adaptiveFocusWidth = value; return this; }
         public Editor customTouchWidth(boolean value) { this.customTouchWidth = value; return this; }
         public Editor touchWidthDp(int value) { this.touchWidthDp = value; return this; }
         public Editor touchWidthLandscapeDp(int value) { this.touchWidthLandscapeDp = value; return this; }
@@ -748,6 +755,8 @@ public final class FocusRestoreSettings {
                 .longPressSeconds(values.readLongPressSeconds())
                 .focusSwipeEnabled(values.getBoolean(KEY_FOCUS_SWIPE_ENABLED,
                         DEFAULT_FOCUS_SWIPE_ENABLED))
+                .adaptiveFocusWidth(values.getBoolean(KEY_ADAPTIVE_FOCUS_WIDTH,
+                        DEFAULT_ADAPTIVE_FOCUS_WIDTH))
                 // 旧配置未存储独立触控设置，保持实际显示区域模式，不继承显示宽度。
                 .customTouchWidth(values.getBoolean(KEY_CUSTOM_TOUCH_WIDTH,
                         DEFAULT_CUSTOM_TOUCH_WIDTH))
@@ -794,6 +803,7 @@ public final class FocusRestoreSettings {
                 + " longPressNotificationRowClick=" + longPressNotificationRowClick
                 + " longPressSeconds=" + longPressSeconds
                 + " focusSwipeEnabled=" + focusSwipeEnabled
+                + " adaptiveFocusWidth=" + adaptiveFocusWidth
                 + " customTouchWidth=" + customTouchWidth
                 + " touchWidthDp=" + touchWidthDp + " touchWidthLandscapeDp=" + touchWidthLandscapeDp
                 + " mediaFocusCastPicker=" + mediaFocusCastPicker
@@ -862,6 +872,7 @@ public final class FocusRestoreSettings {
                 .putBoolean(KEY_LONG_PRESS_NOTIFICATION_ROW_CLICK, longPressNotificationRowClick)
                 .putFloat(KEY_LONG_PRESS_SECONDS, longPressSeconds)
                 .putBoolean(KEY_FOCUS_SWIPE_ENABLED, focusSwipeEnabled)
+                .putBoolean(KEY_ADAPTIVE_FOCUS_WIDTH, adaptiveFocusWidth)
                 .putBoolean(KEY_CUSTOM_TOUCH_WIDTH, customTouchWidth)
                 .putInt(KEY_TOUCH_WIDTH_DP, touchWidthDp)
                 .putInt(KEY_TOUCH_WIDTH_LANDSCAPE_DP, touchWidthLandscapeDp)

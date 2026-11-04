@@ -57,6 +57,7 @@ final class HookSettings {
     final boolean longPressNotificationRowClick;
     final float longPressSeconds;
     final boolean focusSwipeEnabled;
+    final boolean adaptiveFocusWidth;
     final boolean customTouchWidth;
     final int touchWidthDp;
     final int touchWidthLandscapeDp;
@@ -80,7 +81,7 @@ final class HookSettings {
                          boolean tintIslandIcon, boolean useSmallIconFallback,
                          int focusIconPriority, boolean tintDeviceIcon,
                          boolean notificationRowClickFallback, boolean independentFocusBanner,
-                          boolean longPressNotificationRowClick, float longPressSeconds, boolean focusSwipeEnabled,
+                          boolean longPressNotificationRowClick, float longPressSeconds, boolean focusSwipeEnabled, boolean adaptiveFocusWidth,
                          boolean customTouchWidth, int touchWidthDp, int touchWidthLandscapeDp,
                          int islandTextMode, float focusMaxDisplaySeconds,
                          String generalSeparator,
@@ -128,6 +129,7 @@ final class HookSettings {
         this.longPressNotificationRowClick = longPressNotificationRowClick;
         this.longPressSeconds = FocusRestoreSettings.normalizeLongPressSeconds(longPressSeconds);
         this.focusSwipeEnabled = focusSwipeEnabled;
+        this.adaptiveFocusWidth = adaptiveFocusWidth;
         this.customTouchWidth = customTouchWidth;
         this.touchWidthDp = clamp(touchWidthDp, FocusRestoreSettings.MIN_WIDTH_DP,
                 FocusRestoreSettings.MAX_WIDTH_DP);
@@ -172,7 +174,7 @@ final class HookSettings {
                 source.tintIslandIcon, source.useSmallIconFallback,
                 source.focusIconPriority, source.tintDeviceIcon,
                 source.notificationRowClickFallback, source.independentFocusBanner,
-                source.longPressNotificationRowClick, source.longPressSeconds, source.focusSwipeEnabled,
+                source.longPressNotificationRowClick, source.longPressSeconds, source.focusSwipeEnabled, source.adaptiveFocusWidth,
                 source.customTouchWidth, source.touchWidthDp, source.touchWidthLandscapeDp,
                 source.islandTextMode, source.focusMaxDisplaySeconds,
                 source.islandGeneralSeparator, source.islandSideSeparator,
@@ -203,7 +205,7 @@ final class HookSettings {
                 limitWidth, widthDp,
                 // 旧配置没有横屏列时沿用竖屏宽度，而非重置为新版默认宽度。
                 readInt(cursor, SettingsContract.WIDTH_LANDSCAPE_DP, widthDp),
-                readBoolean(cursor, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND, false),
+                readBoolean(cursor, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND, FocusRestoreSettings.DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND),
                 readBoolean(cursor, SettingsContract.MEDIA_FOCUS_ENABLED, false),
                 readBoolean(cursor, SettingsContract.MEDIA_FOCUS_NATIVE_BANNER,
                         FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_NATIVE_BANNER),
@@ -256,6 +258,7 @@ final class HookSettings {
                         FocusRestoreSettings.DEFAULT_LONG_PRESS_SECONDS),
                 // 缺新列的旧 Provider 保持关闭，滑动不能从短按或长按设置推导开启。
                 readBoolean(cursor, SettingsContract.FOCUS_SWIPE_ENABLED, false),
+                readBoolean(cursor, SettingsContract.ADAPTIVE_FOCUS_WIDTH, false),
                 // 缺少独立触控列时沿用0.32.0实际边界，不能从显示宽度推导开启。
                 readBoolean(cursor, SettingsContract.CUSTOM_TOUCH_WIDTH, false),
                 readInt(cursor, SettingsContract.TOUCH_WIDTH_DP, FocusRestoreSettings.DEFAULT_TOUCH_WIDTH_DP),

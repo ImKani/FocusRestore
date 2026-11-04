@@ -1009,6 +1009,9 @@ public final class FocusBannerController {
             if (renderingFailed) return;
             try {
                 super.onLayout(changed, left, top, right, bottom);
+            } catch (Throwable error) { renderingFailure("layout", error); return; }
+            // 诊断失败不应撤下已经正常布局的横幅。
+            try {
                 if (layoutLogCount < 6 && (lastLayoutWidth != getWidth() || lastLayoutHeight != getHeight())
                         && getWidth() > 0 && getHeight() > 0 && banner == this) {
                     lastLayoutWidth = getWidth();
@@ -1026,7 +1029,7 @@ public final class FocusBannerController {
                                     & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
                             + " " + (render == null ? "" : render.layoutSummary()));
                 }
-            } catch (Throwable error) { renderingFailure("layout", error); }
+            } catch (Throwable error) { fail(notificationKey, "layout diagnostics", error); }
         }
 
         @Override public void draw(Canvas canvas) {

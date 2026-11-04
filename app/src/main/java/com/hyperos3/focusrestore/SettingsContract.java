@@ -57,33 +57,34 @@ final class SettingsContract {
     static final int LONG_PRESS_NOTIFICATION_ROW_CLICK = 32;
     static final int LONG_PRESS_SECONDS = 33;
     static final int FOCUS_SWIPE_ENABLED = 34;
-    static final int CUSTOM_TOUCH_WIDTH = 35;
-    static final int TOUCH_WIDTH_DP = 36;
-    static final int TOUCH_WIDTH_LANDSCAPE_DP = 37;
+    static final int ADAPTIVE_FOCUS_WIDTH = 35;
+    static final int CUSTOM_TOUCH_WIDTH = 36;
+    static final int TOUCH_WIDTH_DP = 37;
+    static final int TOUCH_WIDTH_LANDSCAPE_DP = 38;
 
     // 最大显示时间与独立豁免名单。
-    static final int FOCUS_MAX_DISPLAY_SECONDS = 38;
-    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 39;
+    static final int FOCUS_MAX_DISPLAY_SECONDS = 39;
+    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 40;
 
     // 媒体焦点与流转。
-    static final int MEDIA_FOCUS_ENABLED = 40;
-    static final int MEDIA_FOCUS_NATIVE_BANNER = 41;
-    static final int MEDIA_FOCUS_CAST_PICKER = 42;
-    static final int MEDIA_FOCUS_CAST_DIRECT = 43;
+    static final int MEDIA_FOCUS_ENABLED = 41;
+    static final int MEDIA_FOCUS_NATIVE_BANNER = 42;
+    static final int MEDIA_FOCUS_CAST_PICKER = 43;
+    static final int MEDIA_FOCUS_CAST_DIRECT = 44;
 
     // 隐藏状态栏时间与媒体简短显示。
-    static final int HIDE_TIME_NORMAL = 44;
-    static final int HIDE_TIME_MEDIA = 45;
-    static final int HIDE_TIME_DEVICE = 46;
-    static final int MEDIA_BRIEF_DISPLAY = 47;
-    static final int MEDIA_BRIEF_FIELDS = 48;
-    static final int INTERCEPT_ELEMENT_ANIMATION = 49;
+    static final int HIDE_TIME_NORMAL = 45;
+    static final int HIDE_TIME_MEDIA = 46;
+    static final int HIDE_TIME_DEVICE = 47;
+    static final int MEDIA_BRIEF_DISPLAY = 48;
+    static final int MEDIA_BRIEF_FIELDS = 49;
+    static final int INTERCEPT_ELEMENT_ANIMATION = 50;
 
     // 历史字段仍响应旧 projection；废弃功能不恢复，旧分隔符只供缺列回退。
-    static final int LEGACY_ISLAND_SEPARATOR = 50;
-    static final int EXPAND_ISLAND_ON_CLICK = 51;
-    static final int NOTIFICATION_ICON_HIDE_MODE = 52;
-    static final int ISLAND_CUSTOM_RULES = 53;
+    static final int LEGACY_ISLAND_SEPARATOR = 51;
+    static final int EXPAND_ISLAND_ON_CLICK = 52;
+    static final int NOTIFICATION_ICON_HIDE_MODE = 53;
+    static final int ISLAND_CUSTOM_RULES = 54;
 
     static final String[] COLUMNS = {
             "hook_mode", "compat_retry", "disable_island_property", "disable_island_feature_cache",
@@ -96,7 +97,7 @@ final class SettingsContract {
             "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon",
             "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
             "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
-            "focus_swipe_enabled",
+            "focus_swipe_enabled", "adaptive_focus_width",
             "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
             "focus_max_display_seconds", "focus_timeout_exempt_packages",
             "media_focus_enabled", "media_focus_native_banner", "media_focus_cast_picker", "media_focus_cast_direct",
@@ -165,6 +166,7 @@ final class SettingsContract {
         row[LONG_PRESS_NOTIFICATION_ROW_CLICK] = settings.longPressNotificationRowClick ? 1 : 0;
         row[LONG_PRESS_SECONDS] = settings.longPressSeconds;
         row[FOCUS_SWIPE_ENABLED] = settings.focusSwipeEnabled ? 1 : 0;
+        row[ADAPTIVE_FOCUS_WIDTH] = settings.adaptiveFocusWidth ? 1 : 0;
         row[CUSTOM_TOUCH_WIDTH] = settings.customTouchWidth ? 1 : 0;
         row[TOUCH_WIDTH_DP] = settings.touchWidthDp;
         row[TOUCH_WIDTH_LANDSCAPE_DP] = settings.touchWidthLandscapeDp;

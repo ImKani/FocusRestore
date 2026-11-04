@@ -32,8 +32,8 @@ android {
         applicationId 'com.hyperos3.focusrestore'
         minSdk 31
         targetSdk 35
-        versionCode 319
-        versionName '0.42.1'
+        versionCode 321
+        versionName '0.43.0'
     }
 
     signingConfigs {
@@ -54,6 +54,15 @@ android {
         release {
             // Release 与 Debug 使用相同签名。
             signingConfig signingConfigs.authorSigning
+        }
+    }
+
+    packaging {
+        dex {
+            // minSdk >= 28 时 AGP 默认不压缩 DEX；显式恢复压缩，避免 APK 下载体积翻倍。
+            // Android Gradle Plugin DexPackaging.useLegacyPackaging 平台文档：
+            // https://developer.android.com/reference/tools/gradle-api/8.7/com/android/build/api/dsl/DexPackaging
+            useLegacyPackaging = true
         }
     }
 

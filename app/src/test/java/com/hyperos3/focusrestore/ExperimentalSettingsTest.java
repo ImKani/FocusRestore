@@ -24,6 +24,32 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class ExperimentalSettingsTest {
+    @Test public void adaptiveWidthDefaultAndAllContractsRemainIndependent() throws Exception {
+        assertFalse(FocusRestoreSettings.defaults().adaptiveFocusWidth);
+        FocusRestoreSettings selected = FocusRestoreSettings.edit().adaptiveFocusWidth(true).build();
+        SharedPreferences store = memoryPreferences(new HashMap<>());
+        assertTrue(selected.save(store));
+        assertTrue(FocusRestoreSettings.fromPreferences(store).adaptiveFocusWidth);
+        assertTrue(SettingsBackupCodec.decode(SettingsBackupCodec.encode(selected)).adaptiveFocusWidth);
+        HookSettings hook = HookSettings.fromCursor(SettingsContractTest.namedCursor(SettingsContract.COLUMNS,
+                SettingsContract.toRow(selected, "")));
+        assertTrue(hook.adaptiveFocusWidth);
+        assertFalse(hook.focusSwipeEnabled);
+        assertFalse(SettingsBackupCodec.decode("{\"format\":\"FocusRestore.settings\",\"formatVersion\":1,\"appVersion\":\"0.42.1(319)\",\"settings\":{}}"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)).adaptiveFocusWidth);
+    }
+    @Test
+    public void missingBannerBackgroundColumnUsesTheUserSettingDefault() {
+        HookSettings missing = HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                new String[]{"limit_text_width", "text_width_dp", "marquee_delay_ms"},
+                new Object[]{1, 160, 1000}));
+        assertEquals(FocusRestoreSettings.DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND,
+                missing.specialBannerNormalBackground);
+        FocusRestoreSettings saved = FocusRestoreSettings.edit().specialBannerNormalBackground(false).build();
+        assertFalse(HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                SettingsContract.COLUMNS, SettingsContract.toRow(saved, ""))).specialBannerNormalBackground);
+    }
+
     @Test
     public void newDefaultsApplyOnlyToMissingFieldsAndKeepSavedChoices() throws Exception {
         Map<String, Object> empty = new HashMap<>();

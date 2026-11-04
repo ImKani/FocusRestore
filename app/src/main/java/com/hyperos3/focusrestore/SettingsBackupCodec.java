@@ -114,7 +114,7 @@ final class SettingsBackupCodec {
             JSONObject interaction = group(groups, "interaction", "independent_focus_banner",
                     "special_banner_normal_background", "allow_focus_click",
                     "notification_row_click_fallback", "long_press_notification_row_click",
-                    "long_press_seconds", "focus_swipe_enabled",
+                    "long_press_seconds", "focus_swipe_enabled", "adaptive_focus_width",
                     "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
                     "intercept_element_animation");
             JSONObject icons = group(groups, "icons", "show_island_icon", "tint_island_icon",
@@ -187,6 +187,7 @@ final class SettingsBackupCodec {
                     .longPressNotificationRowClick(bool(interaction, "long_press_notification_row_click", defaults.longPressNotificationRowClick))
                     .longPressSeconds(seconds(interaction, "long_press_seconds", defaults.longPressSeconds))
                     .focusSwipeEnabled(bool(interaction, "focus_swipe_enabled", defaults.focusSwipeEnabled))
+                    .adaptiveFocusWidth(bool(interaction, "adaptive_focus_width", defaults.adaptiveFocusWidth))
                     .interceptElementAnimation(bool(interaction, "intercept_element_animation",
                             defaults.interceptElementAnimation))
                     .customTouchWidth(bool(interaction, "custom_touch_width", defaults.customTouchWidth))
@@ -242,6 +243,7 @@ final class SettingsBackupCodec {
                         "long_press_notification_row_click", settings.longPressNotificationRowClick,
                         "long_press_seconds", settings.longPressSeconds,
                         "focus_swipe_enabled", settings.focusSwipeEnabled,
+                        "adaptive_focus_width", settings.adaptiveFocusWidth,
                         "custom_touch_width", settings.customTouchWidth,
                         "touch_width_dp", settings.touchWidthDp,
                         "touch_width_landscape_dp", settings.touchWidthLandscapeDp,

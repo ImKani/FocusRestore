@@ -52,7 +52,7 @@ public class SettingsContractTest {
                 "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon",
                 "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
                 "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
-                "focus_swipe_enabled",
+                "focus_swipe_enabled", "adaptive_focus_width",
                 "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
                 "focus_max_display_seconds", "focus_timeout_exempt_packages",
                 "media_focus_enabled", "media_focus_native_banner", "media_focus_cast_picker", "media_focus_cast_direct",
@@ -76,7 +76,7 @@ public class SettingsContractTest {
                 SettingsContract.INDEPENDENT_FOCUS_BANNER, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND,
                 SettingsContract.ALLOW_FOCUS_CLICK, SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK,
                 SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK, SettingsContract.LONG_PRESS_SECONDS,
-                SettingsContract.FOCUS_SWIPE_ENABLED,
+                SettingsContract.FOCUS_SWIPE_ENABLED, SettingsContract.ADAPTIVE_FOCUS_WIDTH,
                 SettingsContract.CUSTOM_TOUCH_WIDTH, SettingsContract.TOUCH_WIDTH_DP,
                 SettingsContract.TOUCH_WIDTH_LANDSCAPE_DP,
                 SettingsContract.FOCUS_MAX_DISPLAY_SECONDS, SettingsContract.FOCUS_TIMEOUT_EXEMPT_PACKAGES,
@@ -88,7 +88,7 @@ public class SettingsContractTest {
                 SettingsContract.LEGACY_ISLAND_SEPARATOR, SettingsContract.EXPAND_ISLAND_ON_CLICK,
                 SettingsContract.NOTIFICATION_ICON_HIDE_MODE, SettingsContract.ISLAND_CUSTOM_RULES
         };
-        assertEquals(54, SettingsContract.COLUMNS.length);
+        assertEquals(55, SettingsContract.COLUMNS.length);
         assertEquals(SettingsContract.FOCUS_DIVIDER_START_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_START_DP);
         assertEquals(SettingsContract.FOCUS_DIVIDER_END_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_END_DP);
         assertEquals(SettingsContract.COLUMNS.length, fields.length);
@@ -178,7 +178,8 @@ public class SettingsContractTest {
         assertEquals(FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_PICKER, sparse.mediaFocusCastPicker);
         assertFalse(sparse.compatRetry);
         assertTrue(sparse.islandCompat);
-        assertFalse(sparse.specialBannerNormalBackground);
+        assertEquals(FocusRestoreSettings.DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND,
+                sparse.specialBannerNormalBackground);
         assertFalse(sparse.mediaFocusEnabled);
         assertEquals(FocusRestoreSettings.DEFAULT_MARQUEE_BOUNCE, sparse.marqueeBounce);
         assertEquals(FocusRestoreSettings.DEFAULT_DISABLE_ISLAND_PROPERTY, sparse.disableIslandProperty);

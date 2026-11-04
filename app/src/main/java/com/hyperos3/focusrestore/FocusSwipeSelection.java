@@ -77,6 +77,16 @@ final class FocusSwipeSelection {
     }
 
     synchronized long revision() { return revision; }
+    synchronized boolean automatic(long expectedRevision) {
+        if (revision != expectedRevision || keys.isEmpty()) return false;
+        manual = false;
+        revision++;
+        return true;
+    }
+    synchronized String positionDescription() {
+        return selected == null ? "焦点已收起，共" + keys.size() + "项"
+                : "焦点第" + (keys.indexOf(selected) + 1) + "项，共" + keys.size() + "项";
+    }
     synchronized boolean manual() { return manual; }
     synchronized boolean hasCandidates() { return !keys.isEmpty(); }
     synchronized String selected() { return selected; }

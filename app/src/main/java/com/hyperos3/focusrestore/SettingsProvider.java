@@ -28,6 +28,7 @@ public final class SettingsProvider extends ContentProvider {
     /** The only external reader: SystemUI hosts the hooks and reads this provider across processes. */
     private static final String SYSTEM_UI = "com.android.systemui";
     private String lastDiagnostic;
+    private final RuntimeStatus runtimeStatus = new RuntimeStatus();
 
     @Override
     public boolean onCreate() {
@@ -56,7 +57,32 @@ public final class SettingsProvider extends ContentProvider {
         String[] columns = SettingsContract.columnsForProjection(projection);
         MatrixCursor cursor = new MatrixCursor(columns);
         cursor.addRow(SettingsContract.toRow(settings, legacySeparator, columns));
+        android.os.Bundle extras = new android.os.Bundle();
+        extras.putLong("saved_generation", FocusRestoreSettings.generation(preferences));
+        cursor.setExtras(extras);
         return cursor;
+    }
+
+    @Override public android.os.Bundle call(String method, String arg, android.os.Bundle extras) {
+        if (getContext() == null) return null;
+        if (RuntimeStatus.GET.equals(method)) {
+            if (!isTrustedCaller()) return null;
+            android.os.Bundle status = runtimeStatus.read();
+            if (status.isEmpty()) getContext().getContentResolver().notifyChange(RuntimeStatus.REQUEST_URI, null);
+            return status;
+        }
+        if (!RuntimeStatus.REPORT.equals(method)) return super.call(method, arg, extras);
+        // 写入加载状态不使用配置读取的特殊ROM身份查询失败放行策略。
+        int uid = Binder.getCallingUid();
+        boolean trusted = uid == Process.myUid() || uid == Process.SYSTEM_UID;
+        if (!trusted) {
+            String[] packages = getContext().getPackageManager().getPackagesForUid(uid);
+            if (packages != null) for (String name : packages) trusted |= SYSTEM_UI.equals(name);
+        }
+        if (!trusted) throw new SecurityException("Only SystemUI may report its loaded hooks");
+        try { runtimeStatus.report(getContext(), extras); }
+        catch (android.os.RemoteException dead) { logDiagnostic("loaded status rejected: process ended"); }
+        return new android.os.Bundle();
     }
 
     /**

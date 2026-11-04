@@ -191,6 +191,43 @@ public final class SettingsActivity extends Activity {
         saveSettings();
     };
     private boolean appearanceResourceFailureLogged;
+    private TextView loadedStatusText;
+    private boolean loadedStatusPending, loadedStatusDirty;
+    private final android.database.ContentObserver loadedStatusObserver = new android.database.ContentObserver(textSaveHandler) {
+        @Override public void onChange(boolean selfChange) { refreshLoadedStatus(); }
+    };
+
+    private void refreshLoadedStatus() {
+        if (!backupUiResumed || destroyed || loadedStatusText == null) return;
+        if (loadedStatusPending) { loadedStatusDirty = true; return; }
+        loadedStatusPending = true;
+        final TextView target = loadedStatusText;
+        saveExecutor.execute(() -> {
+            Bundle status = null;
+            try { status = getContentResolver().call(SettingsProvider.URI, RuntimeStatus.GET, null, null); }
+            catch (RuntimeException failure) { android.util.Log.w("FocusRestore", "Read loaded status failed", failure); }
+            final Bundle result = status;
+            final long saved = FocusRestoreSettings.generation(hookPreferences);
+            final int mode = FocusRestoreSettings.fromPreferences(hookPreferences).hookMode;
+            textSaveHandler.post(() -> {
+                loadedStatusPending = false;
+                if (!destroyed && backupUiResumed && loadedStatusText == target) {
+                    boolean alive = result != null && result.containsKey("pid");
+                    String description = LoadedState.describe(alive, alive ? result.getInt("version_code") : 0,
+                            BuildConfig.VERSION_CODE, alive ? result.getInt("mode") : 0, mode,
+                            alive && result.getBoolean("ready"), alive ? result.getLong("config_generation") : 0, saved);
+                    if (alive) description += "\nOS" + result.getInt("mode") + " · PID " + result.getInt("pid")
+                            + " · Hook " + result.getInt("handles") + " · 未成功 " + result.getInt("failures");
+                    if (alive && !result.getBoolean("privacy_ready")) description += "\n显示策略尚未就绪，模块内容暂不显示。";
+                    if (alive && result.getInt("mode") == 4 && !result.getBoolean("chips_ready")) {
+                        description += "\n原生提示共存状态尚未就绪，OS4焦点暂不显示。";
+                    }
+                    target.setText(description);
+                }
+                if (loadedStatusDirty) { loadedStatusDirty = false; refreshLoadedStatus(); }
+            });
+        });
+    }
 
     private Button os3ModeButton;
     private Button os4ModeButton;
@@ -234,6 +271,7 @@ public final class SettingsActivity extends Activity {
     private Switch independentFocusBannerSwitch;
     private Switch longPressNotificationRowClickSwitch;
     private Switch focusSwipeEnabledSwitch;
+    private Switch adaptiveFocusWidthSwitch;
     private Switch customTouchWidthSwitch;
     private LinearLayout touchWidthOptionsPanel;
     private SeekBar touchWidthSeekBar;
@@ -284,6 +322,7 @@ public final class SettingsActivity extends Activity {
             pendingNotificationRowClickFallback, pendingIndependentFocusBanner,
             pendingLongPressNotificationRowClick, pendingFocusSwipeEnabled, pendingCustomTouchWidth;
     private int pendingFocusIconPriority;
+    private boolean pendingAdaptiveFocusWidth;
     private int pendingFocusIconSizeDp;
     private int pendingFocusIconTextGapDp;
     private int pendingFocusDividerStartDp;
@@ -351,11 +390,14 @@ public final class SettingsActivity extends Activity {
     protected void onResume() {
         super.onResume();
         backupUiResumed = true;
+        getContentResolver().registerContentObserver(RuntimeStatus.URI, false, loadedStatusObserver);
+        refreshLoadedStatus();
         if (importCandidate != null) confirmSettingsImport();
     }
 
     @Override
     protected void onPause() {
+        getContentResolver().unregisterContentObserver(loadedStatusObserver);
         backupUiResumed = false;
         // 合并保存的文本框输入必须在离开页面前落盘，否则最后一次输入会丢。
         flushTextSave();
@@ -792,6 +834,7 @@ public final class SettingsActivity extends Activity {
         searchTarget("longPress", longPressNotificationRowClickSwitch);
         searchTarget("longPressTime", longPressSecondsLabel);
         searchTarget("swipe", focusSwipeEnabledSwitch);
+        searchTarget("adaptiveWidth", adaptiveFocusWidthSwitch);
         searchTarget("legacyClick", allowFocusClickSwitch);
         searchTarget("rowClick", notificationRowClickFallbackSwitch);
         searchTarget("media", mediaFocusSwitch);
@@ -903,6 +946,7 @@ public final class SettingsActivity extends Activity {
         independentFocusBannerSwitch = null;
         longPressNotificationRowClickSwitch = null;
         focusSwipeEnabledSwitch = null;
+        adaptiveFocusWidthSwitch = null;
         customTouchWidthSwitch = null;
         touchWidthOptionsPanel = null;
         touchWidthSeekBar = null;
@@ -1104,7 +1148,10 @@ public final class SettingsActivity extends Activity {
         modePanel.addView(modeSelector, matchWrap(dp(8)));
         modePanel.addView(text("切换后重启系统界面或设备生效", 13, COLOR_TEXT_SECONDARY),
                 matchWrap(0));
+        loadedStatusText = text("正在读取当前加载状态…", 13, COLOR_TEXT_SECONDARY);
+        modePanel.addView(loadedStatusText, matchWrap(dp(8)));
         root.addView(modePanel, matchWrap(dp(12)));
+        refreshLoadedStatus();
 
         root.addView(sectionHeader("超级岛转换"), matchWrap(dp(8)));
         LinearLayout islandPanel = panel();
@@ -1493,6 +1540,8 @@ public final class SettingsActivity extends Activity {
         addSettingSubheading(interactionPanel, "左右滑动");
         focusSwipeEnabledSwitch = createSwitch("左右滑动切换和收起焦点通知（实验性）");
         interactionPanel.addView(focusSwipeEnabledSwitch, matchWrap(dp(4)));
+        adaptiveFocusWidthSwitch = createSwitch("空间不足时仅显示焦点图标（OS4，实验性）");
+        interactionPanel.addView(adaptiveFocusWidthSwitch, matchWrap(dp(4)));
         interactionPanel.addView(text(
                 "左右滑动切换；空白位置收起，再滑可恢复。通知仍保留。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
@@ -1615,6 +1664,7 @@ public final class SettingsActivity extends Activity {
         independentFocusBannerSwitch.setChecked(pendingIndependentFocusBanner);
         longPressNotificationRowClickSwitch.setChecked(pendingLongPressNotificationRowClick);
         focusSwipeEnabledSwitch.setChecked(pendingFocusSwipeEnabled);
+        adaptiveFocusWidthSwitch.setChecked(pendingAdaptiveFocusWidth);
         syncBannerBackgroundField();
         syncMediaFocusClickField();
         syncMediaFocusCastPickerField();
@@ -2055,6 +2105,7 @@ public final class SettingsActivity extends Activity {
         outState.putBoolean("m3.longPressNotificationRowClick", pendingLongPressNotificationRowClick);
         outState.putFloat("m3.longPressSeconds", pendingLongPressSeconds);
         outState.putBoolean("m3.focusSwipeEnabled", pendingFocusSwipeEnabled);
+        outState.putBoolean("m3.adaptiveFocusWidth", pendingAdaptiveFocusWidth);
         outState.putBoolean("m3.customTouchWidth", pendingCustomTouchWidth);
         outState.putInt("m3.touchWidth", pendingTouchWidthDp);
         outState.putInt("m3.touchWidthLandscape", pendingTouchWidthLandscapeDp);
@@ -2166,6 +2217,7 @@ public final class SettingsActivity extends Activity {
         pendingLongPressSeconds = FocusRestoreSettings.normalizeLongPressSeconds(
                 state.getFloat("m3.longPressSeconds", pendingLongPressSeconds));
         pendingFocusSwipeEnabled = state.getBoolean("m3.focusSwipeEnabled", pendingFocusSwipeEnabled);
+        pendingAdaptiveFocusWidth = state.getBoolean("m3.adaptiveFocusWidth", pendingAdaptiveFocusWidth);
         pendingCustomTouchWidth = state.getBoolean("m3.customTouchWidth", pendingCustomTouchWidth);
         pendingTouchWidthDp = state.getInt("m3.touchWidth", pendingTouchWidthDp);
         pendingTouchWidthLandscapeDp = state.getInt("m3.touchWidthLandscape", pendingTouchWidthLandscapeDp);
@@ -2328,6 +2380,12 @@ public final class SettingsActivity extends Activity {
         if (focusSwipeEnabledSwitch != null) {
             focusSwipeEnabledSwitch.setOnCheckedChangeListener((button, checked) -> {
                 pendingFocusSwipeEnabled = checked;
+                markPending();
+            });
+        }
+        if (adaptiveFocusWidthSwitch != null) {
+            adaptiveFocusWidthSwitch.setOnCheckedChangeListener((button, checked) -> {
+                pendingAdaptiveFocusWidth = checked;
                 markPending();
             });
         }
@@ -2879,6 +2937,7 @@ public final class SettingsActivity extends Activity {
         // 长按开关始终可用，仅时长输入依赖它自身，不随短按开关清除或置灰。
         setModeSpecificSwitchEnabled(longPressNotificationRowClickSwitch, true);
         setModeSpecificSwitchEnabled(focusSwipeEnabledSwitch, true);
+        setModeSpecificSwitchEnabled(adaptiveFocusWidthSwitch, pendingHookMode == FocusRestoreSettings.HOOK_MODE_OS4);
         setControlEnabled(longPressSecondsLabel, pendingLongPressNotificationRowClick);
         setControlEnabled(longPressSecondsSeekBar, pendingLongPressNotificationRowClick);
         setControlEnabled(longPressSecondsValue, pendingLongPressNotificationRowClick);
@@ -3364,6 +3423,7 @@ public final class SettingsActivity extends Activity {
         pendingLongPressNotificationRowClick = settings.longPressNotificationRowClick;
         pendingLongPressSeconds = settings.longPressSeconds;
         pendingFocusSwipeEnabled = settings.focusSwipeEnabled;
+        pendingAdaptiveFocusWidth = settings.adaptiveFocusWidth;
         pendingCustomTouchWidth = settings.customTouchWidth;
         pendingTouchWidthDp = settings.touchWidthDp;
         pendingTouchWidthLandscapeDp = settings.touchWidthLandscapeDp;
@@ -3426,6 +3486,7 @@ public final class SettingsActivity extends Activity {
                 .longPressNotificationRowClick(pendingLongPressNotificationRowClick)
                 .longPressSeconds(pendingLongPressSeconds)
                 .focusSwipeEnabled(pendingFocusSwipeEnabled)
+                .adaptiveFocusWidth(pendingAdaptiveFocusWidth)
                 .customTouchWidth(pendingCustomTouchWidth)
                 .touchWidthDp(pendingTouchWidthDp)
                 .touchWidthLandscapeDp(pendingTouchWidthLandscapeDp)

@@ -67,7 +67,7 @@ public class SettingsBackupCodecTest {
         int fields = 0;
         JSONObject groups = root.getJSONObject("settings");
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
-        assertEquals(50, fields);
+        assertEquals(51, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules",
                 "focus_divider_start_dp", "focus_divider_end_dp"}) {
@@ -555,7 +555,7 @@ public class SettingsBackupCodecTest {
                 .focusDividerWidthDp(4).focusDividerStyle(3)
                 .useSmallIconFallback(true).focusIconPriority(1).tintDeviceIcon(false)
                 .notificationRowClickFallback(true).independentFocusBanner(true)
-                .longPressNotificationRowClick(true).longPressSeconds(2.75f).focusSwipeEnabled(true).islandTextMode(1)
+                .longPressNotificationRowClick(true).longPressSeconds(2.75f).focusSwipeEnabled(true).adaptiveFocusWidth(true).islandTextMode(1)
                 .customTouchWidth(true).touchWidthDp(100).touchWidthLandscapeDp(720)
                 .focusMaxDisplaySeconds(12.34f).islandGeneralSeparator("general").islandSideSeparator("side")
                 .islandForcePackages(new HashSet<>(Arrays.asList("com.example.z", "com.example.a")))
@@ -602,7 +602,7 @@ public class SettingsBackupCodecTest {
             assertEquals(field.getName(), field.get(expected), field.get(actual));
             count++;
         }
-        assertEquals("current user snapshot field count", 50, count);
+        assertEquals("current user snapshot field count", 51, count);
     }
 
     private static FocusRestoreSettings decodeGroups(String groups) throws IOException {

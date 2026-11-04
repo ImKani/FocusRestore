@@ -148,6 +148,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private boolean settingsReadQueued;
     private boolean hasSuccessfulProviderSettings;
     private int providerSettingsState = Integer.MIN_VALUE;
+    private final HookInstaller hookInstaller = new HookInstaller();
+    private boolean modeCommonHooksInstalled;
     private boolean modeHooksInstalled;
     private int installedHookMode;
     private HyperOS4FocusController os4Controller;
@@ -158,6 +160,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     /** 长按成立后同一次手势内的短按抑制；只有 OS3 提示视图需要，见 hookOS3TouchEntry。 */
     private final FocusShortPressSuppression suppression = new FocusShortPressSuppression();
     private Handler mainHandler;
+    private RomFocusVisibility visibilityPolicy;
+    private final android.os.IBinder loadedProcessToken = new android.os.Binder();
+    private volatile long appliedSettingsGeneration;
+    private String lastLoadedReport;
+    private android.database.ContentObserver loadedStatusRequests;
     private TextView pendingMarqueeText;
     private Runnable pendingMarqueeRunnable;
     private View.OnAttachStateChangeListener pendingMarqueeAttachListener;
@@ -216,9 +223,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private final ThreadLocal<Boolean> replayingFocusEntry = new ThreadLocal<>();
     private final Map<String, WeakReference<Object>> notificationEntries =
             Collections.synchronizedMap(new LinkedHashMap<>());
-    /** key -> {displayStartElapsedRealtime, notificationPostTime} for the display limit. */
-    private final Map<String, long[]> focusDisplayWindows =
-            Collections.synchronizedMap(new LinkedHashMap<>());
+    private final FocusDisplayLedger focusDisplayWindows = new FocusDisplayLedger(SystemClock::elapsedRealtime);
+    private final Runnable os3ExpiryCheck = () -> {
+        Object controller = os3PromptControllerRef.get();
+        if (controller != null) {
+            try { XposedHelpers.callMethod(controller, "updateVisibilityCore"); }
+            catch (Throwable failure) { error("OS3 display expiry", failure); }
+        }
+    };
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
@@ -341,10 +353,35 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     + " configuredMode=OS" + currentSettings.hookMode);
             return;
         }
-        installedHookMode = currentSettings.hookMode;
-        modeHooksInstalled = true;
+        // 选定模式与安装就绪分开；部分安装重试仍沿用首次模式，不重装已成功的句柄。
+        if (installedHookMode == 0) installedHookMode = currentSettings.hookMode;
+        if (systemUiContext == null) {
+            log("mode installation deferred: SystemUI context unavailable");
+            return;
+        }
+        if (visibilityPolicy == null) {
+            loadedStatusRequests = new android.database.ContentObserver(mainHandler) {
+                @Override public void onChange(boolean selfChange) {
+                    SETTINGS_EXECUTOR.execute(() -> {
+                        synchronized (HyperOS3FocusRestoreHook.this) { lastLoadedReport = null; }
+                        reportLoadedStatus();
+                    });
+                }
+            };
+            try {
+                systemUiContext.getContentResolver().registerContentObserver(RuntimeStatus.REQUEST_URI, false, loadedStatusRequests);
+            } catch (Throwable failure) { error("loaded status request observer", failure); }
+            visibilityPolicy = new RomFocusVisibility(systemUiContext, classLoader, mainHandler,
+                    installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4,
+                    this::onVisibilityPolicyChanged, new RomFocusVisibility.Logger() {
+                @Override public void log(String message) { HyperOS3FocusRestoreHook.this.debug(message); }
+                @Override public void error(String stage, Throwable failure) {
+                    HyperOS3FocusRestoreHook.this.error(stage, failure);
+                }
+            });
+            visibilityPolicy.install();
+        }
         hookNotificationEntries();
-        hookFocusCoordinatorMediaPromotion();
         log("installing configuredMode=OS" + installedHookMode
                 + " settings=" + currentSettings.describe());
         try {
@@ -358,6 +395,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         } else {
             installOS3Hooks();
         }
+        if (!modeCommonHooksInstalled) {
+        try {
+            FocusQueueAccessibility.install(hookInstaller, view -> installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4
+                    ? (os4Controller == null ? null : os4Controller.captureAccessibility(view))
+                    : captureOS3Accessibility(view));
+        } catch (Throwable failure) { error("queue accessibility installation", failure); }
         FocusSwipeTouchHandler.install(classLoader, (root, bounds) ->
                 installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4
                         ? (os4Controller == null ? null : os4Controller.captureSwipe(root, bounds))
@@ -373,9 +416,70 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 HyperOS3FocusRestoreHook.this.error(stage, error);
             }
         }).install(classLoader, installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4);
+        modeCommonHooksInstalled = true;
+        }
+        modeHooksInstalled = installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4
+                ? os4Controller != null && os4Controller.isInstalled()
+                : hookInstaller.has("com.android.systemui.statusbar.notification.utils.FocusUtils", "showOnStatusBar")
+                && hookInstaller.has("com.android.systemui.statusbar.phone.FocusedNotifPromptController", "shouldShow")
+                && hookInstaller.has("com.android.systemui.statusbar.phone.FocusedNotifPromptView", "setData");
+        log("mode installation ready=" + modeHooksInstalled + " installedMode=OS" + installedHookMode
+                + " handles=" + hookInstaller.count() + " failures=" + hookInstaller.failedCount()
+                + " detail=" + hookInstaller.failures());
+        reportLoadedStatus();
+    }
+
+    private synchronized void reportLoadedStatus() {
+        Context context = systemUiContext;
+        if (context == null || installedHookMode == 0) return;
+        int handles = hookInstaller.count() + (os4Controller == null ? 0 : os4Controller.installedHandles())
+                + (visibilityPolicy == null ? 0 : visibilityPolicy.installedHandles());
+        int failures = hookInstaller.failedCount() + (os4Controller == null ? 0 : os4Controller.failedHooks())
+                + (visibilityPolicy == null ? 0 : visibilityPolicy.failedHooks());
+        boolean privacyReady = visibilityPolicy != null && visibilityPolicy.ready();
+        boolean chipsReady = os4Controller != null && os4Controller.nativeChipsReady();
+        String signature = installedHookMode + ":" + modeHooksInstalled + ":" + handles + ":" + failures + ":" + appliedSettingsGeneration + ":" + privacyReady + ":" + chipsReady;
+        if (signature.equals(lastLoadedReport)) return;
+        Bundle report = new Bundle();
+        report.putBinder("process_token", loadedProcessToken);
+        report.putInt("version_code", BuildConfig.VERSION_CODE);
+        report.putInt("pid", android.os.Process.myPid());
+        report.putInt("mode", installedHookMode);
+        report.putInt("handles", handles);
+        report.putInt("failures", failures);
+        report.putBoolean("ready", modeHooksInstalled);
+        report.putBoolean("privacy_ready", privacyReady);
+        report.putBoolean("chips_ready", chipsReady);
+        report.putLong("config_generation", appliedSettingsGeneration);
+        try {
+            context.getContentResolver().call(SettingsProvider.URI, RuntimeStatus.REPORT, null, report);
+            lastLoadedReport = signature;
+        } catch (Throwable failure) { error("publish loaded status", failure); }
+    }
+
+    private boolean entryAllowed(Object entry) {
+        return visibilityPolicy != null && visibilityPolicy.blocked(entry) == null;
+    }
+
+    private Object entryForKey(String key) {
+        WeakReference<Object> reference = notificationEntries.get(key);
+        return reference == null ? null : reference.get();
+    }
+
+    private void onVisibilityPolicyChanged() {
+        SETTINGS_EXECUTOR.execute(this::reportLoadedStatus);
+        FocusBannerController banner = bannerController;
+        if (banner != null) banner.dismiss("visibility-policy-changed");
+        if (os4Controller != null) os4Controller.onVisibilityPolicyChanged();
+        Object controller = os3PromptControllerRef.get();
+        if (controller != null && installedHookMode == FocusRestoreSettings.HOOK_MODE_OS3) {
+            try { XposedHelpers.callMethod(controller, "updateVisibilityCore"); }
+            catch (Throwable failure) { error("OS3 visibility policy refresh", failure); }
+        }
     }
 
     private void installSuppressedIslandLifecycle() {
+        if (suppressedIslandLifecycle != null) return;
         suppressedIslandLifecycle = new SuppressedIslandLifecycle(new SuppressedIslandLifecycle.Host() {
             @Override public boolean isSuppressed() {
                 HookSettings settings = currentSettings;
@@ -472,7 +576,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             // DOWN/UP 传递就够了，不需要同步。
             final float[] downRaw = new float[2];
             final boolean[] downSeen = new boolean[1];
-            XposedBridge.hookMethod(promptView.getDeclaredMethod("handleTouchEvent",
+            hookInstaller.method(promptView.getDeclaredMethod("handleTouchEvent",
                             MotionEvent.class), new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -629,8 +733,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         hookFocusedParentParams();
         hookFocusedTextMarquee();
         hookPromptViewSetData();
-        os3FocusDivider = new OS3FocusDivider(() -> currentSettings, HyperOS3FocusRestoreHook::error);
-        os3FocusDivider.install(classLoader);
+        if (os3FocusDivider == null) {
+            os3FocusDivider = new OS3FocusDivider(() -> currentSettings, HyperOS3FocusRestoreHook::error);
+            os3FocusDivider.install(classLoader);
+        }
         hookOS3DeviceIconTint();
         hookPromptShouldShow();
         hookOS3FocusVisibility();
@@ -648,6 +754,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             error("installOS4Hooks", new IllegalStateException("SystemUI context unavailable"));
             return;
         }
+        if (os4Controller == null) {
         synchronized (focusDisplayWindows) {
             focusDisplayWindows.clear();
         }
@@ -661,6 +768,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     @Override
                     public boolean isExpired(Object notificationEntry) {
                         return remainingDisplayMillis(notificationEntry) == 0L;
+                    }
+
+                    @Override public boolean isAllowed(Object notificationEntry) {
+                        return entryAllowed(notificationEntry);
                     }
 
                     @Override
@@ -695,7 +806,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
                     @Override
                     public void onNotificationRemoved(Object notificationEntry, String key) {
-                        forgetFocusDisplay(key);
                         WeakReference<Object> ref = notificationEntries.get(key);
                         if (ref == null || ref.get() == notificationEntry) removeBannerNotification(key, notificationEntry);
                     }
@@ -704,6 +814,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     public void dismissFocusBanner(String reason) {
                         FocusBannerController controller = bannerController;
                         if (controller != null) controller.dismiss(reason);
+                    }
+
+                    @Override public void onCapabilitiesChanged() {
+                        SETTINGS_EXECUTOR.execute(HyperOS3FocusRestoreHook.this::reportLoadedStatus);
                     }
                 }, new HyperOS4FocusController.Logger() {
                     @Override
@@ -716,6 +830,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         HyperOS3FocusRestoreHook.this.error(stage, throwable);
                     }
                 });
+        }
         os4Controller.install();
         hookMediaNotificationLifecycle();
         hookMediaOutputEntry();
@@ -725,7 +840,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private void hookApplicationAttach() {
         try {
-            XposedHelpers.findAndHookMethod(Application.class, "attach", Context.class,
+            hookInstaller.exact(Application.class, "attach", Context.class,
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -757,13 +872,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         try {
             Class<?> entryClass = FocusReflection.findClass(classLoader,
                     "com.android.systemui.statusbar.notification.collection.NotificationEntry");
-            XposedBridge.hookAllConstructors(entryClass, new XC_MethodHook() {
+            hookInstaller.constructors(entryClass, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     rememberNotificationEntry(param.thisObject);
                 }
             });
-            XposedBridge.hookAllMethods(entryClass, "setSbn", new XC_MethodHook() {
+            hookInstaller.allMethods(entryClass, "setSbn", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     rememberNotificationEntry(param.thisObject);
@@ -856,7 +971,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> controller = FocusReflection.findClass(
                     "com.android.systemui.statusbar.notification.mediacontrol.MiuiMediaViewControllerImpl",
                     classLoader);
-            XposedBridge.hookAllMethods(controller, "bindMediaData", new XC_MethodHook() {
+            hookInstaller.allMethods(controller, "bindMediaData", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     mediaViewControllerRef = new WeakReference<>(param.thisObject);
@@ -941,7 +1056,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> manager = FocusReflection.findClass(
                     "com.android.systemui.controlcenter.phone.controls.MiPlayPluginManager",
                     classLoader);
-            XposedBridge.hookAllMethods(manager, "onPluginConnected", new XC_MethodHook() {
+            hookInstaller.allMethods(manager, "onPluginConnected", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     miPlayPluginManagerRef = new WeakReference<>(param.thisObject);
@@ -951,7 +1066,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> modal = FocusReflection.findClass(
                     "com.android.systemui.statusbar.notification.modal.ModalQSControlDetail",
                     classLoader);
-            XposedHelpers.findAndHookMethod(modal, "setMiPlayPluginManager", manager,
+            hookInstaller.exact(modal, "setMiPlayPluginManager", manager,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -1040,7 +1155,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> controller = FocusReflection.findClass(
                     "com.android.systemui.statusbar.notification.mediacontrol.MiuiMediaNotificationControllerImpl",
                     classLoader);
-            XposedBridge.hookAllMethods(controller, "access$setTopMediaData", new XC_MethodHook() {
+            hookInstaller.allMethods(controller, "access$setTopMediaData", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     try {
                         if (param.args == null || param.args.length < 2) return;
@@ -1066,7 +1181,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> repository = FocusReflection.findClass(
                     "com.android.systemui.statusbar.notification.mediacontrol.MiuiMediaDismissRepository",
                     classLoader);
-            XposedHelpers.findAndHookMethod(repository, "setLastDismissPkg", String.class,
+            hookInstaller.exact(repository, "setLastDismissPkg", String.class,
                     new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam param) {
                             try {
@@ -1154,15 +1269,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             try {
                 // OS3 exposes the MediaDataManager.Listener callback with an extra
                 // immediately flag; OS4's listener uses the three-argument contract.
-                XposedHelpers.findAndHookMethod(listener, "onMediaDataLoaded", String.class,
+                hookInstaller.exact(listener, "onMediaDataLoaded", String.class,
                         String.class, mediaData, boolean.class, mediaDataLoadedHook);
                 log("media data loaded hook signature=OS3");
             } catch (Throwable os3SignatureMissing) {
-                XposedHelpers.findAndHookMethod(listener, "onMediaDataLoaded", String.class,
+                hookInstaller.exact(listener, "onMediaDataLoaded", String.class,
                         String.class, mediaData, mediaDataLoadedHook);
                 log("media data loaded hook signature=OS4");
             }
-            XposedHelpers.findAndHookMethod(listener, "onMediaDataRemoved", String.class,
+            hookInstaller.exact(listener, "onMediaDataRemoved", String.class,
                     boolean.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -1253,7 +1368,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptController",
                     classLoader);
             os3PromptControllerClass = controller;
-            XposedBridge.hookAllMethods(controller,
+            hookInstaller.allMethods(controller,
                     "-$$Nest$mremoveFocusedNotifBean", new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -1290,7 +1405,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> controller = FocusReflection.findClass(
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptController",
                     classLoader);
-            XposedBridge.hookAllMethods(controller, "update", new XC_MethodHook() {
+            hookInstaller.allMethods(controller, "update", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     if (!currentSettings.mediaFocusEnabled) return;
@@ -1349,7 +1464,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         try {
             Class<?> controller = FocusReflection.findClass(classLoader,
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptController");
-            XposedHelpers.findAndHookMethod(controller, "getBeanMap", int.class, new XC_MethodHook() {
+            hookInstaller.exact(controller, "getBeanMap", int.class, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     OS3SwipeScope scope = os3SwipeScope.get();
                     if (scope != null && scope.owner == param.thisObject
@@ -1359,7 +1474,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 }
             });
             // 先于媒体让位取得完整候选，after 最后释放，避免临时表泄漏到下一轮 ROM 更新。
-            XposedBridge.hookAllMethods(controller, "update", new XC_MethodHook(1000) {
+            hookInstaller.allMethods(controller, "update", new XC_MethodHook(1000) {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {
                     OS3SwipeScope previous = os3SwipeScope.get();
                     param.setObjectExtra("focusRestoreSwipePrevious", previous);
@@ -1504,6 +1619,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 Object sbn = notificationEntrySbn(entry);
                 return reference != null && reference.get() == entry && current != null
                         && TextUtils.equals(key, current.key) && !isFocusDisplayExpired(current)
+                        && entryAllowed(entry)
                         && sbn instanceof StatusBarNotification
                         && ((StatusBarNotification) sbn).getPostTime() == stamp;
             }
@@ -1521,6 +1637,33 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     try { XposedHelpers.callMethod(controller, "update", 0); }
                     catch (Throwable restoreFailure) { error("OS3 focus swipe restore", restoreFailure); }
                 }
+            }
+        };
+    }
+
+    private FocusQueueAccessibility.Target captureOS3Accessibility(View view) {
+        boolean prompt = false;
+        for (View candidate : promptViewsSnapshot()) if (candidate == view) { prompt = true; break; }
+        if (!prompt && os3SwipeSelection.manual() && os3SwipeSelection.selected() == null) {
+            for (Object fragment : new ArrayList<>(os3ClockVisibility.keySet())) {
+                if (os3TimeView(fragment, 0) == view) { prompt = true; break; }
+            }
+        }
+        if (!prompt || !view.isShown()) return null;
+        FocusSwipeTouchHandler.Target swipe = captureOS3Swipe(view.getRootView(), new Rect());
+        if (swipe == null) return null;
+        final Object owner = os3SwipeOwner.get();
+        final long revision = os3SwipeSelection.revision();
+        return new FocusQueueAccessibility.Target() {
+            @Override public boolean current() { return swipe.current(); }
+            @Override public void swipe(boolean previous) { swipe.swipe(previous); }
+            @Override public String description() { return os3SwipeSelection.positionDescription(); }
+            @Override public void automatic() {
+                if (!current() || !os3SwipeSelection.automatic(revision)) return;
+                FocusBannerController banner = bannerController;
+                if (banner != null) banner.dismiss("queue-automatic");
+                try { XposedHelpers.callMethod(owner, "update", 0); }
+                catch (Throwable failure) { error("OS3 accessible automatic selection", failure); }
             }
         };
     }
@@ -1550,7 +1693,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> entryClass = FocusReflection.findClass(
                     "com.android.systemui.statusbar.notification.collection.NotificationEntry",
                     classLoader);
-            XposedHelpers.findAndHookMethod(controller, "onNotifHeadsUpResult",
+            hookInstaller.exact(controller, "onNotifHeadsUpResult",
                     entryClass, boolean.class, new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -1576,7 +1719,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> listener = FocusReflection.findClass(
                     "com.android.systemui.statusbar.notification.focus.FocusCoordinator$3",
                     classLoader);
-            XposedBridge.hookAllMethods(listener, "onEntryAdded", new XC_MethodHook() {
+            hookInstaller.allMethods(listener, "onEntryAdded", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     if (Boolean.TRUE.equals(replayingFocusEntry.get())) return;
@@ -1585,7 +1728,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     promoteMediaEntry(param.thisObject, entry, "onEntryAdded");
                 }
             });
-            XposedBridge.hookAllMethods(listener, "onEntryUpdated", new XC_MethodHook() {
+            hookInstaller.allMethods(listener, "onEntryUpdated", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     if (Boolean.TRUE.equals(replayingFocusEntry.get())) return;
@@ -1594,7 +1737,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     promoteMediaEntry(param.thisObject, entry, "onEntryUpdated");
                 }
             });
-            XposedBridge.hookAllMethods(listener, "onEntryRemoved", new XC_MethodHook() {
+            hookInstaller.allMethods(listener, "onEntryRemoved", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     Object entry = param.args == null || param.args.length == 0
@@ -1672,7 +1815,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         try {
             Class<?> eventClass = FocusReflection.findClass(classLoader,
                     "com.android.systemui.statusbar.notification.collection.notifcollection.EntryRemovedEvent");
-            Set<?> hooks = XposedBridge.hookAllMethods(eventClass, "dispatchToListener",
+            Set<?> hooks = hookInstaller.allMethods(eventClass, "dispatchToListener",
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -1692,6 +1835,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private void removeBannerNotification(String key, Object entry) {
         if (TextUtils.isEmpty(key)) return;
+        Object removedNotification = notificationEntrySbn(entry);
+        if (removedNotification instanceof StatusBarNotification) {
+            focusDisplayWindows.removed(key, ((StatusBarNotification) removedNotification).getPostTime());
+        }
         notificationEntries.remove(key);
         os3SwipeSelection.remove(key);
         mediaNotificationKeys.remove(key);
@@ -1727,6 +1874,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private boolean showIndependentFocusBanner(View anchor, FocusData data, String key,
                                                String mode) {
+        if (!entryAllowed(entryForKey(key))) return false;
         // 媒体焦点仅在“启用媒体焦点通知”开启时才算数：关闭开关后
         // activeMediaNotificationKeys 里可能仍留有旧 key，不应再走媒体横幅或直接流转。
         boolean isMedia = isMediaFocus(data);
@@ -1822,6 +1970,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 || TextUtils.isEmpty(key)) return false;
         WeakReference<Object> reference = notificationEntries.get(key);
         Object entry = reference == null ? null : reference.get();
+        if (!entryAllowed(entry)) return false;
         Object value = notificationEntrySbn(entry);
         if (!(value instanceof StatusBarNotification)
                 || !key.equals(((StatusBarNotification) value).getKey())
@@ -1922,6 +2071,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             log(mode + " notification row click unavailable key=" + key + " reason=entry");
             return false;
         }
+        if (!entryAllowed(entry)) return false;
         Object row = getField(entry, "row");
         if (!(row instanceof View)) {
             log(mode + " notification row click unavailable key=" + key + " reason=row");
@@ -1935,7 +2085,16 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             log(mode + " notification row click key=" + key + " result=" + clicked);
             return clicked;
         }
+        final Object expectedEntry = entry;
+        final Object expectedSbn = notificationEntrySbn(entry);
         handler.post(() -> {
+            Object live = entryForKey(key);
+            Object liveSbn = notificationEntrySbn(live);
+            if (live != expectedEntry || !entryAllowed(live)
+                    || !(expectedSbn instanceof StatusBarNotification)
+                    || !(liveSbn instanceof StatusBarNotification)
+                    || ((StatusBarNotification) expectedSbn).getPostTime()
+                    != ((StatusBarNotification) liveSbn).getPostTime()) return;
             boolean clicked = rowView.performClick();
             log(mode + " notification row click key=" + key + " result=" + clicked);
         });
@@ -1945,7 +2104,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private void hookDynamicIslandSystemProperty() {
         try {
-            XposedHelpers.findAndHookMethod(
+            hookInstaller.exact(
                     "android.os.SystemProperties",
                     classLoader,
                     "getBoolean",
@@ -1997,7 +2156,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             log("status bar tree dump skipped: " + className + " missing");
             return;
         }
-        XposedBridge.hookAllMethods(owner, "onFinishInflate", new XC_MethodHook() {
+        hookInstaller.allMethods(owner, "onFinishInflate", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 if (!(param.thisObject instanceof View)) return;
@@ -2071,7 +2230,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         try {
             Class<?> listener = FocusReflection.findClass(classLoader,
                     "com.android.systemui.devicenotification.listener.DeviceNotificationListenerImpl");
-            if (listener != null) XposedBridge.hookAllConstructors(listener, new XC_MethodHook() {
+            if (listener != null) hookInstaller.constructors(listener, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     deviceListenerRef = new WeakReference<>(param.thisObject);
                     debug("device stage=battery listener=captured");
@@ -2082,7 +2241,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 debug("device stage=install battery result=monitor-missing");
                 return;
             }
-            int count = XposedBridge.hookAllMethods(monitor, "handleBatteryUpdate", new XC_MethodHook() {
+            int count = hookInstaller.allMethods(monitor, "handleBatteryUpdate", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     if (param.args.length == 0 || param.args[0] == null) return;
                     try { handleDeviceBatteryUpdate(param.args[0]); }
@@ -2210,7 +2369,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 debug("device stage=install entry=" + className + "." + methodName + " result=class-missing");
                 return;
             }
-            int count = XposedBridge.hookAllMethods(owner, methodName, new XC_MethodHook() {
+            int count = hookInstaller.allMethods(owner, methodName, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {
                     if (command && !hasStrongToastAction(param.args)) return;
                     param.setObjectExtra("focusrestore.device.previous", deviceConversionPosted.get());
@@ -2367,7 +2526,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 debug("device stage=install cleanup=" + className + "." + methodName + " result=class-missing");
                 return;
             }
-            int count = XposedBridge.hookAllMethods(owner, methodName, new XC_MethodHook() {
+            int count = hookInstaller.allMethods(owner, methodName, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     if (Boolean.TRUE.equals(deviceConversionPosted.get())) {
                         debug("device stage=cleanup source=" + methodName + " result=inside-new-event");
@@ -2391,7 +2550,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 debug("device stage=install removal result=controller-missing");
                 return;
             }
-            int count = XposedBridge.hookAllMethods(owner, "removeDynamicIslandView", new XC_MethodHook() {
+            int count = hookInstaller.allMethods(owner, "removeDynamicIslandView", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     if (param.args.length == 0 || !"charge".equals(param.args[0])) return;
                     debug("device stage=remove event=charge active=" + activeDeviceEventId
@@ -2499,7 +2658,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         suppressStrongToastShow(toast, "showCustomStrongToast");
         suppressStrongToastShow(toast, "showStrongToast");
         if (!BuildConfig.DEBUG) return;
-        XposedBridge.hookAllMethods(toast, "onAttachedToWindow", new XC_MethodHook() {
+        hookInstaller.allMethods(toast, "onAttachedToWindow", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
                 if (!(param.thisObject instanceof View)) return;
@@ -2514,7 +2673,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private void suppressStrongToastShow(Class<?> owner, String name) {
         try {
-            int hooked = XposedBridge.hookAllMethods(owner, name, new XC_MethodHook() {
+            int hooked = hookInstaller.allMethods(owner, name, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     // 先按掉窗口：横幅只是替代呈现，它自己失败不能把强提示放回屏幕。
@@ -2749,7 +2908,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         for (java.lang.reflect.Method method : toast.getDeclaredMethods()) {
             if (java.lang.reflect.Modifier.isAbstract(method.getModifiers())) continue;
             try {
-                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                hookInstaller.method(method, new XC_MethodHook() {
                     private boolean reported;
 
                     @Override
@@ -2793,7 +2952,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     /** 每类只记录第一次命中，避免逐帧刷屏。 */
     private void suppressCutoutDraw(Class<?> owner, String name, String label) {
-        XposedBridge.hookAllMethods(owner, name, new XC_MethodHook() {
+        hookInstaller.allMethods(owner, name, new XC_MethodHook() {
             private boolean reported;
 
             @Override
@@ -2843,13 +3002,13 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             int controllerHooks = islandControllerAddHooks
                     + suppressIslandViewCall(windowController, "updateDynamicIslandView");
             // 兜底：黑色圆角底由该 View 的 onDraw 画，直接不画；并让它始终不可见、透明。
-            XposedBridge.hookAllMethods(background, "onDraw", new XC_MethodHook() {
+            hookInstaller.allMethods(background, "onDraw", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     param.setResult(null);
                 }
             });
-            XposedBridge.hookAllMethods(background, "setVisibility", new XC_MethodHook() {
+            hookInstaller.allMethods(background, "setVisibility", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     if (param.args.length == 1 && param.args[0] instanceof Integer) {
@@ -2857,7 +3016,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     }
                 }
             });
-            XposedBridge.hookAllMethods(background, "alphaAnimation", new XC_MethodHook() {
+            hookInstaller.allMethods(background, "alphaAnimation", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     if (param.args.length == 1 && param.args[0] instanceof Float) param.args[0] = 0f;
@@ -2888,7 +3047,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     /** 按方法名整组拦截，避免依赖只在插件 ClassLoader 里可见的参数类型。 */
     private int suppressIslandViewCall(Class<?> owner, String name) {
         if (owner == null) return 0;
-        return XposedBridge.hookAllMethods(owner, name, new XC_MethodHook() {
+        return hookInstaller.allMethods(owner, name, new XC_MethodHook() {
             private boolean reported;
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
@@ -2902,7 +3061,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private int observeIslandCommands(Class<?> owner) {
         if (!BuildConfig.DEBUG || owner == null) return 0;
-        return XposedBridge.hookAllMethods(owner, "handleDynamicIsland", new XC_MethodHook() {
+        return hookInstaller.allMethods(owner, "handleDynamicIsland", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 if (param.args.length == 0 || !(param.args[0] instanceof Bundle)) return;
                 Bundle command = (Bundle) param.args[0];
@@ -2943,7 +3102,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     "com.android.systemui.statusbar.notification.ExpandedNotification",
                     classLoader);
 
-            XposedHelpers.findAndHookMethod(utils, "showOnStatusBar", expanded,
+            hookInstaller.exact(utils, "showOnStatusBar", expanded,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -3011,7 +3170,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                     error("markMediaFocus", t);
                                 }
                                 param.setResult(true);
-                                markFocusDisplayed(data);
                                 log("media converted to focus key=" + data.key
                                         + " playing=" + (data.mediaContent == null ? "unknown"
                                         : data.mediaContent.playing));
@@ -3026,7 +3184,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                     error("markIslandFocus", t);
                                 }
                                 param.setResult(true);
-                                markFocusDisplayed(data);
                                 log("island converted to focus source=" + islandText.source
                                         + " content=" + islandText.text);
                                 return;
@@ -3035,7 +3192,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             boolean fallback = data.isFocus && data.hasMainRv;
                             if (!original && fallback) {
                                 param.setResult(true);
-                                markFocusDisplayed(data);
                                 log("showOnStatusBar fallback=true " + data.summary());
                             } else {
                                 log("showOnStatusBar=" + original + " " + data.summary());
@@ -3059,7 +3215,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptView", classLoader);
             for (String method : new String[]{"onFinishInflate", "onAttachedToWindow", "setData",
                     "setIconDrawable", "onDarkChanged", "onLightDarkTintChanged"}) {
-                XposedBridge.hookAllMethods(prompt, method, new XC_MethodHook() {
+                hookInstaller.allMethods(prompt, method, new XC_MethodHook() {
                     @Override protected void afterHookedMethod(MethodHookParam param) {
                         if (!param.hasThrowable()) {
                             applyOS3IconSize(param.thisObject);
@@ -3072,7 +3228,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> controller = FocusReflection.findClass(
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptController", classLoader);
             // OS3 updateFromConfigChanged最后重新写mIconWidth，setIconDrawable的after尚早于这次覆盖。
-            XposedBridge.hookAllMethods(controller, "updateFromConfigChanged", new XC_MethodHook() {
+            hookInstaller.allMethods(controller, "updateFromConfigChanged", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam param) {
                     if (param.hasThrowable()) return;
                     Object view = getField(param.thisObject, "mView");
@@ -3172,7 +3328,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     classLoader);
 
 
-            XposedHelpers.findAndHookMethod(view, "setData", bean, boolean.class,
+            hookInstaller.exact(view, "setData", bean, boolean.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -3204,8 +3360,18 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
+                            if (param.hasThrowable()) {
+                                error("setData original", param.getThrowable());
+                                return;
+                            }
                             if (param.thisObject instanceof View) {
                                 synchronized (os3PromptViews) { os3PromptViews.add((View) param.thisObject); }
+                                View displayView = (View) param.thisObject;
+                                if (XposedHelpers.getAdditionalInstanceField(displayView, "focusRestoreDisplayLayout") == null) {
+                                    View.OnLayoutChangeListener listener = (v,l,t,r,b,ol,ot,or,ob) -> scheduleOS3DisplayCommit();
+                                    displayView.addOnLayoutChangeListener(listener);
+                                    XposedHelpers.setAdditionalInstanceField(displayView, "focusRestoreDisplayLayout", listener);
+                                }
                             }
                             FocusData data = inspectBean(param.args[0]);
                             log("after setData "
@@ -3223,6 +3389,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             scheduleNativeMarquee(param.thisObject);
                             // 同为 showing=true 时 ROM 不再通知显隐变化；等 setData 调用链结束读当前 bean。
                             scheduleOS3ClockRefresh();
+                            scheduleOS3DisplayCommit();
                         }
                     });
         } catch (Throwable t) {
@@ -3276,7 +3443,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 logProviderSettingsState(false, "application context unavailable");
                 return false;
             }
-            HookSettings next = HookSettingsReader.read(context);
+            long[] readGeneration = {0L};
+            HookSettings next = HookSettingsReader.read(context, value -> readGeneration[0] = value);
             if (next == null) {
                 logProviderSettingsState(false, "provider query returned no settings");
                 return false;
@@ -3298,6 +3466,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     hideTimeChanged |= currentSettings.hideTimeForKind(kind) != next.hideTimeForKind(kind);
                 }
                 currentSettings = next;
+                appliedSettingsGeneration = readGeneration[0];
                 if (modeHooksInstalled && next.hookMode != installedHookMode) {
                     log("hook mode change saved configuredMode=OS" + next.hookMode
                             + " installedMode=OS" + installedHookMode
@@ -3382,6 +3551,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             hasSuccessfulProviderSettings = true;
             logProviderSettingsState(true, null);
             installHooksAfterDeferredSettings();
+            reportLoadedStatus();
+            if (mainHandler != null && installedHookMode == FocusRestoreSettings.HOOK_MODE_OS3) {
+                mainHandler.post(this::scheduleOS3DisplayCommit);
+            }
             return true;
         } catch (Throwable t) {
             logProviderSettingsState(false, t.getClass().getSimpleName());
@@ -3392,6 +3565,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private static boolean sameFocusAppearance(HookSettings first, HookSettings second) {
         return first.focusIconSizeDp == second.focusIconSizeDp
+                && first.adaptiveFocusWidth == second.adaptiveFocusWidth
                 && first.focusIconTextGapDp == second.focusIconTextGapDp
                 && first.showFocusDivider == second.showFocusDivider
                 && first.focusDividerStartDp == second.focusDividerStartDp
@@ -3879,7 +4053,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> textClass = FocusReflection.findClass(
                     "com.android.systemui.statusbar.widget.FocusedTextView",
                     classLoader);
-            XposedBridge.hookAllMethods(textClass, "startMarqueeLocal", new XC_MethodHook() {
+            hookInstaller.allMethods(textClass, "startMarqueeLocal", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     // The OEM method copies its private marqueeLimit into
@@ -4018,7 +4192,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> fragment = FocusReflection.findClass(
                     "com.android.systemui.statusbar.phone.MiuiCollapsedStatusBarFragment",
                     classLoader);
-            XposedHelpers.findAndHookMethod(fragment, "updateFocusedParentParams", int.class,
+            hookInstaller.exact(fragment, "updateFocusedParentParams", int.class,
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -4102,7 +4276,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptController$FocusedNotifBean",
                     classLoader);
 
-            XposedHelpers.findAndHookMethod(controller, "shouldShow", bean, boolean.class,
+            hookInstaller.exact(controller, "shouldShow", bean, boolean.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -4122,10 +4296,32 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             boolean result = Boolean.TRUE.equals(param.getResult());
                             log("shouldShow=" + result + (data == null ? " bean=null" : " " + data.summary()));
                             if (data == null) return;
+                            if (isFocusDisplayExpired(data)) {
+                                param.setResult(false);
+                                return;
+                            }
 
                             boolean mediaCandidate = currentSettings.mediaFocusEnabled
                                     && data.mediaContent != null
                                     && activeMediaNotificationKeys.contains(data.key);
+                            boolean moduleOverride = mediaCandidate || isConstructedDeviceFocusNotification(data)
+                                    || (currentSettings.islandCompat
+                                    && currentSettings.islandForcePackages.contains(data.packageName));
+                            if (moduleOverride && !entryAllowed(entryForKey(data.key))) {
+                                param.setResult(false);
+                                return;
+                            }
+                            // ROM shouldShow的第二参数就是heads-up总状态；保留原生中断动画让位。
+                            if (moduleOverride && !result) {
+                                Object animator = getField(param.thisObject, "mInterruptAnimatorController");
+                                if (Boolean.TRUE.equals(param.args[1])
+                                        || Boolean.TRUE.equals(getField(value, "headsUp"))
+                                        || animator == null
+                                        || Boolean.TRUE.equals(XposedHelpers.callMethod(animator, "isInterruptState"))) {
+                                    param.setResult(false);
+                                    return;
+                                }
+                            }
                             boolean mediaExpired = mediaCandidate && isFocusDisplayExpired(data);
                             boolean higherPriority = mediaCandidate
                                     && hasHigherPriorityFocus(param.thisObject, data.key);
@@ -4134,6 +4330,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                     log("media shouldShow blocked key=" + data.key
                                             + " expired=" + mediaExpired
                                             + " higherPriority=" + higherPriority);
+                                    param.setResult(false);
+                                    return;
                                 } else {
                                     param.setResult(true);
                                     log("media shouldShow allowed key=" + data.key
@@ -4169,11 +4367,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             // Bound to the notification generation, not just the key: re-posting the
                             // same id keeps the key but is a new post time, and that must be shown
                             // again instead of being suppressed by the earlier override.
-                            if (mediaCandidate && !mediaExpired && !higherPriority) {
-                                // 媒体会重复刷新同一代通知，不能套用白名单的一次性放行规则。
-                                param.setResult(true);
-                                return;
-                            }
+
                             if (whitelisted && hasConvertibleIslandContent(data)
                                     && ((currentSettings.focusSwipeEnabled && os3SwipeSelection.manual())
                                     || markForcedShouldShow(data.key, data.sbn))) {
@@ -4206,10 +4400,23 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      */
     private void hookOS3FocusVisibility() {
         try {
+            Class<?> controller = FocusReflection.findClass(classLoader,
+                    "com.android.systemui.statusbar.phone.FocusedNotifPromptController");
+            // 来源：OS3 16.03.251211.r updateVisibilityCore提交显示后调用此setter；资格判断不记时。
+            for (String method : new String[]{"setIsFocusedNotifPromptShowing", "updateVisibilityCore"}) {
+                hookInstaller.allMethods(controller, method, new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam param) {
+                        if (!param.hasThrowable()) {
+                            os3PromptControllerRef = new WeakReference<>(param.thisObject);
+                            scheduleOS3DisplayCommit();
+                        }
+                    }
+                });
+            }
             Class<?> fragment = FocusReflection.findClass(
                     "com.android.systemui.statusbar.phone.MiuiCollapsedStatusBarFragment",
                     classLoader);
-            XposedHelpers.findAndHookMethod(fragment, "onFocusedNotifVisibilityChanged",
+            hookInstaller.exact(fragment, "onFocusedNotifVisibilityChanged",
                     boolean.class, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -4222,13 +4429,33 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    private boolean os3CommitQueued;
+    private void scheduleOS3DisplayCommit() {
+        if (mainHandler == null || os3CommitQueued) return;
+        os3CommitQueued = true;
+        mainHandler.post(() -> {
+            os3CommitQueued = false;
+            mainHandler.removeCallbacks(os3ExpiryCheck);
+            Object controller = os3PromptControllerRef.get();
+            if (controller == null || !getBooleanField(controller, "mIsFocusedNotifPromptShowing", false)) return;
+            Object rawView = getField(controller, "mView");
+            FocusData current = inspectBean(getField(controller, "mCurrentNotifBean"));
+            if (!(rawView instanceof View) || current == null) return;
+            View view = (View) rawView;
+            if (!view.isAttachedToWindow() || !view.isShown() || view.getWidth() <= 0 || view.getHeight() <= 0) return;
+            markFocusDisplayed(current);
+            long remaining = remainingDisplayMillis(current);
+            if (remaining != Long.MAX_VALUE) mainHandler.postDelayed(os3ExpiryCheck, Math.max(1L, remaining));
+        });
+    }
+
     /**
      * 锁屏/解锁或状态栏重建时 ROM 会重新 showClock，而焦点仍在显示；此时把时钟/座位/
      * 分隔线再次隐藏。焦点已隐藏时不拦截，让 ROM 正常恢复。
      */
     private void hookOS3ClockShowGuard(Class<?> fragment) {
         try {
-            XposedHelpers.findAndHookMethod(fragment, "showClock", boolean.class,
+            hookInstaller.exact(fragment, "showClock", boolean.class,
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
@@ -4346,7 +4573,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
     private void hookElementAnimationCapability(final String methodName, final boolean noneResult) {
         try {
-            XposedHelpers.findAndHookMethod(
+            hookInstaller.exact(
                     "com.android.systemui.statusbar.animation.AnimationUtilities", classLoader,
                     methodName, new XC_MethodHook() {
                         @Override
@@ -4374,7 +4601,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     /** 只观察桌面出站协议，区分能力已改写与空包名分支实际执行；不修改通知内容。 */
     private void hookElementAnimationDesktopDiagnosis() {
         try {
-            XposedHelpers.findAndHookMethod(
+            hookInstaller.exact(
                     "com.android.systemui.recents.LauncherProxyService", classLoader,
                     "onFocusedNotifUpdate", String.class, Icon.class, Rect.class,
                     new XC_MethodHook() {
@@ -4462,6 +4689,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 Object latest = notificationEntrySbn(live);
                 // 按下时保存代次，超时后重新查找；同 key 撤销重发或换绑不能打开新通知。
                 if (!currentSettings.longPressNotificationRowClick || live != entry
+                        || !entryAllowed(live)
                         || !(latest instanceof StatusBarNotification)
                         || !key.equals(((StatusBarNotification) latest).getKey())
                         || expected.getPostTime() != ((StatusBarNotification) latest).getPostTime()) {
@@ -4493,7 +4721,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> promptClass = FocusReflection.findClass(
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptView", classLoader);
             // getMethod 可定位继承的 dispatchTouchEvent；只处理目标提示视图，避免干预其他通知视图。
-            XposedHelpers.findAndHookMethod(promptClass, "onConfigurationChanged",
+            hookInstaller.exact(promptClass, "onConfigurationChanged",
                     android.content.res.Configuration.class, new XC_MethodHook() {
                         @Override protected void afterHookedMethod(MethodHookParam param) {
                             // 旋转不一定触发 setData，横竖屏触控宽度须随配置更新。
@@ -4505,7 +4733,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         }
                     });
             Method dispatch = promptClass.getMethod("dispatchTouchEvent", MotionEvent.class);
-            XposedBridge.hookMethod(dispatch, new XC_MethodHook() {
+            hookInstaller.method(dispatch, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam param) {
                     if (!promptClass.isInstance(param.thisObject)) return;
                     View prompt = (View) param.thisObject;
@@ -4579,7 +4807,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
             // 长按成立的通知走 FocusBannerController.onLongPressFired（静态），先把抑制对象交给它。
             FocusBannerController.useShortPressSuppression(suppression);
-            XposedBridge.hookMethod(promptView.getDeclaredMethod("onFocusNotifPromptClicked"),
+            hookInstaller.method(promptView.getDeclaredMethod("onFocusNotifPromptClicked"),
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
@@ -4842,7 +5070,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> view = FocusReflection.findClass(
                     "com.android.systemui.statusbar.phone.FocusedNotifPromptView",
                     classLoader);
-            XposedBridge.hookAllMethods(view, "updateRemoteViews", new XC_MethodHook() {
+            hookInstaller.allMethods(view, "updateRemoteViews", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     restoreRemoteViewsPrompt(param.thisObject);
@@ -6186,7 +6414,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         second = cleanText(second);
         if (TextUtils.isEmpty(first)) return second;
         if (TextUtils.isEmpty(second) || first.equals(second)) return first;
-        return first + currentSettings.generalSeparator + second;
+        return InputLimits.limitOutput(first + InputLimits.limitSeparator(currentSettings.generalSeparator) + second);
     }
 
     private String joinText(String first, String second) {
@@ -6194,12 +6422,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         second = cleanText(second);
         if (TextUtils.isEmpty(first)) return second;
         if (TextUtils.isEmpty(second) || first.equals(second)) return first;
-        return first + currentSettings.generalSeparator + second;
+        return InputLimits.limitOutput(first + InputLimits.limitSeparator(currentSettings.generalSeparator) + second);
     }
 
     private static String cleanText(String value) {
         if (value == null) return null;
-        value = value.trim();
+        value = InputLimits.limitOutput(value.trim());
         return value.length() == 0 ? null : value;
     }
 
@@ -6222,14 +6450,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         // An exempt app keeps the duration the system itself gives the focus notification.
         if (isTimeoutExempt(data.packageName)) return Long.MAX_VALUE;
         long limit = Math.max(1L, (long) (seconds * 1000f));
-        long postTime = generation(data);
-        long[] window;
-        synchronized (focusDisplayWindows) {
-            window = focusDisplayWindows.get(data.key);
-        }
-        if (window == null || window[1] != postTime) return limit;
-        long elapsed = SystemClock.elapsedRealtime() - window[0];
-        return elapsed >= limit ? 0L : limit - elapsed;
+        return focusDisplayWindows.remaining(data.key, displayGeneration(data), limit);
     }
 
     /**
@@ -6248,28 +6469,18 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * a StatusBarNotification (the ROM's own ExpandedNotification is not), which is the normal case —
      * requiring a post time there is what used to disable the limit entirely.
      */
-    private static long generation(FocusData data) {
-        return data == null || data.sbn == null ? 0L : data.sbn.getPostTime();
+    private long displayGeneration(FocusData data) {
+        if (data == null) return 0L;
+        if (data.sbn != null) return data.sbn.getPostTime();
+        Object sbn = notificationEntrySbn(entryForKey(data.key));
+        return sbn instanceof StatusBarNotification ? ((StatusBarNotification) sbn).getPostTime() : 0L;
     }
 
     private void markFocusDisplayed(FocusData data) {
         float seconds = currentSettings == null ? 0f : currentSettings.focusMaxDisplaySeconds;
         if (seconds <= 0f || data == null || TextUtils.isEmpty(data.key)) return;
         if (isTimeoutExempt(data.packageName)) return;
-        long postTime = generation(data);
-        synchronized (focusDisplayWindows) {
-            long[] existing = focusDisplayWindows.get(data.key);
-            if (existing != null && existing[1] == postTime) return;
-            if (focusDisplayWindows.size() > 64) focusDisplayWindows.clear();
-            focusDisplayWindows.put(data.key, new long[]{SystemClock.elapsedRealtime(), postTime});
-        }
-    }
-
-    private void forgetFocusDisplay(String key) {
-        if (TextUtils.isEmpty(key)) return;
-        synchronized (focusDisplayWindows) {
-            focusDisplayWindows.remove(key);
-        }
+        focusDisplayWindows.displayed(data.key, displayGeneration(data));
     }
 
     private long remainingDisplayMillis(Object entry) {
@@ -6288,10 +6499,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         Object expanded = notificationEntrySbn(entry);
         if (expanded == null) return null;
         FocusData data = inspectExpanded(expanded);
-        if (isFocusDisplayExpired(data)) {
-            log("OS4 display expired key=" + keyFromEntry(entry));
-            return null;
-        }
         if (data == null) return null;
         Object keyValue = getField(entry, "key");
         if (keyValue == null) keyValue = getField(entry, "mKey");

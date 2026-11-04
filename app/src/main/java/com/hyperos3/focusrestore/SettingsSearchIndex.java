@@ -76,6 +76,7 @@ final class SettingsSearchIndex {
         add(entries, "longPress", "长按焦点通知模拟通知列表点击", 1, "点击与手势", "长按打开 实验性");
         add(entries, "longPressTime", "长按时间", 1, "点击与手势", "长按延迟 秒");
         add(entries, "swipe", "左右滑动切换和收起焦点通知", 1, "点击与手势", "手势 滑动恢复 实验性");
+        add(entries, "adaptiveWidth", "空间不足时仅显示焦点图标", 1, "点击与手势", "自动收窄 OS4 大字体 横屏 图标");
         add(entries, "legacyClick", "旧版：打开通知内容", 1, "点击与手势", "直接打开 点击兼容");
         add(entries, "rowClick", "直接打开失败时模拟通知列表点击", 1, "点击与手势", "兜底 点击兼容");
         add(entries, "media", "启用媒体焦点通知", 1, "媒体焦点（实验性）", "音乐 播放 实验性");
