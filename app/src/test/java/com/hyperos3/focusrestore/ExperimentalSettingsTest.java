@@ -24,6 +24,63 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class ExperimentalSettingsTest {
+    @Test
+    public void advancedMaterialRoundTripsIndependentlyThroughBothStoresAndHookSettings() {
+        for (boolean ordinaryBackground : new boolean[]{false, true}) {
+            Map<String, Object> credentialValues = new HashMap<>();
+            Map<String, Object> deviceValues = new HashMap<>();
+            SharedPreferences credential = memoryPreferences(credentialValues);
+            SharedPreferences device = memoryPreferences(deviceValues);
+            // 同一存储先开后关，检查 false 会覆盖旧 true，而不重置普通背景或岛转换。
+            for (boolean enabled : new boolean[]{true, false}) {
+                FocusRestoreSettings selected = FocusRestoreSettings.edit()
+                        .advancedMaterialEnabled(enabled)
+                        .specialBannerNormalBackground(ordinaryBackground)
+                        .islandCompat(false).disableIslandProperty(true)
+                        .disableIslandFeatureCache(true).independentFocusBanner(true).build();
+                FocusRestoreSettings copied = FocusRestoreSettings.edit(selected).build();
+                assertEquals(enabled, copied.advancedMaterialEnabled);
+                assertTrue(copied.describe().contains("advancedMaterialEnabled=" + enabled));
+                for (SharedPreferences store : new SharedPreferences[]{credential, device}) {
+                    assertTrue(copied.save(store));
+                    assertEquals(enabled, store.getAll().get("advanced_material_enabled"));
+                    FocusRestoreSettings loaded = FocusRestoreSettings.fromPreferences(store);
+                    assertEquals(enabled, loaded.advancedMaterialEnabled);
+                    assertEquals(ordinaryBackground, loaded.specialBannerNormalBackground);
+                    for (HookSettings hook : new HookSettings[]{HookSettings.fromSettings(loaded),
+                            HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                                    SettingsContract.COLUMNS, SettingsContract.toRow(loaded, "")))}) {
+                        assertEquals(enabled, hook.advancedMaterialEnabled);
+                        assertEquals(ordinaryBackground, hook.specialBannerNormalBackground);
+                        assertFalse(hook.islandCompat);
+                        assertTrue(hook.disableIslandProperty);
+                        assertTrue(hook.disableIslandFeatureCache);
+                        assertTrue(hook.independentFocusBanner);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void missingOrWrongTypedAdvancedMaterialPreferenceStaysOffWithoutMigratingOldBackground() {
+        assertFalse(FocusRestoreSettings.DEFAULT_ADVANCED_MATERIAL_ENABLED);
+        assertFalse(FocusRestoreSettings.defaults().advancedMaterialEnabled);
+        assertFalse(HookSettings.defaults().advancedMaterialEnabled);
+        for (boolean ordinaryBackground : new boolean[]{false, true}) {
+            for (Object value : new Object[]{null, 1, "true"}) {
+                Map<String, Object> values = new HashMap<>();
+                values.put("special_banner_normal_background", ordinaryBackground);
+                if (value != null) values.put("advanced_material_enabled", value);
+                Map<String, Object> before = new HashMap<>(values);
+                FocusRestoreSettings loaded = FocusRestoreSettings.fromPreferences(memoryPreferences(values));
+                assertFalse(loaded.advancedMaterialEnabled);
+                assertEquals(ordinaryBackground, loaded.specialBannerNormalBackground);
+                assertEquals("Reading old preferences must not opt into material", before, values);
+            }
+        }
+    }
+
     @Test public void adaptiveWidthDefaultAndAllContractsRemainIndependent() throws Exception {
         assertFalse(FocusRestoreSettings.defaults().adaptiveFocusWidth);
         FocusRestoreSettings selected = FocusRestoreSettings.edit().adaptiveFocusWidth(true).build();

@@ -211,7 +211,7 @@ final class MediaNotificationBannerSource implements FocusBannerSource {
         host.setClipChildren(false);
         host.addView(content, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        int width = Math.max(1, systemUiContext.getResources().getDisplayMetrics().widthPixels);
+        int width = NativeFocusAppearance.mediaWidth(systemUiContext);
         return new MediaNotificationBannerSource(host, packageContext, sbn, null, width, source);
     }
 
@@ -535,7 +535,7 @@ final class MediaNotificationBannerSource implements FocusBannerSource {
         }
         final MediaController mediaController = controller;
 
-        int width = Math.max(1, systemUiContext.getResources().getDisplayMetrics().widthPixels);
+        int width = NativeFocusAppearance.mediaWidth(systemUiContext);
         String diagnostics = ";actions=" + (actions == null ? -1 : actions.size())
                 + ";compact=" + (compact == null ? -1 : compact.size())
                 + ";semantic=" + (semantic == null ? "none" : "present")
@@ -840,7 +840,7 @@ final class MediaNotificationBannerSource implements FocusBannerSource {
                 Bitmap bitmap = ((android.graphics.drawable.BitmapDrawable) drawable).getBitmap();
                 if (bitmap != null && !bitmap.isRecycled()) return bitmap;
             }
-            int width = Math.max(1, context.getResources().getDisplayMetrics().widthPixels);
+            int width = NativeFocusAppearance.mediaWidth(context);
             int height = Math.max(1, dp(context, 240));
             Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(bitmap);

@@ -19,10 +19,20 @@ import android.view.View;
 /** Reads native notification geometry and themed resources without retaining or moving row Views. */
 final class NativeFocusAppearance {
     private static volatile boolean useNormalNotificationBackground;
+    private static volatile boolean advancedMaterialEnabled;
+
+    static void setAdvancedMaterialEnabled(boolean enabled) {
+        advancedMaterialEnabled = enabled;
+    }
 
     static void setUseNormalNotificationBackground(boolean enabled) {
         useNormalNotificationBackground = enabled;
     }
+    // 材质接入独立于背景选择，旧配置缺字段时保持关闭。
+    static boolean useNativeMaterial() {
+        return advancedMaterialEnabled && useNormalNotificationBackground;
+    }
+
     final boolean dark;
     final int width;
     final float radius;
@@ -72,6 +82,20 @@ final class NativeFocusAppearance {
         return new NativeFocusAppearance(dark, width, radius, background,
                 (dark ? "system-dark" : "system-light") + "/" + geometrySource
                         + "/" + backgroundName + "; blur-and-modal-animation-not-copied");
+    }
+
+    /** 复用本类已接入的 SystemUI 面板资源；不读取或改挂原生媒体 View。 */
+    static int mediaWidth(Context context) {
+        android.util.DisplayMetrics metrics = context.getResources().getDisplayMetrics();
+        int panel = 0;
+        int padding = 0;
+        try {
+            panel = dimension(context, "notification_panel_width");
+            padding = dimension(context, "notification_side_paddings");
+        } catch (android.content.res.Resources.NotFoundException error) {
+            android.util.Log.w("HyperOS3FocusRestore", "media banner geometry resource unavailable; use short edge", error);
+        }
+        return MediaBannerWidth.resolve(metrics.widthPixels, metrics.heightPixels, panel, padding);
     }
 
     private static int dimension(Context context, String name) {

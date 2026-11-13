@@ -112,7 +112,7 @@ final class SettingsBackupCodec {
                     "media_focus_cast_picker", "media_focus_cast_direct", "media_brief_display",
                     "media_brief_fields");
             JSONObject interaction = group(groups, "interaction", "independent_focus_banner",
-                    "special_banner_normal_background", "allow_focus_click",
+                    "special_banner_normal_background", "advanced_material_enabled", "allow_focus_click",
                     "notification_row_click_fallback", "long_press_notification_row_click",
                     "long_press_seconds", "focus_swipe_enabled", "adaptive_focus_width",
                     "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
@@ -182,6 +182,7 @@ final class SettingsBackupCodec {
                     .hideTimeDevice(bool(focus, "hide_time_device", defaults.hideTimeDevice))
                     .independentFocusBanner(bool(interaction, "independent_focus_banner", defaults.independentFocusBanner))
                     .specialBannerNormalBackground(bool(interaction, "special_banner_normal_background", defaults.specialBannerNormalBackground))
+                    .advancedMaterialEnabled(bool(interaction, "advanced_material_enabled", defaults.advancedMaterialEnabled))
                     .allowFocusClick(bool(interaction, "allow_focus_click", defaults.allowFocusClick))
                     .notificationRowClickFallback(bool(interaction, "notification_row_click_fallback", defaults.notificationRowClickFallback))
                     .longPressNotificationRowClick(bool(interaction, "long_press_notification_row_click", defaults.longPressNotificationRowClick))
@@ -238,6 +239,7 @@ final class SettingsBackupCodec {
                         "media_brief_fields", MediaBriefFields.encode(settings.mediaBriefFields)),
                 "interaction", entries("independent_focus_banner", settings.independentFocusBanner,
                         "special_banner_normal_background", settings.specialBannerNormalBackground,
+                        "advanced_material_enabled", settings.advancedMaterialEnabled,
                         "allow_focus_click", settings.allowFocusClick,
                         "notification_row_click_fallback", settings.notificationRowClickFallback,
                         "long_press_notification_row_click", settings.longPressNotificationRowClick,

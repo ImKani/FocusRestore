@@ -444,6 +444,8 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
         return view;
     }
 
+    @Override public View materialTarget() { return view; }
+
     @Override
     public Context context() {
         return context;

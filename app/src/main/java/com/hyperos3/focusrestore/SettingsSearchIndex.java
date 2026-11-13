@@ -49,13 +49,13 @@ final class SettingsSearchIndex {
     static {
         List<Entry> entries = new ArrayList<>();
         add(entries, "mode", "系统界面版本", 0, "系统界面版本", "OS3 OS4 HyperOS3 HyperOS4 澎湃3 澎湃4 模式");
-        add(entries, "island", "转换超级岛内容为焦点通知", 0, "超级岛转换", "灵动岛 内容转换");
-        add(entries, "forcePackages", "强制转换超级岛应用", 0, "超级岛转换", "应用名单 白名单 强制转换");
-        add(entries, "limitWidth", "限制焦点通知宽度", 0, "显示宽度与时长", "显示长度 限宽");
-        add(entries, "width", "最大宽度", 0, "显示宽度与时长", "竖屏显示宽度 长度");
-        add(entries, "landscapeWidth", "横屏最大宽度", 0, "显示宽度与时长", "横屏显示宽度 长度");
-        add(entries, "maxDisplay", "最大显示时间", 0, "显示宽度与时长", "秒 时长 超时 到期");
-        add(entries, "timeoutExempt", "最大显示时间豁免应用", 0, "显示宽度与时长", "名单 白名单 超时 不限制");
+        add(entries, "island", "转换超级岛内容为焦点通知", 1, "超级岛转换", "灵动岛 内容转换");
+        add(entries, "forcePackages", "强制转换超级岛应用", 1, "超级岛转换", "应用名单 白名单 强制转换");
+        add(entries, "limitWidth", "限制焦点通知宽度", 1, "显示宽度与时长", "显示长度 限宽");
+        add(entries, "width", "最大宽度", 1, "显示宽度与时长", "竖屏显示宽度 长度");
+        add(entries, "landscapeWidth", "横屏最大宽度", 1, "显示宽度与时长", "横屏显示宽度 长度");
+        add(entries, "maxDisplay", "最大显示时间", 1, "显示宽度与时长", "秒 时长 超时 到期");
+        add(entries, "timeoutExempt", "最大显示时间豁免应用", 1, "显示宽度与时长", "名单 白名单 超时 不限制");
         add(entries, "iconOrder", "焦点图标优先级", 1, "图标与分隔线", "图标排序 图标顺序 图标来源排序 拖动 应用图标 焦点专用图标 通知小图标 smallIcon ticker");
         add(entries, "islandIcon", "优先使用超级岛解析图标", 1, "图标与分隔线", "图标来源 岛图标");
         add(entries, "iconTint", "超级岛解析图标与通知小图标跟随状态栏反色", 1, "图标与分隔线", "颜色 反色 着色 smallIcon");
@@ -73,6 +73,7 @@ final class SettingsSearchIndex {
         add(entries, "sideSeparator", "左右区域连接符", 1, "内容解析与拼接", "分隔符 分隔字 符号");
         add(entries, "banner", "点击焦点通知展开横幅", 1, "点击与手势", "短按 实验性 弹窗 卡片");
         add(entries, "bannerBackground", "通知横幅背景", 1, "点击与手势", "纯色 普通通知 背景颜色");
+        add(entries, "advancedMaterial", "高级材质接入", 1, "点击与手势", "玻璃 毛玻璃 模糊 混色 GLASS BLUR 默认关闭");
         add(entries, "longPress", "长按焦点通知模拟通知列表点击", 1, "点击与手势", "长按打开 实验性");
         add(entries, "longPressTime", "长按时间", 1, "点击与手势", "长按延迟 秒");
         add(entries, "swipe", "左右滑动切换和收起焦点通知", 1, "点击与手势", "手势 滑动恢复 实验性");

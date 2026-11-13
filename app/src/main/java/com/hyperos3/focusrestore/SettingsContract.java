@@ -52,39 +52,40 @@ final class SettingsContract {
     // 横幅与点击手势。
     static final int INDEPENDENT_FOCUS_BANNER = 28;
     static final int SPECIAL_BANNER_NORMAL_BACKGROUND = 29;
-    static final int ALLOW_FOCUS_CLICK = 30;
-    static final int NOTIFICATION_ROW_CLICK_FALLBACK = 31;
-    static final int LONG_PRESS_NOTIFICATION_ROW_CLICK = 32;
-    static final int LONG_PRESS_SECONDS = 33;
-    static final int FOCUS_SWIPE_ENABLED = 34;
-    static final int ADAPTIVE_FOCUS_WIDTH = 35;
-    static final int CUSTOM_TOUCH_WIDTH = 36;
-    static final int TOUCH_WIDTH_DP = 37;
-    static final int TOUCH_WIDTH_LANDSCAPE_DP = 38;
+    static final int ADVANCED_MATERIAL_ENABLED = 30;
+    static final int ALLOW_FOCUS_CLICK = 31;
+    static final int NOTIFICATION_ROW_CLICK_FALLBACK = 32;
+    static final int LONG_PRESS_NOTIFICATION_ROW_CLICK = 33;
+    static final int LONG_PRESS_SECONDS = 34;
+    static final int FOCUS_SWIPE_ENABLED = 35;
+    static final int ADAPTIVE_FOCUS_WIDTH = 36;
+    static final int CUSTOM_TOUCH_WIDTH = 37;
+    static final int TOUCH_WIDTH_DP = 38;
+    static final int TOUCH_WIDTH_LANDSCAPE_DP = 39;
 
     // 最大显示时间与独立豁免名单。
-    static final int FOCUS_MAX_DISPLAY_SECONDS = 39;
-    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 40;
+    static final int FOCUS_MAX_DISPLAY_SECONDS = 40;
+    static final int FOCUS_TIMEOUT_EXEMPT_PACKAGES = 41;
 
     // 媒体焦点与流转。
-    static final int MEDIA_FOCUS_ENABLED = 41;
-    static final int MEDIA_FOCUS_NATIVE_BANNER = 42;
-    static final int MEDIA_FOCUS_CAST_PICKER = 43;
-    static final int MEDIA_FOCUS_CAST_DIRECT = 44;
+    static final int MEDIA_FOCUS_ENABLED = 42;
+    static final int MEDIA_FOCUS_NATIVE_BANNER = 43;
+    static final int MEDIA_FOCUS_CAST_PICKER = 44;
+    static final int MEDIA_FOCUS_CAST_DIRECT = 45;
 
     // 隐藏状态栏时间与媒体简短显示。
-    static final int HIDE_TIME_NORMAL = 45;
-    static final int HIDE_TIME_MEDIA = 46;
-    static final int HIDE_TIME_DEVICE = 47;
-    static final int MEDIA_BRIEF_DISPLAY = 48;
-    static final int MEDIA_BRIEF_FIELDS = 49;
-    static final int INTERCEPT_ELEMENT_ANIMATION = 50;
+    static final int HIDE_TIME_NORMAL = 46;
+    static final int HIDE_TIME_MEDIA = 47;
+    static final int HIDE_TIME_DEVICE = 48;
+    static final int MEDIA_BRIEF_DISPLAY = 49;
+    static final int MEDIA_BRIEF_FIELDS = 50;
+    static final int INTERCEPT_ELEMENT_ANIMATION = 51;
 
     // 历史字段仍响应旧 projection；废弃功能不恢复，旧分隔符只供缺列回退。
-    static final int LEGACY_ISLAND_SEPARATOR = 51;
-    static final int EXPAND_ISLAND_ON_CLICK = 52;
-    static final int NOTIFICATION_ICON_HIDE_MODE = 53;
-    static final int ISLAND_CUSTOM_RULES = 54;
+    static final int LEGACY_ISLAND_SEPARATOR = 52;
+    static final int EXPAND_ISLAND_ON_CLICK = 53;
+    static final int NOTIFICATION_ICON_HIDE_MODE = 54;
+    static final int ISLAND_CUSTOM_RULES = 55;
 
     static final String[] COLUMNS = {
             "hook_mode", "compat_retry", "disable_island_property", "disable_island_feature_cache",
@@ -95,7 +96,7 @@ final class SettingsContract {
             "focus_icon_size_dp", "focus_icon_text_gap_dp", "focus_divider_start_offset_dp", "focus_divider_end_offset_dp", "focus_divider_width_dp", "focus_divider_style",
             "show_island_icon", "tint_island_icon",
             "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon",
-            "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
+            "independent_focus_banner", "special_banner_normal_background", "advanced_material_enabled", "allow_focus_click",
             "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
             "focus_swipe_enabled", "adaptive_focus_width",
             "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
@@ -161,6 +162,7 @@ final class SettingsContract {
 
         row[INDEPENDENT_FOCUS_BANNER] = settings.independentFocusBanner ? 1 : 0;
         row[SPECIAL_BANNER_NORMAL_BACKGROUND] = settings.specialBannerNormalBackground ? 1 : 0;
+        row[ADVANCED_MATERIAL_ENABLED] = settings.advancedMaterialEnabled ? 1 : 0;
         row[ALLOW_FOCUS_CLICK] = settings.allowFocusClick ? 1 : 0;
         row[NOTIFICATION_ROW_CLICK_FALLBACK] = settings.notificationRowClickFallback ? 1 : 0;
         row[LONG_PRESS_NOTIFICATION_ROW_CLICK] = settings.longPressNotificationRowClick ? 1 : 0;

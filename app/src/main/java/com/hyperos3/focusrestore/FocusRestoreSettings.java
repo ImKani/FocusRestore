@@ -29,6 +29,7 @@ public final class FocusRestoreSettings {
     public static final String KEY_WIDTH_DP = "text_width_dp";
     public static final String KEY_WIDTH_LANDSCAPE_DP = "text_width_landscape_dp";
     public static final String KEY_SPECIAL_BANNER_NORMAL_BACKGROUND = "special_banner_normal_background";
+    public static final String KEY_ADVANCED_MATERIAL_ENABLED = "advanced_material_enabled";
     public static final String KEY_NOTIFICATION_ICON_HIDE_MODE = "notification_icon_hide_mode";
     public static final String KEY_MEDIA_FOCUS_ENABLED = "media_focus_enabled";
     public static final String KEY_MEDIA_FOCUS_NATIVE_BANNER = "media_focus_native_banner";
@@ -104,6 +105,7 @@ public final class FocusRestoreSettings {
     public static final int MAX_LANDSCAPE_WIDTH_DP = 1600;
     public static final int DEFAULT_WIDTH_LANDSCAPE_DP = 600;
     public static final boolean DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND = true;
+    public static final boolean DEFAULT_ADVANCED_MATERIAL_ENABLED = false;
     public static final boolean DEFAULT_MEDIA_FOCUS_ENABLED = false;
     public static final boolean DEFAULT_MEDIA_FOCUS_NATIVE_BANNER = false;
     /** 1 uses the Android picker; 2 uses MIUI 妙播. */
@@ -170,6 +172,7 @@ public final class FocusRestoreSettings {
     public final int marqueeDelayMs;
     public final int widthLandscapeDp;
     public final boolean specialBannerNormalBackground;
+    public final boolean advancedMaterialEnabled;
     public final boolean mediaFocusEnabled;
     public final boolean mediaFocusNativeBanner;
     public final int mediaFocusCastPicker;
@@ -225,6 +228,7 @@ public final class FocusRestoreSettings {
         this.widthLandscapeDp = clamp(editor.widthLandscapeDp, MIN_WIDTH_DP,
                 MAX_LANDSCAPE_WIDTH_DP);
         this.specialBannerNormalBackground = editor.specialBannerNormalBackground;
+        this.advancedMaterialEnabled = editor.advancedMaterialEnabled;
         this.mediaFocusEnabled = editor.mediaFocusEnabled;
         this.mediaFocusCastPicker = normalizeCastPicker(editor.mediaFocusCastPicker);
         // 二选一：直接展开流转界面时不再走媒体横幅。
@@ -291,6 +295,7 @@ public final class FocusRestoreSettings {
         private int widthDp = DEFAULT_WIDTH_DP;
         private int widthLandscapeDp = DEFAULT_WIDTH_LANDSCAPE_DP;
         private boolean specialBannerNormalBackground = DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND;
+        private boolean advancedMaterialEnabled = DEFAULT_ADVANCED_MATERIAL_ENABLED;
         private boolean mediaFocusEnabled = DEFAULT_MEDIA_FOCUS_ENABLED;
         private boolean mediaFocusNativeBanner = DEFAULT_MEDIA_FOCUS_NATIVE_BANNER;
         private int mediaFocusCastPicker = DEFAULT_MEDIA_FOCUS_CAST_PICKER;
@@ -348,6 +353,7 @@ public final class FocusRestoreSettings {
             this.widthDp = source.widthDp;
             this.widthLandscapeDp = source.widthLandscapeDp;
             this.specialBannerNormalBackground = source.specialBannerNormalBackground;
+            this.advancedMaterialEnabled = source.advancedMaterialEnabled;
             this.mediaFocusEnabled = source.mediaFocusEnabled;
             this.mediaFocusNativeBanner = source.mediaFocusNativeBanner;
             this.mediaFocusCastPicker = source.mediaFocusCastPicker;
@@ -403,6 +409,7 @@ public final class FocusRestoreSettings {
         public Editor marqueeDelayMs(int value) { this.marqueeDelayMs = value; return this; }
         public Editor widthLandscapeDp(int value) { this.widthLandscapeDp = value; return this; }
         public Editor specialBannerNormalBackground(boolean value) { this.specialBannerNormalBackground = value; return this; }
+        public Editor advancedMaterialEnabled(boolean value) { this.advancedMaterialEnabled = value; return this; }
         public Editor mediaFocusEnabled(boolean value) { this.mediaFocusEnabled = value; return this; }
         public Editor mediaFocusNativeBanner(boolean value) { this.mediaFocusNativeBanner = value; return this; }
         public Editor mediaFocusCastPicker(int value) { this.mediaFocusCastPicker = value; return this; }
@@ -691,6 +698,9 @@ public final class FocusRestoreSettings {
                 .specialBannerNormalBackground(values.getBoolean(
                         KEY_SPECIAL_BANNER_NORMAL_BACKGROUND,
                         DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND))
+                // 旧配置即使启用了普通通知背景，也不能隐式开启新增的高级材质接入。
+                .advancedMaterialEnabled(values.getBoolean(
+                        KEY_ADVANCED_MATERIAL_ENABLED, DEFAULT_ADVANCED_MATERIAL_ENABLED))
                 .mediaFocusEnabled(values.getBoolean(KEY_MEDIA_FOCUS_ENABLED,
                         DEFAULT_MEDIA_FOCUS_ENABLED))
                 .mediaFocusNativeBanner(values.getBoolean(KEY_MEDIA_FOCUS_NATIVE_BANNER,
@@ -779,6 +789,7 @@ public final class FocusRestoreSettings {
         return "hookMode=OS" + hookMode + " limit=" + limitWidth + " widthDp=" + widthDp
                 + " widthLandscapeDp=" + widthLandscapeDp
                 + " specialBannerNormalBackground=" + specialBannerNormalBackground
+                + " advancedMaterialEnabled=" + advancedMaterialEnabled
                 + " delayMs=" + marqueeDelayMs + " compatRetry=" + compatRetry
                 + " marqueeBounce=" + marqueeBounce + " islandCompat=" + islandCompat
                 + " islandRichText=" + islandRichText
@@ -833,6 +844,7 @@ public final class FocusRestoreSettings {
                 .putInt(KEY_WIDTH_DP, widthDp)
                 .putInt(KEY_WIDTH_LANDSCAPE_DP, widthLandscapeDp)
                 .putBoolean(KEY_SPECIAL_BANNER_NORMAL_BACKGROUND, specialBannerNormalBackground)
+                .putBoolean(KEY_ADVANCED_MATERIAL_ENABLED, advancedMaterialEnabled)
                 .putBoolean(KEY_MEDIA_FOCUS_ENABLED, mediaFocusEnabled)
                 .putBoolean(KEY_MEDIA_FOCUS_NATIVE_BANNER, mediaFocusNativeBanner)
                 .putInt(KEY_MEDIA_FOCUS_CAST_PICKER, mediaFocusCastPicker)

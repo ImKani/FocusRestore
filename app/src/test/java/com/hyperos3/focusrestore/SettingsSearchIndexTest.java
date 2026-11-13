@@ -14,6 +14,11 @@ import java.util.Set;
 import static org.junit.Assert.*;
 
 public class SettingsSearchIndexTest {
+    @Test public void advancedMaterialCanBeFoundByNameAndGlassKeyword() {
+        assertEquals("advancedMaterial", SettingsSearchIndex.search("高级材质接入", false).get(0).id);
+        assertEquals("advancedMaterial", SettingsSearchIndex.search("玻璃", false).get(0).id);
+    }
+
     @Test public void exactTitleComesBeforeRelatedKeywords() {
         List<SettingsSearchIndex.Entry> result = SettingsSearchIndex.search("最大宽度", false);
         assertEquals("width", result.get(0).id);
@@ -73,6 +78,15 @@ public class SettingsSearchIndexTest {
         } finally {
             Locale.setDefault(previous);
         }
+    }
+
+    @Test public void movedControlsNavigateToAdvancedWhileModeStaysHome() {
+        for (SettingsSearchIndex.Entry entry : SettingsSearchIndex.search("", false)) {
+            if (entry.id.equals("mode")) assertEquals(0, entry.page);
+            else if (!entry.id.equals("export") && !entry.id.equals("import")) assertEquals(1, entry.page);
+        }
+        assertEquals("width", SettingsSearchIndex.search("高级 最大宽度", false).get(0).id);
+        assertTrue(SettingsSearchIndex.search("主页 白名单", false).isEmpty());
     }
 
     private static Set<String> ids(List<SettingsSearchIndex.Entry> entries) {

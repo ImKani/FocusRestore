@@ -33,6 +33,9 @@ interface FocusBannerSource {
     /** The independent, unattached root view this source owns. */
     View view();
 
+    /** 可应用材质的模块自建外壳；封面背景等来源默认不参与。 */
+    default View materialTarget() { return null; }
+
     /** Context the root view was built with; used for validation only. */
     Context context();
 

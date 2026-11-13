@@ -269,6 +269,7 @@ public final class SettingsActivity extends Activity {
     private Switch tintDeviceIconSwitch;
     private Switch notificationRowClickFallbackSwitch;
     private Switch independentFocusBannerSwitch;
+    private Switch advancedMaterialSwitch;
     private Switch longPressNotificationRowClickSwitch;
     private Switch focusSwipeEnabledSwitch;
     private Switch adaptiveFocusWidthSwitch;
@@ -305,6 +306,7 @@ public final class SettingsActivity extends Activity {
     private MediaFieldDragHandler mediaFieldDragHandler;
     private int pendingWidthLandscapeDp;
     private boolean pendingSpecialBannerNormalBackground;
+    private boolean pendingAdvancedMaterialEnabled;
     private boolean pendingMediaFocusEnabled;
     private boolean pendingMediaFocusNativeBanner;
     private int pendingMediaFocusCastPicker = FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_CAST_PICKER;
@@ -831,6 +833,7 @@ public final class SettingsActivity extends Activity {
         searchTarget("sideSeparator", sideSeparatorInput);
         searchTarget("banner", independentFocusBannerSwitch);
         searchTarget("bannerBackground", bannerBackgroundLabel);
+        searchTarget("advancedMaterial", advancedMaterialSwitch);
         searchTarget("longPress", longPressNotificationRowClickSwitch);
         searchTarget("longPressTime", longPressSecondsLabel);
         searchTarget("swipe", focusSwipeEnabledSwitch);
@@ -905,6 +908,7 @@ public final class SettingsActivity extends Activity {
         pageListenerCleanup.clear();
         if (pageContainer != null) detachPageListeners(pageContainer);
         os3ModeButton = null;
+        loadedStatusText = null;
         os4ModeButton = null;
         manualWidthSwitch = null;
         widthSeekBar = null;
@@ -944,6 +948,7 @@ public final class SettingsActivity extends Activity {
         tintDeviceIconSwitch = null;
         notificationRowClickFallbackSwitch = null;
         independentFocusBannerSwitch = null;
+        advancedMaterialSwitch = null;
         longPressNotificationRowClickSwitch = null;
         focusSwipeEnabledSwitch = null;
         adaptiveFocusWidthSwitch = null;
@@ -1153,7 +1158,47 @@ public final class SettingsActivity extends Activity {
         root.addView(modePanel, matchWrap(dp(12)));
         refreshLoadedStatus();
 
-        root.addView(sectionHeader("超级岛转换"), matchWrap(dp(8)));
+        updateModeButtons();
+
+        root.addView(sectionHeader("设备信息"), matchWrap(dp(8)));
+        LinearLayout devicePanel = panel();
+        addOverviewValue(devicePanel, "Android 版本", android.os.Build.VERSION.RELEASE
+                + "(API " + android.os.Build.VERSION.SDK_INT + ")");
+        addOverviewValue(devicePanel, "系统界面版本", systemUiVersion());
+        addOverviewValue(devicePanel, "设备型号", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL);
+        addSettingSummary(devicePanel, "系统界面版本来自已安装的 com.android.systemui；以上信息仅展示，不会自动切换适配模式。");
+        root.addView(devicePanel, matchWrap(dp(12)));
+
+        root.addView(sectionHeader("白名单概览"), matchWrap(dp(8)));
+        LinearLayout whitelistPanel = panel();
+        addOverviewValue(whitelistPanel, "强制转换白名单", pendingForcePackages.size() + " 个应用");
+        addOverviewValue(whitelistPanel, "超时豁免白名单", pendingTimeoutExemptPackages.size() + " 个应用");
+        addSettingSummary(whitelistPanel, "按当前配置中的应用数统计；在高级页管理，两份名单互相独立。");
+        root.addView(whitelistPanel, matchWrap(dp(12)));
+    }
+
+    private String systemUiVersion() {
+        try {
+            android.content.pm.PackageInfo info = getPackageManager().getPackageInfo("com.android.systemui", 0);
+            String name = info.versionName;
+            if (name == null || name.isEmpty()) name = "未知版本";
+            // API 31 下限支持长版本码，避免高位版本信息被截断。
+            return name + "(" + info.getLongVersionCode() + ")";
+        } catch (android.content.pm.PackageManager.NameNotFoundException | RuntimeException failure) {
+            android.util.Log.w(TAG, "read SystemUI package version failed", failure);
+            return "读取失败";
+        }
+    }
+
+    /** 长版本号可自然换行，不沿用参数滑块的单行数值布局。 */
+    private void addOverviewValue(LinearLayout panel, String label, String value) {
+        panel.addView(text(label, 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        TextView detail = text(value == null || value.isEmpty() ? "未知" : value, 17, COLOR_TEXT_PRIMARY);
+        detail.setTextIsSelectable(true);
+        panel.addView(detail, matchWrap(dp(4)));
+    }
+
+    private void buildPrimarySettingsSections(LinearLayout root) {
         LinearLayout islandPanel = panel();
         islandCompatSwitch = createSwitch("转换超级岛内容为焦点通知");
         islandPanel.addView(islandCompatSwitch, matchWrap(dp(4)));
@@ -1169,7 +1214,7 @@ public final class SettingsActivity extends Activity {
         forcePackagesButton.setOnClickListener(v -> showForcePackagesDialog(false));
         islandPanel.addView(forcePackagesButton, matchWrap(0));
         addSettingSummary(islandPanel, "需开启上方转换开关；名单内应用有可转换内容时优先转换，与超时豁免名单独立。");
-        root.addView(islandPanel, matchWrap(dp(12)));
+        addCollapsibleSection(root, "超级岛转换", islandPanel);
 
         LinearLayout focusPanel = panel();
         manualWidthSwitch = createSwitch("限制焦点通知宽度");
@@ -1255,8 +1300,6 @@ public final class SettingsActivity extends Activity {
         updateTimeoutExemptButton();
         updateModeSpecificControls();
         updateFocusDividerControls();
-        installSettingsListeners();
-        refreshDefaultActions();
     }
 
     private void buildMediaSection(LinearLayout root) {
@@ -1410,6 +1453,7 @@ public final class SettingsActivity extends Activity {
     }
 
     private void buildAdvancedPage(LinearLayout root) {
+        buildPrimarySettingsSections(root);
         buildIconAndDividerSection(root);
         buildContentSection(root);
         buildInteractionSection(root);
@@ -1512,7 +1556,10 @@ public final class SettingsActivity extends Activity {
                 pendingSpecialBannerNormalBackground ? 0 : 1,
                 position -> selectBannerBackground(position == 0));
         interactionPanel.addView(bannerBackgroundField.spinner, matchWrap(dp(4)));
-        addSettingSummary(interactionPanel, "需开启上方“点击展开横幅”；横幅兼容性因 ROM 而异。媒体点击方式见“媒体焦点”。");
+        addSettingSummary(interactionPanel, "需开启上方“点击展开横幅”。媒体使用封面背景，点击方式见“媒体焦点”。");
+        advancedMaterialSwitch = createSwitch("高级材质接入（实验性）");
+        interactionPanel.addView(advancedMaterialSwitch, matchWrap(dp(4)));
+        addSettingSummary(interactionPanel, "默认关闭。仅在选择“使用普通通知背景”后生效，尝试跟随系统模糊或玻璃材质；关闭或系统不支持时保留原背景。玻璃边缘效果仍待验证。");
         addSettingSubheading(interactionPanel, "长按");
         // 长按直接走通知列表点击，不能归入短按横幅子项或旧点击互斥链。
         longPressNotificationRowClickSwitch = createSwitch("长按焦点通知模拟通知列表点击（实验性）");
@@ -1662,6 +1709,7 @@ public final class SettingsActivity extends Activity {
         allowFocusClickSwitch.setChecked(pendingAllowFocusClick);
         notificationRowClickFallbackSwitch.setChecked(pendingNotificationRowClickFallback);
         independentFocusBannerSwitch.setChecked(pendingIndependentFocusBanner);
+        advancedMaterialSwitch.setChecked(pendingAdvancedMaterialEnabled);
         longPressNotificationRowClickSwitch.setChecked(pendingLongPressNotificationRowClick);
         focusSwipeEnabledSwitch.setChecked(pendingFocusSwipeEnabled);
         adaptiveFocusWidthSwitch.setChecked(pendingAdaptiveFocusWidth);
@@ -2065,6 +2113,7 @@ public final class SettingsActivity extends Activity {
         outState.putInt("m3.width", pendingWidthDp);
         outState.putInt("m3.widthLandscape", pendingWidthLandscapeDp);
         outState.putBoolean("m3.specialBackground", pendingSpecialBannerNormalBackground);
+        outState.putBoolean("m3.advancedMaterialEnabled", pendingAdvancedMaterialEnabled);
         outState.putBoolean("m3.mediaFocus", pendingMediaFocusEnabled);
         outState.putBoolean("m3.mediaFocusNativeBanner", pendingMediaFocusNativeBanner);
         outState.putInt("m3.mediaFocusCastPicker", pendingMediaFocusCastPicker);
@@ -2149,6 +2198,7 @@ public final class SettingsActivity extends Activity {
         pendingWidthDp = state.getInt("m3.width", pendingWidthDp);
         pendingWidthLandscapeDp = state.getInt("m3.widthLandscape", pendingWidthLandscapeDp);
         pendingSpecialBannerNormalBackground = state.getBoolean("m3.specialBackground", pendingSpecialBannerNormalBackground);
+        pendingAdvancedMaterialEnabled = state.getBoolean("m3.advancedMaterialEnabled", pendingAdvancedMaterialEnabled);
         pendingMediaFocusEnabled = state.getBoolean("m3.mediaFocus", pendingMediaFocusEnabled);
         pendingMediaFocusNativeBanner = state.getBoolean("m3.mediaFocusNativeBanner",
                 pendingMediaFocusNativeBanner);
@@ -2425,6 +2475,10 @@ public final class SettingsActivity extends Activity {
                 markPending();
             });
         }
+        if (advancedMaterialSwitch != null) advancedMaterialSwitch.setOnCheckedChangeListener((b, c) -> {
+            pendingAdvancedMaterialEnabled = c;
+            markPending();
+        });
         if (hideNotificationIconsSwitch != null) hideNotificationIconsSwitch.setOnCheckedChangeListener((b, c) -> {
             pendingHideNotificationIcons = c;
             updateModeSpecificControls();
@@ -2928,6 +2982,9 @@ public final class SettingsActivity extends Activity {
         setControlEnabled(bannerBackgroundLabel, bannerSubEnabled);
         setControlEnabled(bannerBackgroundField == null ? null : bannerBackgroundField.spinner,
                 bannerSubEnabled);
+        // 只置灰，不因切换背景或关闭横幅清掉独立保存的材质选择。
+        setModeSpecificSwitchEnabled(advancedMaterialSwitch,
+                bannerSubEnabled && !pendingSpecialBannerNormalBackground);
         setControlEnabled(mediaFocusClickLabel, mediaSubEnabled);
         setControlEnabled(mediaFocusClickField == null ? null : mediaFocusClickField.spinner,
                 mediaSubEnabled);
@@ -3384,6 +3441,7 @@ public final class SettingsActivity extends Activity {
         pendingWidthDp = settings.widthDp;
         pendingWidthLandscapeDp = settings.widthLandscapeDp;
         pendingSpecialBannerNormalBackground = settings.specialBannerNormalBackground;
+        pendingAdvancedMaterialEnabled = settings.advancedMaterialEnabled;
         pendingMediaFocusEnabled = settings.mediaFocusEnabled;
         pendingMediaFocusNativeBanner = settings.mediaFocusNativeBanner;
         pendingMediaFocusCastPicker = settings.mediaFocusCastPicker;
@@ -3450,6 +3508,7 @@ public final class SettingsActivity extends Activity {
                 .widthDp(pendingWidthDp)
                 .widthLandscapeDp(pendingWidthLandscapeDp)
                 .specialBannerNormalBackground(pendingSpecialBannerNormalBackground)
+                .advancedMaterialEnabled(pendingAdvancedMaterialEnabled)
                 .mediaFocusEnabled(pendingMediaFocusEnabled)
                 .mediaFocusNativeBanner(pendingMediaFocusNativeBanner)
                 .mediaFocusCastPicker(pendingMediaFocusCastPicker)
@@ -3812,6 +3871,7 @@ public final class SettingsActivity extends Activity {
     private void selectBannerBackground(boolean solid) {
         if (pendingSpecialBannerNormalBackground == solid) return;
         pendingSpecialBannerNormalBackground = solid;
+        updateExperimentalControls();
         markPending();
     }
 

@@ -431,6 +431,14 @@ public final class FocusBannerController {
         });
     }
 
+    public void refreshMaterialSetting() {
+        runMain("material-setting", () -> {
+            if (banner == null || banner.material == null) return;
+            banner.material.refresh();
+            banner.invalidate();
+        });
+    }
+
     public void dismiss(String reason) {
         runMain("dismiss", () -> dismissMain(reason == null ? "requested" : reason));
     }
@@ -689,6 +697,7 @@ public final class FocusBannerController {
                 dismissMain(now >= hardDeadline ? "hard-timeout" : "auto-timeout");
                 return;
             }
+            if (banner.material != null) banner.material.refresh();
             mainHandler().postDelayed(monitor, Math.min(MONITOR_MS, Math.min(softDeadline, hardDeadline) - now));
         } catch (Throwable error) {
             fail("lifecycle monitor", error);
@@ -849,6 +858,7 @@ public final class FocusBannerController {
     private final class BannerFrame extends FrameLayout {
         private final String notificationKey;
         private FocusBannerSource render;
+        private NativeBannerMaterial.Session material;
         private int maxHeight;
         private boolean renderAttached;
         private int lastLayoutWidth = -1;
@@ -930,6 +940,7 @@ public final class FocusBannerController {
             try {
                 releaseContent();
                 render = prepared.render;
+                material = new NativeBannerMaterial.Session(render.materialTarget());
                 maxHeight = prepared.geometry.maxHeight;
                 setMinimumHeight(0);
                 renderAttached = false;
@@ -951,6 +962,7 @@ public final class FocusBannerController {
         void releaseContent() {
             cancelNativeGesture();
             mainHandler().removeCallbacks(attachedCallback);
+            if (material != null) material.clear();
             FocusBannerSource previous = render;
             if (previous == null) return;
             if (previous.view().getParent() == this) removeView(previous.view());
@@ -970,6 +982,7 @@ public final class FocusBannerController {
             try {
                 attached.onAttached();
                 renderAttached = true;
+                if (material != null) material.refresh();
                 event(notificationKey, "native Ready source=" + safe(attached.source(), 240)
                         + " attached=true width=" + attached.widthPx() + " minHeight=" + attached.minHeightPx());
             } catch (Throwable error) {
@@ -1034,7 +1047,10 @@ public final class FocusBannerController {
 
         @Override public void draw(Canvas canvas) {
             if (!canDraw()) return;
-            try { super.draw(canvas); }
+            try {
+                if (material != null) material.beforeDraw();
+                super.draw(canvas);
+            }
             catch (Throwable error) { renderingFailure("draw", error); }
         }
 
@@ -1042,6 +1058,7 @@ public final class FocusBannerController {
             // A background-free FrameLayout can be drawn through dispatchDraw directly.
             if (!canDraw()) return;
             try {
+                if (material != null) material.beforeDraw();
                 super.dispatchDraw(canvas);
                 if (!drawnLogged && getWidth() > 0 && getHeight() > 0 && render != null) {
                     drawnLogged = true;

@@ -147,6 +147,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private long settingsReadGeneration;
     private boolean settingsReadQueued;
     private boolean hasSuccessfulProviderSettings;
+    private DeferredSettingsLoader deferredSettingsLoader;
     private int providerSettingsState = Integer.MIN_VALUE;
     private final HookInstaller hookInstaller = new HookInstaller();
     private boolean modeCommonHooksInstalled;
@@ -259,6 +260,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         });
         islandCapabilityPublication.install(classLoader);
         hookNativeBannerPlugin();
+        NativeBannerMaterial.install(classLoader);
         hookApplicationAttach();
         hookDynamicIslandSystemProperty();
         disableDynamicIslandFeatureCache();
@@ -423,6 +425,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 : hookInstaller.has("com.android.systemui.statusbar.notification.utils.FocusUtils", "showOnStatusBar")
                 && hookInstaller.has("com.android.systemui.statusbar.phone.FocusedNotifPromptController", "shouldShow")
                 && hookInstaller.has("com.android.systemui.statusbar.phone.FocusedNotifPromptView", "setData");
+        if (modeHooksInstalled && deferredSettingsLoader != null) deferredSettingsLoader.cancel();
         log("mode installation ready=" + modeHooksInstalled + " installedMode=OS" + installedHookMode
                 + " handles=" + hookInstaller.count() + " failures=" + hookInstaller.failedCount()
                 + " detail=" + hookInstaller.failures());
@@ -496,13 +499,27 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         suppressedIslandLifecycle.install(classLoader, systemUiContext, mainHandler);
     }
 
+    private void startDeferredSettingsLoad() {
+        if (deferredSettingsLoader != null || hasSuccessfulProviderSettings) return;
+        Handler handler = mainHandler;
+        if (handler == null) return;
+        // 启动时 Provider 暂不可用不能使所有业务 Hook 永久缺席；只重读真实配置，不写入默认值。
+        deferredSettingsLoader = new DeferredSettingsLoader((task, delayMs) -> {
+            if (!handler.postDelayed(task, delayMs)) {
+                throw new IllegalStateException("main handler rejected settings retry");
+            }
+            return () -> handler.removeCallbacks(task);
+        }, () -> hasSuccessfulProviderSettings || reloadSettings(true), () -> {
+            log("persisted settings became available; installing configured mode hooks");
+            installConfiguredModeHooks();
+        }, () -> log("mode hooks deferred settings load stopped (startup window exhausted or retry failed); "
+                + "open module settings and check the preceding error, then restart SystemUI or device manually"),
+                (stage, failure) -> error(stage, failure));
+        deferredSettingsLoader.start();
+    }
+
     /**
-     * 补装因设置读取失败而跳过的 Hook。
-     *
-     * <p>{@code Application.attach} 阶段只尝试一次同步读取；开机早期 provider 未就绪或模块进程被杀时
-     * 会失败，此后所有焦点/媒体/滑动/横幅 Hook 都不安装，而后续读取成功也不会补装，用户只能重启
-     * 系统界面。这里在任一后续读取成功后补装一次，依赖 {@link #installConfiguredModeHooks()} 自带的
-     * 幂等守卫；安装必须在主线程进行，与 attach 路径保持一致。
+     * 任一后续读取成功后在主线程补装；幂等守卫固定首次持久化模式，后续不切换模式或重装。
      */
     private void installHooksAfterDeferredSettings() {
         if (modeHooksInstalled) return;
@@ -512,13 +529,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             debug("mode hooks still uninstalled: main handler unavailable");
             return;
         }
-        handler.post(() -> {
+        if (!handler.post(() -> {
             synchronized (HyperOS3FocusRestoreHook.this) {
                 if (modeHooksInstalled) return;
                 log("installing configured mode hooks after a successful settings read");
                 installConfiguredModeHooks();
             }
-        });
+        })) {
+            error("install deferred mode hooks", new IllegalStateException("main handler rejected installation"));
+        }
     }
 
     private boolean isVisibleFocusRegion(float x, float y, int displayId) {
@@ -857,8 +876,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 if (reloadSettings(true)) {
                                     installConfiguredModeHooks();
                                 } else {
-                                    log("mode hooks not installed: persisted settings unavailable; "
-                                            + "restart SystemUI or device after settings storage is available");
+                                    log("mode hooks deferred: persisted settings unavailable; retrying for up to 60 seconds");
+                                    startDeferredSettingsLoad();
                                 }
                             }
                         }
@@ -2987,28 +3006,25 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     "miui.systemui.dynamicisland.window.DynamicIslandWindowViewController");
             Class<?> background = FocusReflection.findClass(pluginLoader,
                     "miui.systemui.dynamicisland.DynamicIslandBackgroundView");
-            if (background == null) {
-                log("Dynamic Island view blocking skipped: contentPlugin=" + (contentPlugin != null)
-                        + " windowView=" + (windowView != null)
-                        + " controller=" + (windowController != null) + " background=null");
-                return;
-            }
-            // Debug/Release 使用相同屏蔽路径；上一版整组放行未证实有效，且会恢复原生岛内容。
-            int contentHooks = suppressIslandViewCall(contentPlugin, "addDynamicIslandView")
-                    + suppressIslandViewCall(contentPlugin, "updateDynamicIslandView");
+            // APK: miui.systemui.plugin 18.3.2.22.0/code183022200，作者只读 MCP
+            // http://192.168.31.20:8787/mcp；OS4 通知插件无 add/update，入口在窗口及控制器。
+            // 私有接口版权/许可未确认，仅按接口事实独立适配；可选目标缺失不能中止后续屏蔽。
+            int contentAddHooks = suppressIslandViewCall(contentPlugin, "addDynamicIslandView");
+            int contentUpdateHooks = suppressIslandViewCall(contentPlugin, "updateDynamicIslandView");
+            int contentHooks = contentAddHooks + contentUpdateHooks;
             int viewHooks = suppressIslandViewCall(windowView, "updateDynamicIslandView")
                     + suppressIslandViewCall(windowView, "updateDynamicIslandViewSuspend");
             islandControllerAddHooks = suppressIslandViewCall(windowController, "addDynamicIslandView");
-            int controllerHooks = islandControllerAddHooks
-                    + suppressIslandViewCall(windowController, "updateDynamicIslandView");
-            // 兜底：黑色圆角底由该 View 的 onDraw 画，直接不画；并让它始终不可见、透明。
-            hookInstaller.allMethods(background, "onDraw", new XC_MethodHook() {
+            int controllerUpdateHooks = suppressIslandViewCall(windowController, "updateDynamicIslandView");
+            int controllerHooks = islandControllerAddHooks + controllerUpdateHooks;
+            // 仅原生岛背景兜底，不触碰 Focus/Compose chips、重要提示宿主或舞台视图树。
+            int drawHooks = optionalIslandHooks(background, "onDraw", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     param.setResult(null);
                 }
             });
-            hookInstaller.allMethods(background, "setVisibility", new XC_MethodHook() {
+            int visibilityHooks = optionalIslandHooks(background, "setVisibility", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     if (param.args.length == 1 && param.args[0] instanceof Integer) {
@@ -3016,7 +3032,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     }
                 }
             });
-            hookInstaller.allMethods(background, "alphaAnimation", new XC_MethodHook() {
+            int alphaHooks = optionalIslandHooks(background, "alphaAnimation", new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) {
                     if (param.args.length == 1 && param.args[0] instanceof Float) param.args[0] = 0f;
@@ -3028,12 +3044,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Class<?> proxy = FocusReflection.findClass(pluginLoader,
                     "miui.systemui.dynamicisland.window.DynamicIslandWindowViewCreator$dynamicIslandContentProxy$2$1");
             commandHooks += observeIslandCommands(proxy);
-            islandViewsBlocked = true;
-            log("Dynamic Island views blocked: entries suppressed, background never drawn"
-                    + " contentPlugin=" + (contentPlugin != null) + " windowView=" + (windowView != null)
-                    + " controller=" + (windowController != null));
-            debug("island-lifecycle stage=view-install mode=blocked contentHooks=" + contentHooks
-                    + " viewHooks=" + viewHooks + " controllerHooks=" + controllerHooks
+            islandViewsBlocked = ((contentAddHooks > 0 && contentUpdateHooks > 0)
+                    || (islandControllerAddHooks > 0 && controllerUpdateHooks > 0))
+                    && drawHooks > 0 && visibilityHooks > 0 && alphaHooks > 0;
+            log("Dynamic Island view blocking " + (islandViewsBlocked ? "ready" : "partial")
+                    + " contentHooks=" + contentHooks + " viewHooks=" + viewHooks
+                    + " controllerHooks=" + controllerHooks + " backgroundHooks="
+                    + drawHooks + "/" + visibilityHooks + "/" + alphaHooks);
+            debug("island-lifecycle stage=view-install mode=" + (islandViewsBlocked ? "blocked" : "partial")
+                    + " contentHooks=" + contentHooks + " viewHooks=" + viewHooks + " controllerHooks=" + controllerHooks
                     + " controllerAddHooks=" + islandControllerAddHooks + " commandHooks=" + commandHooks);
             if (islandControllerAddHooks == 0) {
                 log("island lifecycle completion disabled: controller add hook missing");
@@ -3044,10 +3063,22 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    /** 可选接口缺失返回零；单个后端失败也不能阻断其他独立屏蔽入口。 */
+    private int optionalIslandHooks(Class<?> owner, String name, XC_MethodHook callback) {
+        try {
+            int count = hookInstaller.optionalAllMethods(owner, name, callback).size();
+            debug("island-lifecycle stage=target-install owner="
+                    + (owner == null ? "missing" : owner.getName()) + " method=" + name + " hooks=" + count);
+            return count;
+        } catch (Throwable failure) {
+            error("island target install " + (owner == null ? "missing" : owner.getName()) + "#" + name, failure);
+            return 0;
+        }
+    }
+
     /** 按方法名整组拦截，避免依赖只在插件 ClassLoader 里可见的参数类型。 */
     private int suppressIslandViewCall(Class<?> owner, String name) {
-        if (owner == null) return 0;
-        return hookInstaller.allMethods(owner, name, new XC_MethodHook() {
+        return optionalIslandHooks(owner, name, new XC_MethodHook() {
             private boolean reported;
             @Override
             protected void beforeHookedMethod(MethodHookParam param) {
@@ -3056,12 +3087,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 reported = true;
                 debug("island-lifecycle stage=view-blocked method=" + owner.getSimpleName() + "#" + name);
             }
-        }).size();
+        });
     }
 
     private int observeIslandCommands(Class<?> owner) {
         if (!BuildConfig.DEBUG || owner == null) return 0;
-        return hookInstaller.allMethods(owner, "handleDynamicIsland", new XC_MethodHook() {
+        return optionalIslandHooks(owner, "handleDynamicIsland", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 if (param.args.length == 0 || !(param.args[0] instanceof Bundle)) return;
                 Bundle command = (Bundle) param.args[0];
@@ -3075,7 +3106,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         + " " + islandCommand(command) + " failed=" + param.hasThrowable());
                 if (param.hasThrowable()) error("island-lifecycle command " + action, param.getThrowable());
             }
-        }).size();
+        });
     }
 
     /** 打印插件命令的 action 与标量参数，用于定位设备通知等真实入口。 */
@@ -3453,6 +3484,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             boolean appearanceChanged;
             boolean islandConversionChanged;
             boolean richTextChanged;
+            boolean advancedMaterialChanged;
             boolean hideTimeChanged;
             synchronized (this) {
                 if (generation != settingsReadGeneration) return false;
@@ -3461,17 +3493,26 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 islandConversionChanged = currentSettings.islandCompat != next.islandCompat
                         || !currentSettings.islandForcePackages.equals(next.islandForcePackages);
                 richTextChanged = currentSettings.islandRichText != next.islandRichText;
+                advancedMaterialChanged = currentSettings.advancedMaterialEnabled != next.advancedMaterialEnabled;
                 hideTimeChanged = false;
                 for (int kind : new int[]{FocusKind.NORMAL, FocusKind.MEDIA, FocusKind.DEVICE}) {
                     hideTimeChanged |= currentSettings.hideTimeForKind(kind) != next.hideTimeForKind(kind);
                 }
                 currentSettings = next;
+                NativeFocusAppearance.setAdvancedMaterialEnabled(next.advancedMaterialEnabled);
                 appliedSettingsGeneration = readGeneration[0];
                 if (modeHooksInstalled && next.hookMode != installedHookMode) {
                     log("hook mode change saved configuredMode=OS" + next.hookMode
                             + " installedMode=OS" + installedHookMode
                             + "; restart SystemUI or device to apply");
                 }
+            }
+            if (advancedMaterialChanged && mainHandler != null) {
+                // 设置读取在后台；刷新时使用最新门控，不捕获旧配置，后续无关更新也不丢清理。
+                if (!mainHandler.post(() -> {
+                    FocusBannerController controller = bannerController;
+                    if (controller != null) controller.refreshMaterialSetting();
+                })) error("refresh banner material setting", new IllegalStateException("main handler rejected material refresh"));
             }
             if (hideTimeChanged && modeHooksInstalled && mainHandler != null
                     && installedHookMode == FocusRestoreSettings.HOOK_MODE_OS3) {
@@ -6592,8 +6633,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             // the island sides and why the focus content mode had no effect on OS4 at all. For a
             // whitelisted package the user has said this app's island content should be the focus
             // text, so the parse wins here exactly as it does on the OS3 pill.
+            // 白名单只改变转换优先级，不能绕过内容转换总开关；关闭时继续使用原生 Focus。
             IslandText whitelisted = currentSettings.islandForcePackages.contains(data.packageName)
-                    ? extractIslandContent(data) : null;
+                    && shouldConvert(data) ? extractIslandContent(data) : null;
             if (whitelisted != null && !TextUtils.isEmpty(whitelisted.text)) {
                 log("OS4 whitelist parse wins over native content key=" + key
                         + " source=" + whitelisted.source + " text=" + preview(whitelisted.text));

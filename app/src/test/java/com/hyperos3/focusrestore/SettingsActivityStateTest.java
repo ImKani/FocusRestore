@@ -120,6 +120,19 @@ public class SettingsActivityStateTest {
     }
 
     @Test
+    public void advancedMaterialStateSurvivesRecreationAndStaysSeparateFromBackgroundChoice() throws Exception {
+        String source = readSettingsActivitySource();
+        assertTrue(source.contains("pendingAdvancedMaterialEnabled = settings.advancedMaterialEnabled"));
+        assertTrue(source.contains("outState.putBoolean(\"m3.advancedMaterialEnabled\", pendingAdvancedMaterialEnabled)"));
+        assertTrue(source.contains("state.getBoolean(\"m3.advancedMaterialEnabled\", pendingAdvancedMaterialEnabled)"));
+        assertTrue(source.contains(".advancedMaterialEnabled(pendingAdvancedMaterialEnabled)"));
+        assertTrue(source.contains("advancedMaterialSwitch.setChecked(pendingAdvancedMaterialEnabled)"));
+        assertTrue(source.contains("bannerSubEnabled && !pendingSpecialBannerNormalBackground"));
+        assertTrue(source.contains("searchTarget(\"advancedMaterial\", advancedMaterialSwitch)"));
+        assertTrue(source.contains("advancedMaterialSwitch = null"));
+    }
+
+    @Test
     public void appearanceStateControlsAndCleanupRemainAvailableOnOs3() throws Exception {
         String source = readSettingsActivitySource();
         for (String field : new String[]{"focusIconSizeDp", "focusIconTextGapDp", "focusDividerStartDp", "focusDividerEndDp",

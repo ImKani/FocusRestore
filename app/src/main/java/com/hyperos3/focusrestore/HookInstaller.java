@@ -10,6 +10,7 @@ import java.lang.reflect.Constructor;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.function.Function;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
@@ -31,16 +32,18 @@ final class HookInstaller {
     XC_MethodHook.Unhook exact(Class<?> owner, String name, Object... parametersAndCallback) {
         if (owner == null) throw missing("missing class for " + name);
         XC_MethodHook callback = (XC_MethodHook) parametersAndCallback[parametersAndCallback.length - 1];
+        String key = owner.getName() + "#" + name;
+        Method target;
         try {
-            Method target = XposedHelpers.findMethodExact(owner, name,
+            target = XposedHelpers.findMethodExact(owner, name,
                     Arrays.copyOf(parametersAndCallback, parametersAndCallback.length - 1));
-            XC_MethodHook.Unhook handle = method(target, callback);
-            registrations.resolved(owner.getName() + "#" + name);
-            return handle;
         } catch (Throwable failure) {
-            registrations.missing(owner.getName() + "#" + name);
-            throw new IllegalStateException("missing exact Hook " + owner.getName() + "#" + name, failure);
+            registrations.missing(key);
+            throw new IllegalStateException("missing exact Hook " + key, failure);
         }
+        XC_MethodHook.Unhook handle = method(target, callback);
+        registrations.resolved(key);
+        return handle;
     }
 
     XC_MethodHook.Unhook exact(String owner, ClassLoader loader, String name, Object... parametersAndCallback) {
@@ -49,13 +52,29 @@ final class HookInstaller {
 
     Set<XC_MethodHook.Unhook> allMethods(Class<?> owner, String name, XC_MethodHook callback) {
         if (owner == null) throw missing("missing class for " + name);
-        Set<XC_MethodHook.Unhook> handles = new LinkedHashSet<>();
-        for (Method target : owner.getDeclaredMethods()) {
-            if (target.getName().equals(name)) handles.add(method(target, callback));
-        }
         String key = owner.getName() + "#" + name;
+        Set<XC_MethodHook.Unhook> handles = installDeclaredMethods(owner, name,
+                target -> method(target, callback));
         if (handles.isEmpty()) throw missing(key);
         registrations.resolved(key);
+        return handles;
+    }
+
+    Set<XC_MethodHook.Unhook> optionalAllMethods(Class<?> owner, String name,
+                                                  XC_MethodHook callback) {
+        Set<XC_MethodHook.Unhook> handles = installDeclaredMethods(owner, name,
+                target -> method(target, callback));
+        if (!handles.isEmpty()) registrations.resolved(owner.getName() + "#" + name);
+        return handles;
+    }
+
+    static <T> Set<T> installDeclaredMethods(Class<?> owner, String name,
+                                              Function<Method, T> installer) {
+        Set<T> handles = new LinkedHashSet<>();
+        if (owner == null) return handles;
+        for (Method target : owner.getDeclaredMethods()) {
+            if (target.getName().equals(name)) handles.add(installer.apply(target));
+        }
         return handles;
     }
 

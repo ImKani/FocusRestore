@@ -44,6 +44,34 @@ public class SettingsBackupCodecTest {
     }
 
     @Test
+    public void advancedMaterialBackupRoundTripsIndependentlyAndOldFilesStayOff() throws Exception {
+        for (boolean ordinaryBackground : new boolean[]{false, true}) {
+            for (boolean enabled : new boolean[]{false, true}) {
+                FocusRestoreSettings selected = FocusRestoreSettings.edit()
+                        .specialBannerNormalBackground(ordinaryBackground)
+                        .advancedMaterialEnabled(enabled).build();
+                byte[] encoded = SettingsBackupCodec.encode(selected);
+                JSONObject interaction = new JSONObject(utf8(encoded)).getJSONObject("settings")
+                        .getJSONObject("interaction");
+                assertEquals(enabled, interaction.getBoolean("advanced_material_enabled"));
+                assertEquals(ordinaryBackground, interaction.getBoolean("special_banner_normal_background"));
+                assertEverySettingEquals(selected, SettingsBackupCodec.decode(encoded));
+            }
+            FocusRestoreSettings legacy = decodeGroups("{\"interaction\":{\"special_banner_normal_background\":"
+                    + ordinaryBackground + "}}");
+            assertFalse(legacy.advancedMaterialEnabled);
+            assertEquals(ordinaryBackground, legacy.specialBannerNormalBackground);
+        }
+    }
+
+    @Test
+    public void advancedMaterialBackupRejectsNonBooleanValues() throws Exception {
+        for (String invalid : new String[]{"0", "1", "\"true\"", "null", "[]", "{}"}) {
+            rejectGroups("{\"interaction\":{\"advanced_material_enabled\":" + invalid + "}}");
+        }
+    }
+
+    @Test
     public void outputIsGroupedReadableAndDeterministic() throws Exception {
         FocusRestoreSettings first = FocusRestoreSettings.edit(allSettings(false)).islandForcePackages(
                 new HashSet<>(Arrays.asList("com.example.z", "com.example.a"))).build();
@@ -67,7 +95,7 @@ public class SettingsBackupCodecTest {
         int fields = 0;
         JSONObject groups = root.getJSONObject("settings");
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
-        assertEquals(51, fields);
+        assertEquals(52, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules",
                 "focus_divider_start_dp", "focus_divider_end_dp"}) {
@@ -546,7 +574,7 @@ public class SettingsBackupCodecTest {
 
     private static FocusRestoreSettings allSettings(boolean direct) {
         return FocusRestoreSettings.edit().hookMode(4).limitWidth(false).widthDp(244).widthLandscapeDp(1200)
-                .marqueeDelayMs(1700).specialBannerNormalBackground(false)
+                .marqueeDelayMs(1700).specialBannerNormalBackground(false).advancedMaterialEnabled(true)
                 .mediaFocusEnabled(true).mediaFocusNativeBanner(true).mediaFocusCastPicker(1).mediaFocusCastDirect(direct)
                 .compatRetry(true).marqueeBounce(false).islandCompat(true).islandRichText(false)
                 .disableIslandProperty(false).disableIslandFeatureCache(false).allowFocusClick(true)
@@ -602,7 +630,7 @@ public class SettingsBackupCodecTest {
             assertEquals(field.getName(), field.get(expected), field.get(actual));
             count++;
         }
-        assertEquals("current user snapshot field count", 51, count);
+        assertEquals("current user snapshot field count", 52, count);
     }
 
     private static FocusRestoreSettings decodeGroups(String groups) throws IOException {

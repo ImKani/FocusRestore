@@ -410,11 +410,7 @@ final class NativeFocusTemplateRenderer {
         }
         Object factory = source.factory.get();
         if (factory == null) throw unavailable("native template factory was released");
-        // A captured template must still be the normal chain's current model, not an older task.
-        if (mapValue(factory, "templateMap", key) != source.template
-                || mapValue(factory, "builderMap", key) == null) {
-            throw unavailable("normal V3 template generation changed or was removed");
-        }
+        String createState = validateV3Source(source, factory, key, requested.identity, "before-create");
         // Native module binding writes derived timer extras. Preserve the real SBN identity but
         // isolate those writes from SystemUI's notification; PendingIntents retain their tokens.
         StatusBarNotification bindingSbn = cloneForBinding(sbn);
@@ -444,6 +440,8 @@ final class NativeFocusTemplateRenderer {
             call(content, "setSbn", bindingSbn);
             Object builderFactory = get(factory, "templateBuilderV3Factory");
             Object originalBuilder = mapValue(factory, "builderMap", key);
+            validateV3BuilderSnapshot(source, factory, key, requested.identity, originalBuilder,
+                    "before-independent-builder");
             Object candidate = call(builderFactory, "create", source.isFlip);
             if (candidate == null || candidate == originalBuilder) {
                 throw unavailable("builder factory did not return an independent builder");
@@ -477,7 +475,7 @@ final class NativeFocusTemplateRenderer {
             call(builder, "addModuleView", areaC, moduleC, solid, source.template, bindingSbn);
             call(builder, "addModuleView", areaA, moduleA, solid, source.template, bindingSbn);
             adapters = ownedAdapters(builder);
-            ensureIndependentAdapters(adapters, mapValue(factory, "builderMap", key));
+            ensureIndependentAdapters(adapters, originalBuilder);
             call(builder, "buildView", content, source.template);
             stage = "select notification expanded content";
             Context sysuiContext = (Context) get(adapters.get(0), "sysuiContext");
@@ -502,6 +500,7 @@ final class NativeFocusTemplateRenderer {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             expanded.addView(body);
             if (!source.installation.connected) throw unavailable("plugin disconnected during render creation");
+            validateV3Source(source, factory, key, requested.identity, "after-create");
             Render render = new Render(this, loader, expanded, context, appearance.width, body.getMinimumHeight(),
                     builder, content, modules, adapters, bindingSbn, body, source,
                     "native-v3/" + getter + "/" + appearance.description);
@@ -519,8 +518,73 @@ final class NativeFocusTemplateRenderer {
             }
             cleanupBuilder(builder, content, modules, adapters);
             throw new IllegalStateException("native V3 unavailable at " + stage + ": "
-                    + message(error), unwrap(error));
+                    + message(error) + " (initial " + createState + ")", unwrap(error));
         }
+    }
+
+    private String validateV3Source(Source source, Object factory, String key,
+                                    NativeFocusSourceIdentity requested, String checkpoint) throws Exception {
+        Object mappedTemplate;
+        try {
+            mappedTemplate = mapValue(factory, "templateMap", key);
+        } catch (Throwable error) {
+            throw unavailable("native V3 " + checkpoint + " templateMap unavailable: " + message(error));
+        }
+        Object currentBuilder;
+        try {
+            currentBuilder = mapValue(factory, "builderMap", key);
+        } catch (Throwable error) {
+            throw unavailable("native V3 " + checkpoint + " builderMap unavailable: " + message(error));
+        }
+        return validateV3State(source, key, requested, checkpoint, mappedTemplate, currentBuilder);
+    }
+
+    private String validateV3BuilderSnapshot(Source source, Object factory, String key,
+                                           NativeFocusSourceIdentity requested, Object currentBuilder,
+                                           String checkpoint) throws Exception {
+        Object mappedTemplate;
+        try {
+            mappedTemplate = mapValue(factory, "templateMap", key);
+        } catch (Throwable error) {
+            throw unavailable("native V3 " + checkpoint + " templateMap unavailable: " + message(error));
+        }
+        return validateV3State(source, key, requested, checkpoint, mappedTemplate, currentBuilder);
+    }
+
+    private String validateV3State(Source source, String key, NativeFocusSourceIdentity requested,
+                                   String checkpoint, Object mappedTemplate, Object currentBuilder) {
+        boolean currentSource;
+        boolean loaderConnected;
+        Long removedAt;
+        synchronized (lock) {
+            currentSource = sources.get(key) == source;
+            loaderConnected = source.installation.connected;
+            removedAt = removedKeys.get(key);
+        }
+        Object observedBuilder = source.observedBuilder.get();
+        NativeFocusTemplateStatePolicy.Rejection rejection = NativeFocusTemplateStatePolicy.evaluate(
+                currentSource, loaderConnected, source.stamp.identity.matches(requested),
+                NativeFocusRemovalPolicy.rejects(removedAt, source.stamp.postTime),
+                mappedTemplate == source.template, observedBuilder, currentBuilder);
+        if (rejection != NativeFocusTemplateStatePolicy.Rejection.NONE) {
+            String reason;
+            switch (rejection) {
+                case SOURCE_CHANGED: reason = "source-changed"; break;
+                case LOADER_DISCONNECTED: reason = "loader-disconnected"; break;
+                case NOTIFICATION_GENERATION_CHANGED: reason = "notification-generation-changed"; break;
+                case NOTIFICATION_REMOVED: reason = "notification-removed"; break;
+                case TEMPLATE_CHANGED: reason = "templateMap-changed"; break;
+                case BUILDER_CHANGED: reason = "builderMap-changed"; break;
+                default: reason = "unknown"; break;
+            }
+            String state = "templateMap=" + (mappedTemplate == source.template ? "match" : "mismatch")
+                    + " currentBuilder=" + (currentBuilder == null ? "missing" : "present")
+                    + " observedBuilder=" + (observedBuilder == null ? "released" : "present");
+            throw unavailable("native V3 " + checkpoint + " rejected: " + reason + " (" + state + ")");
+        }
+        return "templateMap=" + (mappedTemplate == source.template ? "match" : "mismatch")
+                + " currentBuilder=" + (currentBuilder == null ? "missing" : "present")
+                + " observedBuilder=" + (observedBuilder == null ? "released" : "present");
     }
 
     private void observe(Installation installation, Object factory, Object template,
@@ -559,7 +623,7 @@ final class NativeFocusTemplateRenderer {
             }
             firstReady = previous == null || previous.installation != installation;
             pruneSources();
-            sources.put(stamp.key, new Source(installation, factory, template, stamp, isFlip));
+            sources.put(stamp.key, new Source(installation, factory, template, observedBuilder, stamp, isFlip));
             trim(sources, MAX_SOURCES);
         }
         if (firstReady) {
@@ -847,6 +911,7 @@ final class NativeFocusTemplateRenderer {
         }
 
         @Override public View view() { return view; }
+        @Override public View materialTarget() { return view; }
         @Override public Context context() { return context; }
         @Override public int widthPx() { return widthPx; }
         @Override public int minHeightPx() { return minHeightPx; }
@@ -922,6 +987,7 @@ final class NativeFocusTemplateRenderer {
     private static final class Source {
         final Installation installation;
         final WeakReference<Object> factory;
+        final WeakReference<Object> observedBuilder;
         final Object template;
         final Stamp stamp;
         final boolean isFlip;
@@ -931,6 +997,7 @@ final class NativeFocusTemplateRenderer {
         Source(Installation installation, Context context, Stamp stamp, String templateClass) {
             this.installation = installation;
             this.factory = new WeakReference<>(null);
+            this.observedBuilder = new WeakReference<>(null);
             this.template = null;
             this.stamp = stamp;
             this.isFlip = false;
@@ -938,9 +1005,11 @@ final class NativeFocusTemplateRenderer {
             this.progress = templateClass.endsWith(".TemplateRevertProgress");
             this.pluginContext = new WeakReference<>(context);
         }
-        Source(Installation installation, Object factory, Object template, Stamp stamp, boolean isFlip) {
+        Source(Installation installation, Object factory, Object template, Object observedBuilder,
+               Stamp stamp, boolean isFlip) {
             this.installation = installation;
             this.factory = new WeakReference<>(factory);
+            this.observedBuilder = new WeakReference<>(observedBuilder);
             this.template = template;
             this.stamp = stamp;
             this.isFlip = isFlip;

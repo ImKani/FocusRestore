@@ -50,7 +50,7 @@ public class SettingsContractTest {
                 "focus_icon_size_dp", "focus_icon_text_gap_dp", "focus_divider_start_offset_dp", "focus_divider_end_offset_dp", "focus_divider_width_dp", "focus_divider_style",
                 "show_island_icon", "tint_island_icon",
                 "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon",
-                "independent_focus_banner", "special_banner_normal_background", "allow_focus_click",
+                "independent_focus_banner", "special_banner_normal_background", "advanced_material_enabled", "allow_focus_click",
                 "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
                 "focus_swipe_enabled", "adaptive_focus_width",
                 "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
@@ -74,6 +74,7 @@ public class SettingsContractTest {
                 SettingsContract.TINT_ISLAND_ICON, SettingsContract.USE_SMALL_ICON_FALLBACK,
                 SettingsContract.FOCUS_ICON_PRIORITY, SettingsContract.TINT_DEVICE_ICON,
                 SettingsContract.INDEPENDENT_FOCUS_BANNER, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND,
+                SettingsContract.ADVANCED_MATERIAL_ENABLED,
                 SettingsContract.ALLOW_FOCUS_CLICK, SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK,
                 SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK, SettingsContract.LONG_PRESS_SECONDS,
                 SettingsContract.FOCUS_SWIPE_ENABLED, SettingsContract.ADAPTIVE_FOCUS_WIDTH,
@@ -88,11 +89,49 @@ public class SettingsContractTest {
                 SettingsContract.LEGACY_ISLAND_SEPARATOR, SettingsContract.EXPAND_ISLAND_ON_CLICK,
                 SettingsContract.NOTIFICATION_ICON_HIDE_MODE, SettingsContract.ISLAND_CUSTOM_RULES
         };
-        assertEquals(55, SettingsContract.COLUMNS.length);
+        assertEquals(56, SettingsContract.COLUMNS.length);
         assertEquals(SettingsContract.FOCUS_DIVIDER_START_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_START_DP);
         assertEquals(SettingsContract.FOCUS_DIVIDER_END_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_END_DP);
         assertEquals(SettingsContract.COLUMNS.length, fields.length);
         for (int index = 0; index < fields.length; index++) assertEquals(index, fields[index]);
+    }
+
+    @Test
+    public void advancedMaterialColumnRoundTripsByNameWhileLegacyProjectionKeepsItsMeaning() {
+        String[] projection = {"text_width_dp", "advanced_material_enabled", "marquee_delay_ms",
+                "limit_text_width", "special_banner_normal_background"};
+        for (boolean enabled : new boolean[]{false, true}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit().advancedMaterialEnabled(enabled)
+                    .specialBannerNormalBackground(true).widthDp(244).marqueeDelayMs(1700).build();
+            assertArrayEquals(projection, SettingsContract.columnsForProjection(projection));
+            Object[] row = SettingsContract.toRow(settings, "", projection);
+            assertArrayEquals(new Object[]{244, enabled ? 1 : 0, 1700, 1, 1}, row);
+            HookSettings hook = HookSettings.fromCursor(namedCursor(projection, row));
+            assertEquals(enabled, hook.advancedMaterialEnabled);
+            assertTrue(hook.specialBannerNormalBackground);
+            assertEquals(244, hook.widthDp);
+            assertEquals(1700, hook.marqueeDelayMs);
+            Object[] legacy = SettingsContract.toRow(settings, "", LEGACY_COLUMNS);
+            assertEquals(1, legacy[26]);
+            assertFalse(HookSettings.fromCursor(namedCursor(LEGACY_COLUMNS, legacy)).advancedMaterialEnabled);
+        }
+    }
+
+    @Test
+    public void missingOrNullAdvancedMaterialColumnDoesNotInheritOrdinaryBackground() {
+        FocusRestoreSettings enabled = FocusRestoreSettings.edit().advancedMaterialEnabled(true)
+                .specialBannerNormalBackground(true).build();
+        Object[] row = SettingsContract.toRow(enabled, "");
+        row[SettingsContract.ADVANCED_MATERIAL_ENABLED] = null;
+        HookSettings nullColumn = HookSettings.fromCursor(namedCursor(SettingsContract.COLUMNS, row));
+        assertFalse(nullColumn.advancedMaterialEnabled);
+        assertTrue(nullColumn.specialBannerNormalBackground);
+        String[] missingColumns = SettingsContract.COLUMNS.clone();
+        missingColumns[SettingsContract.ADVANCED_MATERIAL_ENABLED] = "future_setting";
+        HookSettings missing = HookSettings.fromCursor(namedCursor(missingColumns,
+                SettingsContract.toRow(enabled, "")));
+        assertFalse(missing.advancedMaterialEnabled);
+        assertTrue(missing.specialBannerNormalBackground);
     }
 
     @Test

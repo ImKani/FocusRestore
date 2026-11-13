@@ -21,6 +21,7 @@ final class HookSettings {
     final int marqueeDelayMs;
     final int widthLandscapeDp;
     final boolean specialBannerNormalBackground;
+    final boolean advancedMaterialEnabled;
     final boolean mediaFocusEnabled;
     final boolean mediaFocusNativeBanner;
     final int mediaFocusCastPicker;
@@ -69,7 +70,7 @@ final class HookSettings {
     final Set<String> focusTimeoutExemptPackages;
 
     private HookSettings(int hookMode, boolean limitWidth, int widthDp, int widthLandscapeDp,
-                          boolean specialBannerNormalBackground,
+                          boolean specialBannerNormalBackground, boolean advancedMaterialEnabled,
                           boolean mediaFocusEnabled, boolean mediaFocusNativeBanner,
                           int mediaFocusCastPicker, boolean mediaFocusCastDirect, int marqueeDelayMs,
                          boolean compatRetry, boolean marqueeBounce, boolean islandCompat,
@@ -97,6 +98,7 @@ final class HookSettings {
         this.widthLandscapeDp = clamp(widthLandscapeDp, FocusRestoreSettings.MIN_WIDTH_DP,
                 FocusRestoreSettings.MAX_LANDSCAPE_WIDTH_DP);
         this.specialBannerNormalBackground = specialBannerNormalBackground;
+        this.advancedMaterialEnabled = advancedMaterialEnabled;
         this.mediaFocusEnabled = mediaFocusEnabled;
         this.mediaFocusCastPicker = FocusRestoreSettings.normalizeCastPicker(mediaFocusCastPicker);
         this.mediaFocusCastDirect = mediaFocusCastDirect;
@@ -162,7 +164,7 @@ final class HookSettings {
      */
     static HookSettings fromSettings(FocusRestoreSettings source) {
         return new HookSettings(source.hookMode, source.limitWidth, source.widthDp,
-                source.widthLandscapeDp, source.specialBannerNormalBackground,
+                source.widthLandscapeDp, source.specialBannerNormalBackground, source.advancedMaterialEnabled,
                 source.mediaFocusEnabled, source.mediaFocusNativeBanner,
                 source.mediaFocusCastPicker, source.mediaFocusCastDirect,
                 source.marqueeDelayMs, source.compatRetry, source.marqueeBounce,
@@ -206,6 +208,9 @@ final class HookSettings {
                 // 旧配置没有横屏列时沿用竖屏宽度，而非重置为新版默认宽度。
                 readInt(cursor, SettingsContract.WIDTH_LANDSCAPE_DP, widthDp),
                 readBoolean(cursor, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND, FocusRestoreSettings.DEFAULT_SPECIAL_BANNER_NORMAL_BACKGROUND),
+                // 旧 Provider 无此列时单独保持关闭，不继承普通通知背景。
+                readBoolean(cursor, SettingsContract.ADVANCED_MATERIAL_ENABLED,
+                        FocusRestoreSettings.DEFAULT_ADVANCED_MATERIAL_ENABLED),
                 readBoolean(cursor, SettingsContract.MEDIA_FOCUS_ENABLED, false),
                 readBoolean(cursor, SettingsContract.MEDIA_FOCUS_NATIVE_BANNER,
                         FocusRestoreSettings.DEFAULT_MEDIA_FOCUS_NATIVE_BANNER),
@@ -318,6 +323,7 @@ final class HookSettings {
                 + " useSmallIconFallback=" + useSmallIconFallback
                 + " notificationRowClickFallback=" + notificationRowClickFallback
                 + " independentFocusBanner=" + independentFocusBanner
+                + " advancedMaterialEnabled=" + advancedMaterialEnabled
                 + " longPressNotificationRowClick=" + longPressNotificationRowClick
                 + " longPressSeconds=" + longPressSeconds
                 + " focusSwipeEnabled=" + focusSwipeEnabled
