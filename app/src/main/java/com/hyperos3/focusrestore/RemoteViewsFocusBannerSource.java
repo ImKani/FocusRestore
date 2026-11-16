@@ -19,6 +19,7 @@ import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
+import android.graphics.Outline;
 import android.graphics.Rect;
 import android.graphics.Color;
 import android.util.Log;
@@ -31,6 +32,7 @@ import android.service.notification.StatusBarNotification;
 import android.util.DisplayMetrics;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
 import android.widget.RemoteViews;
 import android.widget.TextView;
@@ -63,7 +65,7 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
      * inflated from {@link #NOTIFICATION_ITEM_BG} instead of being rebuilt from this. */
     private static final String NOTIFICATION_BG_COLOR = "notification_bg_color";
     private static final String SYSTEMUI_PACKAGE = "com.android.systemui";
-    /** The card's corner radius, used only for the fallback surface. */
+    /** The card's corner radius, used for host clipping and the fallback surface. */
     private static final String FOCUS_RADIUS_NAME = "notification_item_bg_radius";
     private static final int FOCUS_RADIUS_FALLBACK_DP = 24;
     /**
@@ -172,9 +174,18 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
             if (normal != null) {
                 content.setBackground(null);
                 host.setBackground(normal);
+                // OS3 SystemUI 16.03.251211.r 的 NotificationUtil$1.getOutline 显式使用
+                // notification_item_bg_radius；接口事实由 http://192.168.31.146:8787/mcp
+                // 只读核对，版权所有者/许可未确认，未复制其实现。这里独立建立外壳几何：
+                // 主题 NinePatch 的 Drawable Outline 可能为矩形，不能只启用裁剪。
+                host.setOutlineProvider(new ViewOutlineProvider() {
+                    @Override public void getOutline(View view, Outline outline) {
+                        outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radiusPx);
+                    }
+                });
                 host.setClipToOutline(true);
                 return "notification-card-normal-themed radiusPx=" + radiusPx
-                        + " alpha=" + normal.getAlpha();
+                        + " outline=explicit-rounded alpha=" + normal.getAlpha();
             }
         }
         if (!forceNormalBackground) {
