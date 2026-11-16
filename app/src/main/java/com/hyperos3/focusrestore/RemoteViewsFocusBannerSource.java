@@ -93,16 +93,21 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
     private final int widthPx;
     private final String source;
     private final String containerBackground;
+    private final Context appearanceContext;
+    private final boolean requestedDark;
     private boolean closed;
 
     private RemoteViewsFocusBannerSource(View view, Context context, StatusBarNotification sbn,
-                                         int widthPx, String source, String containerBackground) {
+                                         int widthPx, String source, String containerBackground,
+                                         Context appearanceContext, boolean requestedDark) {
         this.view = view;
         this.context = context;
         this.sbn = sbn;
         this.widthPx = widthPx;
         this.source = source;
         this.containerBackground = containerBackground;
+        this.appearanceContext = appearanceContext;
+        this.requestedDark = requestedDark;
     }
 
     /** True when the notification carries a RemoteViews this source can inflate. */
@@ -114,21 +119,23 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
      * Inflates the notification's focus RemoteViews. Throws when the notification carries none, so
      * the caller can fall back to reporting the original native failure instead of guessing.
      */
-    static FocusBannerSource create(Context sysuiContext, StatusBarNotification sbn, boolean dark)
+    static FocusBannerSource create(Context sysuiContext, StatusBarNotification sbn)
             throws Exception {
         if (sysuiContext == null || sbn == null || sbn.getNotification() == null) {
             throw new IllegalStateException("no notification to inflate focus content from");
         }
-        boolean useDark = dark;
-        RemoteViews views = pick(sbn, useDark);
-        if (views == null) {
-            useDark = !dark;
-            views = pick(sbn, useDark);
-        }
+        // Xiaomi SystemUI 17.03.260226.r / FocusUtils.getFocusView在有效GLASS下优先rvNight；
+        // 接口来源：Knowledge/rom/os4-notification-material-chain.md（厂商许可未确认）。
+        // 仅独立选取应用提供的模板，不遍历改字色；首次创建同样读取本次实际材质。
+        boolean requestedDark = NativeFocusAppearance.isDarkTemplate(sysuiContext, false);
+        RemoteViews light = pick(sbn, false);
+        RemoteViews dark = pick(sbn, true);
+        boolean useDark = chooseDarkVariant(requestedDark, light != null, dark != null);
+        RemoteViews views = useDark ? dark : light;
         if (views == null) {
             throw new IllegalStateException("notification has no miui.focus.rv RemoteViews");
         }
-        Context packageContext = packageContextFor(sysuiContext, sbn);
+        Context packageContext = nightContext(packageContextFor(sysuiContext, sbn), useDark);
         // A null parent keeps inflation unattached and lets us supply the banner layout params.
         View content = views.apply(packageContext, null);
         if (content == null) {
@@ -152,7 +159,16 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
         DisplayMetrics metrics = sysuiContext.getResources().getDisplayMetrics();
         String label = "remoteviews/" + (useDark ? DARK : LIGHT) + "/" + sbn.getPackageName();
         return new RemoteViewsFocusBannerSource(host, packageContext, sbn,
-                Math.max(1, metrics.widthPixels), label, background);
+                Math.max(1, metrics.widthPixels), label, background, sysuiContext, requestedDark);
+    }
+
+    static boolean chooseDarkVariant(boolean requestedDark, boolean hasLight, boolean hasDark) {
+        return hasDark && (requestedDark || !hasLight);
+    }
+
+    @Override public boolean isAppearanceCurrent(boolean materialFailed) {
+        // 缺rvNight时允许原有亮版回退；比较请求策略而非实际回退结果，避免每帧反复收起。
+        return requestedDark == NativeFocusAppearance.isDarkTemplate(appearanceContext, materialFailed);
     }
 
     /**
@@ -386,7 +402,9 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
             configuration.uiMode = (configuration.uiMode & ~Configuration.UI_MODE_NIGHT_MASK)
                     | (night ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO);
             return context.createConfigurationContext(configuration);
-        } catch (Throwable ignored) {
+        } catch (Throwable error) {
+            Log.w("HyperOS3FocusRestore", "remoteviews night context failed; keep original resources; night="
+                    + night, error);
             return context;
         }
     }
@@ -486,6 +504,9 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
     public String layoutSummary() {
         View content = contentRoot();
         return "remoteviews width=" + view.getWidth() + " height=" + view.getHeight()
+                + " template=" + source + " requestedDark=" + requestedDark
+                + " contentNight=" + ((context.getResources().getConfiguration().uiMode
+                        & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
                 + " measuredHeight=" + view.getMeasuredHeight()
                 + " contentBackground=" + describeBackground(content)
                 + " containerBackground=" + containerBackground

@@ -531,8 +531,7 @@ public final class FocusBannerController {
                 // notification carries none, rethrow so the original diagnosis is what gets logged.
                 if (!RemoteViewsFocusBannerSource.isAvailable(currentSbn)) throw nativeError;
                 event(currentKey, "native template unavailable; using the notification's own RemoteViews");
-                candidate = RemoteViewsFocusBannerSource.create(anchor.getContext(), currentSbn,
-                        isNightMode(anchor));
+                candidate = RemoteViewsFocusBannerSource.create(anchor.getContext(), currentSbn);
                 }
             }
             if (candidate == null || candidate.view() == null || candidate.context() == null) {
@@ -565,14 +564,6 @@ public final class FocusBannerController {
         } finally {
             endNativeOperation();
         }
-    }
-
-    /** Chooses the RemoteViews variant the ROM would show: the night layout in night mode. */
-    private static boolean isNightMode(View anchor) {
-        if (anchor == null) return false;
-        int mode = anchor.getResources().getConfiguration().uiMode
-                & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
-        return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES;
     }
 
     private void retainPreviousFrame(Throwable error) {
