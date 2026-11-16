@@ -357,6 +357,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
         // 选定模式与安装就绪分开；部分安装重试仍沿用首次模式，不重装已成功的句柄。
         if (installedHookMode == 0) installedHookMode = currentSettings.hookMode;
+        NativeFocusAppearance.setInstalledHookMode(installedHookMode);
         if (systemUiContext == null) {
             log("mode installation deferred: SystemUI context unavailable");
             return;

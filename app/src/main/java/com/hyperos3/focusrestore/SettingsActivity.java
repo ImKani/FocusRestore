@@ -2477,6 +2477,7 @@ public final class SettingsActivity extends Activity {
         }
         if (advancedMaterialSwitch != null) advancedMaterialSwitch.setOnCheckedChangeListener((b, c) -> {
             pendingAdvancedMaterialEnabled = c;
+            updateExperimentalControls();
             markPending();
         });
         if (hideNotificationIconsSwitch != null) hideNotificationIconsSwitch.setOnCheckedChangeListener((b, c) -> {

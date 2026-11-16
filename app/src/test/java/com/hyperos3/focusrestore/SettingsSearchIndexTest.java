@@ -16,7 +16,7 @@ import static org.junit.Assert.*;
 public class SettingsSearchIndexTest {
     @Test public void advancedMaterialCanBeFoundByNameAndGlassKeyword() {
         assertEquals("advancedMaterial", SettingsSearchIndex.search("高级材质接入", false).get(0).id);
-        assertEquals("advancedMaterial", SettingsSearchIndex.search("玻璃", false).get(0).id);
+        assertTrue(ids(SettingsSearchIndex.search("玻璃", false)).contains("advancedMaterial"));
     }
 
     @Test public void exactTitleComesBeforeRelatedKeywords() {

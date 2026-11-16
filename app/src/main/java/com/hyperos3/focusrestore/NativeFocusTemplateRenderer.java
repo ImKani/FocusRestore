@@ -283,7 +283,7 @@ final class NativeFocusTemplateRenderer {
             }
             return new Render(this, source.installation.loader, expanded, context, appearance.width,
                     body.getMinimumHeight(), null, content, new String[0], Collections.emptyList(),
-                    binding, body, source, (source.progress ? "native-legacy-progress/" : "native-legacy-sms/") + getter + "/" + appearance.description);
+                    binding, body, source, (source.progress ? "native-legacy-progress/" : "native-legacy-sms/") + getter + "/" + appearance.description, appearance);
         } catch (Throwable error) {
             if (expanded != null) {
                 try { expanded.removeAllViews(); }
@@ -503,7 +503,7 @@ final class NativeFocusTemplateRenderer {
             validateV3Source(source, factory, key, requested.identity, "after-create");
             Render render = new Render(this, loader, expanded, context, appearance.width, body.getMinimumHeight(),
                     builder, content, modules, adapters, bindingSbn, body, source,
-                    "native-v3/" + getter + "/" + appearance.description);
+                    "native-v3/" + getter + "/" + appearance.description, appearance);
             log("native renderer created fresh notification-expanded content key=" + key
                     + " getter=" + getter + " width=" + appearance.width
                     + " bodyMinHeight=" + body.getMinimumHeight() + " sizing=wrap-content appearance=" + appearance.description
@@ -877,6 +877,7 @@ final class NativeFocusTemplateRenderer {
         final int minHeightPx;
         final String source;
         private final Source templateSource;
+        private final NativeFocusAppearance appearance;
 
         private final NativeFocusTemplateRenderer owner;
         private final ClassLoader loader;
@@ -893,7 +894,7 @@ final class NativeFocusTemplateRenderer {
         private Render(NativeFocusTemplateRenderer owner, ClassLoader loader, View view,
                        Context context, int width, int minHeight, Object builder, Object content,
                        String[] modules, List<Object> adapters, StatusBarNotification bindingSbn,
-                       View body, Source templateSource, String source) {
+                       View body, Source templateSource, String source, NativeFocusAppearance appearance) {
             this.owner = owner;
             this.loader = loader;
             this.view = view;
@@ -905,6 +906,7 @@ final class NativeFocusTemplateRenderer {
             this.modules = modules;
             this.adapters = adapters;
             this.templateSource = templateSource;
+            this.appearance = appearance;
             this.source = source;
             this.bindingSbn = bindingSbn;
             this.body = body;
@@ -912,6 +914,7 @@ final class NativeFocusTemplateRenderer {
 
         @Override public View view() { return view; }
         @Override public View materialTarget() { return view; }
+        @Override public boolean isAppearanceCurrent(boolean materialFailed) { return appearance.isCurrent(materialFailed); }
         @Override public Context context() { return context; }
         @Override public int widthPx() { return widthPx; }
         @Override public int minHeightPx() { return minHeightPx; }

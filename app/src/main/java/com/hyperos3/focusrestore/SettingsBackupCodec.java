@@ -111,8 +111,9 @@ final class SettingsBackupCodec {
             JSONObject media = group(groups, "media", "media_focus_enabled", "media_focus_native_banner",
                     "media_focus_cast_picker", "media_focus_cast_direct", "media_brief_display",
                     "media_brief_fields");
+            // 旧HUN键仅列入兼容白名单；导入时忽略，新备份不再导出，避免拒绝0.45.4备份。
             JSONObject interaction = group(groups, "interaction", "independent_focus_banner",
-                    "special_banner_normal_background", "advanced_material_enabled", "allow_focus_click",
+                    "special_banner_normal_background", "advanced_material_enabled", "os4_glass_hun_blend_enabled", "allow_focus_click",
                     "notification_row_click_fallback", "long_press_notification_row_click",
                     "long_press_seconds", "focus_swipe_enabled", "adaptive_focus_width",
                     "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",

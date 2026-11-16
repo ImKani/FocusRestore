@@ -50,7 +50,7 @@ public class SettingsContractTest {
                 "focus_icon_size_dp", "focus_icon_text_gap_dp", "focus_divider_start_offset_dp", "focus_divider_end_offset_dp", "focus_divider_width_dp", "focus_divider_style",
                 "show_island_icon", "tint_island_icon",
                 "use_small_icon_fallback", "focus_icon_priority", "tint_device_icon",
-                "independent_focus_banner", "special_banner_normal_background", "advanced_material_enabled", "allow_focus_click",
+                "independent_focus_banner", "special_banner_normal_background", "advanced_material_enabled", "os4_glass_hun_blend_enabled", "allow_focus_click",
                 "notification_row_click_fallback", "long_press_notification_row_click", "long_press_seconds",
                 "focus_swipe_enabled", "adaptive_focus_width",
                 "custom_touch_width", "touch_width_dp", "touch_width_landscape_dp",
@@ -74,7 +74,7 @@ public class SettingsContractTest {
                 SettingsContract.TINT_ISLAND_ICON, SettingsContract.USE_SMALL_ICON_FALLBACK,
                 SettingsContract.FOCUS_ICON_PRIORITY, SettingsContract.TINT_DEVICE_ICON,
                 SettingsContract.INDEPENDENT_FOCUS_BANNER, SettingsContract.SPECIAL_BANNER_NORMAL_BACKGROUND,
-                SettingsContract.ADVANCED_MATERIAL_ENABLED,
+                SettingsContract.ADVANCED_MATERIAL_ENABLED, SettingsContract.OS4_GLASS_HUN_BLEND_ENABLED,
                 SettingsContract.ALLOW_FOCUS_CLICK, SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK,
                 SettingsContract.LONG_PRESS_NOTIFICATION_ROW_CLICK, SettingsContract.LONG_PRESS_SECONDS,
                 SettingsContract.FOCUS_SWIPE_ENABLED, SettingsContract.ADAPTIVE_FOCUS_WIDTH,
@@ -89,7 +89,7 @@ public class SettingsContractTest {
                 SettingsContract.LEGACY_ISLAND_SEPARATOR, SettingsContract.EXPAND_ISLAND_ON_CLICK,
                 SettingsContract.NOTIFICATION_ICON_HIDE_MODE, SettingsContract.ISLAND_CUSTOM_RULES
         };
-        assertEquals(56, SettingsContract.COLUMNS.length);
+        assertEquals(57, SettingsContract.COLUMNS.length);
         assertEquals(SettingsContract.FOCUS_DIVIDER_START_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_START_DP);
         assertEquals(SettingsContract.FOCUS_DIVIDER_END_OFFSET_DP, SettingsContract.FOCUS_DIVIDER_END_DP);
         assertEquals(SettingsContract.COLUMNS.length, fields.length);
@@ -114,6 +114,21 @@ public class SettingsContractTest {
             Object[] legacy = SettingsContract.toRow(settings, "", LEGACY_COLUMNS);
             assertEquals(1, legacy[26]);
             assertFalse(HookSettings.fromCursor(namedCursor(LEGACY_COLUMNS, legacy)).advancedMaterialEnabled);
+        }
+    }
+
+    @Test
+    public void removedHunOptionKeepsLegacyProjectionWithoutChangingMaterialParents() {
+        String[] projection = {"advanced_material_enabled", "os4_glass_hun_blend_enabled",
+                "special_banner_normal_background", "text_width_dp", "limit_text_width", "marquee_delay_ms"};
+        for (boolean enabled : new boolean[]{false, true}) {
+            FocusRestoreSettings settings = FocusRestoreSettings.edit().advancedMaterialEnabled(enabled)
+                    .specialBannerNormalBackground(false).limitWidth(true).widthDp(244).marqueeDelayMs(1700).build();
+            Object[] row = SettingsContract.toRow(settings, "", projection);
+            assertArrayEquals(new Object[]{enabled ? 1 : 0, 1, 0, 244, 1, 1700}, row);
+            HookSettings hook = HookSettings.fromCursor(namedCursor(projection, row));
+            assertEquals(enabled, hook.advancedMaterialEnabled);
+            assertFalse(hook.specialBannerNormalBackground);
         }
     }
 

@@ -36,6 +36,9 @@ interface FocusBannerSource {
     /** 可应用材质的模块自建外壳；封面背景等来源默认不参与。 */
     default View materialTarget() { return null; }
 
+    /** 原生模板创建时的文字主题是否仍适用于当前材质。 */
+    default boolean isAppearanceCurrent(boolean materialFailed) { return true; }
+
     /** Context the root view was built with; used for validation only. */
     Context context();
 

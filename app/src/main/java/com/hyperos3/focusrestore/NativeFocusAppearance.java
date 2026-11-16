@@ -20,6 +20,25 @@ import android.view.View;
 final class NativeFocusAppearance {
     private static volatile boolean useNormalNotificationBackground;
     private static volatile boolean advancedMaterialEnabled;
+    private static volatile int installedHookMode;
+
+    static void setInstalledHookMode(int mode) {
+        installedHookMode = mode;
+    }
+
+    static boolean useOs4GlassHunBlend(boolean glass) {
+        // 使用本进程已安装的手动模式；配置改为OS3/4但未重启时不能提前切材质合同。
+        return useNativeMaterial() && installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4
+                && glass;
+    }
+
+    static boolean useGlassDarkTemplate(boolean glass) {
+        return useNativeMaterial() && installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4 && glass;
+    }
+
+    static boolean useDarkTemplate(boolean systemDark, boolean glass, boolean materialFailed) {
+        return systemDark || (!materialFailed && useGlassDarkTemplate(glass));
+    }
 
     static void setAdvancedMaterialEnabled(boolean enabled) {
         advancedMaterialEnabled = enabled;
@@ -38,14 +57,25 @@ final class NativeFocusAppearance {
     final float radius;
     final Drawable background;
     final String description;
+    private final Context themeContext;
 
     private NativeFocusAppearance(boolean dark, int width, float radius,
-                                  Drawable background, String description) {
+                                  Drawable background, String description, Context themeContext) {
         this.dark = dark;
         this.width = width;
         this.radius = radius;
         this.background = background;
         this.description = description;
+        this.themeContext = themeContext;
+    }
+
+    boolean isCurrent(boolean materialFailed) { return dark == isDarkTemplate(themeContext, materialFailed); }
+
+    static boolean isDarkTemplate(Context sysuiContext, boolean materialFailed) {
+        Context app = sysuiContext.getApplicationContext();
+        Context context = app != null ? app : sysuiContext;
+        return useDarkTemplate((context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES, !materialFailed && NativeBannerMaterial.isGlassActive(), materialFailed);
     }
 
     static NativeFocusAppearance read(View row, Context sysuiContext) {
@@ -53,8 +83,11 @@ final class NativeFocusAppearance {
         Context app = sysuiContext.getApplicationContext();
         Context context = app != null ? app : sysuiContext;
         int night = context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
-        // This independent popup follows system light/dark. No island/glass forced-Dark override.
-        boolean dark = night == Configuration.UI_MODE_NIGHT_YES;
+        boolean glassDark = useGlassDarkTemplate(NativeBannerMaterial.isGlassActive());
+        // Xiaomi SystemUI 17.03.260226.r的普通GLASS正文独立强制dark；本模块选择
+        // 已生成的Dark Modal，不改系统Context/背景限定符、不遍历或硬编码文字颜色。
+        // 接口证据：Knowledge/rom/os4-notification-material-chain.md；未复制ROM实现。
+        boolean dark = night == Configuration.UI_MODE_NIGHT_YES || glassDark;
         int padding = dimension(context, "notification_side_paddings");
         int width = row != null ? row.getWidth() : 0;
         String geometrySource = "row-width";
@@ -80,8 +113,8 @@ final class NativeFocusAppearance {
         if (background == null) throw new IllegalStateException("native notification background is null: " + backgroundName);
         background = background.mutate();
         return new NativeFocusAppearance(dark, width, radius, background,
-                (dark ? "system-dark" : "system-light") + "/" + geometrySource
-                        + "/" + backgroundName + "; blur-and-modal-animation-not-copied");
+                (glassDark ? "glass-dark-template" : dark ? "system-dark" : "system-light") + "/" + geometrySource
+                        + "/" + backgroundName + "; systemNight=" + night + "; blur-and-modal-animation-not-copied", context);
     }
 
     /** 复用本类已接入的 SystemUI 面板资源；不读取或改挂原生媒体 View。 */

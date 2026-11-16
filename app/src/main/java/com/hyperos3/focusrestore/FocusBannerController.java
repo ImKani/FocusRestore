@@ -36,6 +36,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewConfiguration;
+import android.view.ViewTreeObserver;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -433,7 +434,7 @@ public final class FocusBannerController {
 
     public void refreshMaterialSetting() {
         runMain("material-setting", () -> {
-            if (banner == null || banner.material == null) return;
+            if (banner == null || banner.material == null || !banner.checkAppearance()) return;
             banner.material.refresh();
             banner.invalidate();
         });
@@ -697,6 +698,7 @@ public final class FocusBannerController {
                 dismissMain(now >= hardDeadline ? "hard-timeout" : "auto-timeout");
                 return;
             }
+            if (!banner.checkAppearance()) return;
             if (banner.material != null) banner.material.refresh();
             mainHandler().postDelayed(monitor, Math.min(MONITOR_MS, Math.min(softDeadline, hardDeadline) - now));
         } catch (Throwable error) {
@@ -871,6 +873,37 @@ public final class FocusBannerController {
         /** 长按与短按双触发诊断：最近一次模块长按的时刻。 */
         private long lastLongPressAt;
         private final Runnable attachedCallback = this::notifyNativeAttached;
+        private ViewTreeObserver materialObserver;
+        private final ViewTreeObserver.OnPreDrawListener materialPreDraw = () -> {
+            if (material == null || render == null || !canDraw()) return true;
+            try {
+                if (!checkAppearance()) return false;
+                // 仅高级材质的非媒体外壳提前完成原有attach；文字布局请求交给下一次遍历。
+                if (NativeFocusAppearance.useNativeMaterial() && render.materialTarget() != null) {
+                    notifyNativeAttached();
+                }
+                if (renderingFailed) return true;
+                boolean ready = material.prepareForDraw();
+                if (!ready) postInvalidateOnAnimation();
+                return ready && checkAppearance();
+            } catch (Throwable error) {
+                renderingFailure("material pre-draw", error);
+                return true;
+            }
+        };
+
+        private boolean checkAppearance() {
+            if (renderingFailed) return false;
+            if (render == null || render.isAppearanceCurrent(material != null && material.hasFailed())) return true;
+            // GLASS门控改变或应用失败后旧模板无法原位重绑；阻止绘制，退出遍历安全收起。
+            renderingFailed = true;
+            FocusBannerSource stale = render;
+            event(notificationKey, "native appearance changed; dismiss stale template");
+            mainHandler().post(() -> {
+                if (banner == this && render == stale) dismissMain("material-theme-changed");
+            });
+            return false;
+        }
 
         BannerFrame(Context context) {
             super(context);
@@ -941,6 +974,7 @@ public final class FocusBannerController {
                 releaseContent();
                 render = prepared.render;
                 material = new NativeBannerMaterial.Session(render.materialTarget());
+                material.prepare();
                 maxHeight = prepared.geometry.maxHeight;
                 setMinimumHeight(0);
                 renderAttached = false;
@@ -963,6 +997,7 @@ public final class FocusBannerController {
             cancelNativeGesture();
             mainHandler().removeCallbacks(attachedCallback);
             if (material != null) material.clear();
+            material = null;
             FocusBannerSource previous = render;
             if (previous == null) return;
             if (previous.view().getParent() == this) removeView(previous.view());
@@ -1022,6 +1057,7 @@ public final class FocusBannerController {
             if (renderingFailed) return;
             try {
                 super.onLayout(changed, left, top, right, bottom);
+                if (material != null) material.refresh();
             } catch (Throwable error) { renderingFailure("layout", error); return; }
             // 诊断失败不应撤下已经正常布局的横幅。
             try {
@@ -1048,7 +1084,6 @@ public final class FocusBannerController {
         @Override public void draw(Canvas canvas) {
             if (!canDraw()) return;
             try {
-                if (material != null) material.beforeDraw();
                 super.draw(canvas);
             }
             catch (Throwable error) { renderingFailure("draw", error); }
@@ -1058,7 +1093,6 @@ public final class FocusBannerController {
             // A background-free FrameLayout can be drawn through dispatchDraw directly.
             if (!canDraw()) return;
             try {
-                if (material != null) material.beforeDraw();
                 super.dispatchDraw(canvas);
                 if (!drawnLogged && getWidth() > 0 && getHeight() > 0 && render != null) {
                     drawnLogged = true;
@@ -1147,6 +1181,8 @@ public final class FocusBannerController {
         @Override protected void onAttachedToWindow() {
             try {
                 super.onAttachedToWindow();
+                materialObserver = getViewTreeObserver();
+                materialObserver.addOnPreDrawListener(materialPreDraw);
                 // Child dispatchAttach completes after this callback; invoke native setup later.
                 mainHandler().post(attachedCallback);
             } catch (Throwable error) { renderingFailure("host attach", error); }
@@ -1159,6 +1195,10 @@ public final class FocusBannerController {
         }
 
         @Override protected void onDetachedFromWindow() {
+            if (materialObserver != null && materialObserver.isAlive()) {
+                materialObserver.removeOnPreDrawListener(materialPreDraw);
+            }
+            materialObserver = null;
             try { super.onDetachedFromWindow(); }
             catch (Throwable error) { fail(notificationKey, "host detach callback", error); }
             mainHandler().removeCallbacks(attachedCallback);

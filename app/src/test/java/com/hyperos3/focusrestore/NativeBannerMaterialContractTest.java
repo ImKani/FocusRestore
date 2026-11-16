@@ -52,17 +52,23 @@ public class NativeBannerMaterialContractTest {
         assertTrue(source.contains("int height = target.getHeight()"));
     }
 
-    @Test public void materialIsPreparedBeforeBothHostDrawPaths() throws Exception {
+    @Test public void materialIsPreparedOutsideBothHostDrawPaths() throws Exception {
         String source = new String(Files.readAllBytes(Paths.get(
                 "src/main/java/com/hyperos3/focusrestore/FocusBannerController.java")),
                 StandardCharsets.UTF_8);
+        assertTrue(source.contains("material.prepareForDraw()"));
+        assertTrue(source.contains("addOnPreDrawListener(materialPreDraw)"));
+        assertTrue(source.contains("removeOnPreDrawListener(materialPreDraw)"));
+        int install = source.indexOf("void install(Prepared prepared)");
+        int prepare = source.indexOf("material.prepare()", install);
+        assertTrue(prepare > install && prepare < source.indexOf("addView(render.view()", install));
         for (String draw : new String[]{"@Override public void draw(Canvas canvas)",
                 "@Override protected void dispatchDraw(Canvas canvas)"}) {
             int start = source.indexOf(draw);
-            int prepare = source.indexOf("material.beforeDraw()", start);
-            int render = source.indexOf(draw.contains("dispatchDraw")
-                    ? "super.dispatchDraw(canvas)" : "super.draw(canvas)", start);
-            assertTrue(start >= 0 && prepare > start && prepare < render);
+            int end = source.indexOf(draw.contains("dispatchDraw")
+                    ? "private boolean canDraw()" : "@Override protected void dispatchDraw", start + draw.length());
+            assertTrue(start >= 0 && end > start);
+            assertTrue(!source.substring(start, end).contains("material."));
         }
     }
 
@@ -73,14 +79,14 @@ public class NativeBannerMaterialContractTest {
         String optionalStage = source.substring(update, release);
         assertTrue(optionalStage.contains("if (!useGlass) { clearGlassOutline(); return; }"));
         int contract = optionalStage.indexOf("compat.getDeclaredMethod(\"setGlassOutlineEnable\", View.class, boolean.class)");
-        int apply = optionalStage.indexOf("invoke(glassOutline, 8192, 8192)");
+        int apply = optionalStage.indexOf("invokeOn(blendLayer, glassOutline, 8192, 8192)");
         assertTrue(contract >= 0 && apply > contract);
         assertTrue(optionalStage.contains("keep blur and blend"));
         assertTrue(!optionalStage.contains("failed = true"));
         assertTrue(optionalStage.indexOf("clearGlassOutline();", optionalStage.indexOf("catch (Throwable error)")) >= 0);
         assertTrue(source.contains("if (!useGlass || glassOutlineFailed) clearGlassOutline();"));
         String cleanup = source.substring(release, source.indexOf("private void resolve()", release));
-        assertTrue(cleanup.contains("invoke(glassOutline, 0, 8192)"));
+        assertTrue(cleanup.contains("invokeOn(blendLayer, glassOutline, 0, 8192)"));
         assertTrue(!cleanup.contains("invoke(glassOutline, 0, 0)"));
         assertTrue(source.substring(source.indexOf("void clear()")).contains("boolean success = clearGlassOutline()"));
     }
@@ -89,7 +95,7 @@ public class NativeBannerMaterialContractTest {
         String source = source();
         int start = source.indexOf("void refresh()");
         int optOut = source.indexOf("if (!NativeFocusAppearance.useNativeMaterial()) { clear(); return; }", start);
-        int failed = source.indexOf("if (failed) return;", start);
+        int failed = source.indexOf("if (failed) { clear(); return; }", start);
         int romRead = source.indexOf("Object current = state.get();", start);
         assertTrue(start >= 0 && optOut > start && failed > optOut && romRead > failed);
     }

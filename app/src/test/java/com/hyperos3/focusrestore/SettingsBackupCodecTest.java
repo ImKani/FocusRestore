@@ -104,6 +104,20 @@ public class SettingsBackupCodecTest {
     }
 
     @Test
+    public void removedHunBackupKeyIsIgnoredWithoutChangingParentSettings() throws Exception {
+        for (boolean legacyChoice : new boolean[]{false, true}) {
+            FocusRestoreSettings original = FocusRestoreSettings.edit(allSettings(false))
+                    .advancedMaterialEnabled(true).specialBannerNormalBackground(false).build();
+            JSONObject root = new JSONObject(utf8(SettingsBackupCodec.encode(original)));
+            root.getJSONObject("settings").getJSONObject("interaction")
+                    .put("os4_glass_hun_blend_enabled", legacyChoice);
+            FocusRestoreSettings decoded = SettingsBackupCodec.decode(root.toString().getBytes(StandardCharsets.UTF_8));
+            assertEverySettingEquals(original, decoded);
+            assertFalse(utf8(SettingsBackupCodec.encode(decoded)).contains("os4_glass_hun_blend_enabled"));
+        }
+    }
+
+    @Test
     public void exportedAppVersionMatchesBuildAndDoesNotGateSettingsImport() throws Exception {
         FocusRestoreSettings original = allSettings(false);
         JSONObject root = new JSONObject(utf8(SettingsBackupCodec.encode(original)));
