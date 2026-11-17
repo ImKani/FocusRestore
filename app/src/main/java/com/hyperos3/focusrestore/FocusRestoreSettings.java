@@ -137,13 +137,12 @@ public final class FocusRestoreSettings {
     public static final int DEFAULT_FOCUS_DIVIDER_WIDTH_DP = 0;
     public static final int DEFAULT_FOCUS_DIVIDER_STYLE = 0;
     public static final boolean DEFAULT_SHOW_FOCUS_DIVIDER = true;
-    public static final boolean DEFAULT_SHOW_ISLAND_ICON = false;
     public static final boolean DEFAULT_TINT_ISLAND_ICON = true;
     public static final int ICON_APP_FIRST = 0;
     public static final int ICON_FOCUS_FIRST = 1;
     public static final int ICON_SMALL_FIRST = 2;
-    public static final int ICON_ORDER_COUNT = 6;
-    public static final int DEFAULT_FOCUS_ICON_PRIORITY = ICON_APP_FIRST;
+    public static final int ICON_ORDER_COUNT = 30;
+    public static final int DEFAULT_FOCUS_ICON_PRIORITY = FocusIconPriority.DEFAULT_ORDER;
     public static final boolean DEFAULT_TINT_DEVICE_ICON = true;
     public static final boolean DEFAULT_USE_SMALL_ICON_FALLBACK = false;
     public static final boolean DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK = false;
@@ -199,7 +198,6 @@ public final class FocusRestoreSettings {
     public final int focusDividerWidthDp;
     public final int focusDividerStyle;
 
-    public final boolean showIslandIcon;
     public final boolean tintIslandIcon;
     public final int focusIconPriority;
     public final boolean tintDeviceIcon;
@@ -256,12 +254,12 @@ public final class FocusRestoreSettings {
         this.focusDividerWidthDp = normalizeFocusDividerWidthDp(editor.focusDividerWidthDp);
         this.focusDividerStyle = normalizeFocusDividerStyle(editor.focusDividerStyle);
 
-        this.showIslandIcon = editor.showIslandIcon;
         this.tintIslandIcon = editor.tintIslandIcon;
-        // 旧偏好仅在缺新键时迁移；保存后新顺序成为唯一决策，旧布尔供旧 Hook 读取。
+        // 旧开关只在读取旧数据时迁移位置，当前模型不再保存启用状态。
         this.focusIconPriority = editor.focusIconPriority == null
-                ? legacyIconPriority(editor.useSmallIconFallback, editor.showIslandIcon)
-                : normalizeIconPriority(editor.focusIconPriority);
+                ? editor.useSmallIconFallback ? FocusIconPriority.migrate(ICON_SMALL_FIRST, false)
+                        : DEFAULT_FOCUS_ICON_PRIORITY
+                : FocusIconPriority.migrate(editor.focusIconPriority, false);
         this.tintDeviceIcon = editor.tintDeviceIcon;
         this.useSmallIconFallback = FocusIconPriority.smallFirst(this.focusIconPriority);
         this.notificationRowClickFallback = editor.notificationRowClickFallback;
@@ -323,7 +321,6 @@ public final class FocusRestoreSettings {
         private int focusDividerWidthDp = DEFAULT_FOCUS_DIVIDER_WIDTH_DP;
         private int focusDividerStyle = DEFAULT_FOCUS_DIVIDER_STYLE;
 
-        private boolean showIslandIcon = DEFAULT_SHOW_ISLAND_ICON;
         private boolean tintIslandIcon = DEFAULT_TINT_ISLAND_ICON;
         private Integer focusIconPriority;
         private boolean tintDeviceIcon = DEFAULT_TINT_DEVICE_ICON;
@@ -381,7 +378,6 @@ public final class FocusRestoreSettings {
             this.focusDividerWidthDp = source.focusDividerWidthDp;
             this.focusDividerStyle = source.focusDividerStyle;
 
-            this.showIslandIcon = source.showIslandIcon;
             this.tintIslandIcon = source.tintIslandIcon;
             this.focusIconPriority = source.focusIconPriority;
             this.tintDeviceIcon = source.tintDeviceIcon;
@@ -447,7 +443,6 @@ public final class FocusRestoreSettings {
         public Editor focusDividerWidthDp(int value) { this.focusDividerWidthDp = value; return this; }
         public Editor focusDividerStyle(int value) { this.focusDividerStyle = value; return this; }
         public Editor showFocusDivider(boolean value) { this.showFocusDivider = value; return this; }
-        public Editor showIslandIcon(boolean value) { this.showIslandIcon = value; return this; }
         public Editor tintIslandIcon(boolean value) { this.tintIslandIcon = value; return this; }
         public Editor focusIconPriority(int value) { this.focusIconPriority = value; return this; }
         public Editor tintDeviceIcon(boolean value) { this.tintDeviceIcon = value; return this; }
@@ -546,6 +541,14 @@ public final class FocusRestoreSettings {
 
         boolean contains(String key) {
             return values.containsKey(key);
+        }
+
+        boolean hasUserSettings() {
+            for (String key : values.keySet()) {
+                if (!KEY_ISLAND_APP_CACHE.equals(key) && !KEY_HOOK_SETTINGS_READY.equals(key)
+                        && !KEY_SETTINGS_GENERATION.equals(key)) return true;
+            }
+            return false;
         }
 
         boolean getBoolean(String key, boolean fallback) {
@@ -682,14 +685,15 @@ public final class FocusRestoreSettings {
         int endOffset = values.contains(KEY_FOCUS_DIVIDER_END_OFFSET_DP)
                 ? values.getInt(KEY_FOCUS_DIVIDER_END_OFFSET_DP, DEFAULT_FOCUS_DIVIDER_END_DP)
                 : migrateLegacyDividerSpacing(legacyEnd);
-        boolean showIslandIcon = values.getBoolean(KEY_SHOW_ISLAND_ICON,
-                DEFAULT_SHOW_ISLAND_ICON);
+        // 缓存和就绪标记不代表旧用户配置，避免新装首次缓存写入改变默认排序。
+        boolean freshInstall = !values.hasUserSettings();
+        boolean previouslyEnabled = values.getBoolean(KEY_SHOW_ISLAND_ICON, false);
         boolean useSmallIconFallback = values.getBoolean(KEY_USE_SMALL_ICON_FALLBACK,
                 DEFAULT_USE_SMALL_ICON_FALLBACK);
-        int iconPriority = values.contains(KEY_FOCUS_ICON_PRIORITY)
-                ? values.getInt(KEY_FOCUS_ICON_PRIORITY,
-                        legacyIconPriority(useSmallIconFallback, showIslandIcon))
-                : legacyIconPriority(useSmallIconFallback, showIslandIcon);
+        int legacyPriority = legacyIconPriority(useSmallIconFallback, previouslyEnabled);
+        int iconPriority = freshInstall ? DEFAULT_FOCUS_ICON_PRIORITY
+                : FocusIconPriority.migrate(values.getInt(KEY_FOCUS_ICON_PRIORITY, legacyPriority),
+                        previouslyEnabled);
         return edit()
                 .hookMode(values.getInt(KEY_HOOK_MODE, DEFAULT_HOOK_MODE))
                 .limitWidth(values.getBoolean(KEY_LIMIT_WIDTH, DEFAULT_LIMIT_WIDTH))
@@ -746,7 +750,6 @@ public final class FocusRestoreSettings {
                         DEFAULT_FOCUS_DIVIDER_STYLE))
                 .showFocusDivider(values.getBoolean(KEY_SHOW_FOCUS_DIVIDER,
                         DEFAULT_SHOW_FOCUS_DIVIDER))
-                .showIslandIcon(showIslandIcon)
                 .tintIslandIcon(values.getBoolean(KEY_TINT_ISLAND_ICON,
                         DEFAULT_TINT_ISLAND_ICON))
                 .useSmallIconFallback(useSmallIconFallback)
@@ -804,7 +807,6 @@ public final class FocusRestoreSettings {
                 + " focusDividerEndDp=" + focusDividerEndDp
                 + " focusDividerWidthDp=" + focusDividerWidthDp
                 + " focusDividerStyle=" + focusDividerStyle
-                + " showIslandIcon=" + showIslandIcon
                 + " tintIslandIcon=" + tintIslandIcon
                 + " expandIslandOnClick=false(deprecated)"
                 + " focusIconPriority=" + focusIconPriority + " tintDeviceIcon=" + tintDeviceIcon
@@ -873,7 +875,7 @@ public final class FocusRestoreSettings {
                  .putInt(KEY_FOCUS_DIVIDER_END_DP, legacyDividerSpacing(focusDividerEndDp))
                 .putInt(KEY_FOCUS_DIVIDER_WIDTH_DP, focusDividerWidthDp)
                 .putInt(KEY_FOCUS_DIVIDER_STYLE, focusDividerStyle)
-                .putBoolean(KEY_SHOW_ISLAND_ICON, showIslandIcon)
+                .remove(KEY_SHOW_ISLAND_ICON)
                 .putBoolean(KEY_TINT_ISLAND_ICON, tintIslandIcon)
                 .putBoolean(KEY_EXPAND_ISLAND_ON_CLICK, false)
                 .putInt(KEY_FOCUS_ICON_PRIORITY, focusIconPriority)

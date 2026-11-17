@@ -26,5 +26,21 @@ final class BannerBlendColors {
         };
     }
 
+    /** OS3 SystemUI 16.03.251211.r updateBlurBg 的焦点 HUN 六项合同。
+     * 来源：Knowledge/sources/decompiled/os3-native-focus-hun-20261117；Xiaomi，许可未确认。
+     * 只按 ROM 资源名读取日夜值，不复制厂商实现或内嵌色值。
+     */
+    static int[] loadFocusHun(Resources resources) {
+        if (resources == null) throw new IllegalStateException("focus HUN resources unavailable");
+        return new int[] {
+                resources.color("focus_notification_element_blend_headsUp_color_1"),
+                resources.integer("blur_mode_linear_light"),
+                resources.color("focus_notification_element_blend_headsUp_color_2"),
+                resources.integer("blur_mode_lab"),
+                resources.color("focus_notification_element_blend_headsUp_color_3"),
+                resources.integer("blur_mode_pure")
+        };
+    }
+
     private BannerBlendColors() { }
 }

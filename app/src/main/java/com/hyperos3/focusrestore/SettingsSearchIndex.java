@@ -56,8 +56,7 @@ final class SettingsSearchIndex {
         add(entries, "landscapeWidth", "横屏最大宽度", 1, "显示宽度与时长", "横屏显示宽度 长度");
         add(entries, "maxDisplay", "最大显示时间", 1, "显示宽度与时长", "秒 时长 超时 到期");
         add(entries, "timeoutExempt", "最大显示时间豁免应用", 1, "显示宽度与时长", "名单 白名单 超时 不限制");
-        add(entries, "iconOrder", "焦点图标优先级", 1, "图标与分隔线", "图标排序 图标顺序 图标来源排序 拖动 应用图标 焦点专用图标 通知小图标 smallIcon ticker");
-        add(entries, "islandIcon", "优先使用超级岛解析图标", 1, "图标与分隔线", "图标来源 岛图标");
+        add(entries, "iconOrder", "焦点图标优先级", 1, "图标与分隔线", "图标排序 图标顺序 图标来源排序 拖动 应用图标 焦点专用图标 超级岛解析图标 岛图标 通知小图标 smallIcon ticker");
         add(entries, "iconTint", "超级岛解析图标与通知小图标跟随状态栏反色", 1, "图标与分隔线", "颜色 反色 着色 smallIcon");
         add(entries, "deviceTint", "设备通知图标跟随状态栏反色", 1, "图标与分隔线", "颜色 着色 设备图标");
         add(entries, "iconSize", "焦点图标尺寸", 1, "图标与分隔线", "图标大小 宽高 缩放");

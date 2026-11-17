@@ -86,6 +86,33 @@ public class BannerBlendColorsTest {
         }
     }
 
+    @Test public void focusHunUsesThreeThemeResolvedPairs() {
+        final List<String> reads = new ArrayList<>();
+        BannerBlendColors.Resources resources = new BannerBlendColors.Resources() {
+            @Override public int color(String name) { reads.add(name); return name.charAt(name.length() - 1) - '0'; }
+            @Override public int integer(String name) {
+                reads.add(name);
+                return name.equals("blur_mode_pure") ? 3 : name.equals("blur_mode_lab") ? 106 : 107;
+            }
+        };
+        assertArrayEquals(new int[]{1, 107, 2, 106, 3, 3}, BannerBlendColors.loadFocusHun(resources));
+        assertEquals(Arrays.asList("focus_notification_element_blend_headsUp_color_1", "blur_mode_linear_light",
+                "focus_notification_element_blend_headsUp_color_2", "blur_mode_lab",
+                "focus_notification_element_blend_headsUp_color_3", "blur_mode_pure"), reads);
+    }
+
+    @Test public void focusHunRejectsAnyMissingResourceWithoutReadingLegacy() {
+        for (String missing : new String[]{"focus_notification_element_blend_headsUp_color_1", "blur_mode_linear_light",
+                "focus_notification_element_blend_headsUp_color_2", "blur_mode_lab",
+                "focus_notification_element_blend_headsUp_color_3", "blur_mode_pure"}) {
+            Palette p = new Palette();
+            p.fail = missing;
+            try { BannerBlendColors.loadFocusHun(p); fail("incomplete focus HUN recipe"); }
+            catch (IllegalStateException expected) { assertTrue(expected.getMessage().contains(missing)); }
+            for (String name : p.reads) assertFalse(name.startsWith("notification_element_blend_"));
+        }
+    }
+
     @Test public void missingReaderFailsExplicitly() {
         try { BannerBlendColors.load(null, false); fail("missing reader"); }
         catch (IllegalStateException expected) { assertTrue(expected.getMessage().contains("notification")); }

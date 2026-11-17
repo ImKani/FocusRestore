@@ -134,7 +134,7 @@ final class SettingsBackupCodec {
                     FocusRestoreSettings.legacyIconPriority(bool(icons, "use_small_icon_fallback", false),
                             bool(icons, "show_island_icon", false)));
             if (iconPriority < 0 || iconPriority >= FocusRestoreSettings.ICON_ORDER_COUNT) {
-                throw invalid("focus_icon_priority 必须为 0～5 的整数");
+                throw invalid("focus_icon_priority 必须为 0～29 的整数");
             }
             int iconSize = integer(icons, "focus_icon_size_dp", defaults.focusIconSizeDp);
             if (iconSize < 0 || iconSize > 32) throw invalid("focus_icon_size_dp 必须为 0 或 1～32");
@@ -195,9 +195,9 @@ final class SettingsBackupCodec {
                     .customTouchWidth(bool(interaction, "custom_touch_width", defaults.customTouchWidth))
                     .touchWidthDp(integer(interaction, "touch_width_dp", defaults.touchWidthDp))
                     .touchWidthLandscapeDp(integer(interaction, "touch_width_landscape_dp", defaults.touchWidthLandscapeDp))
-                    .focusIconPriority(iconPriority)
+                    .focusIconPriority(FocusIconPriority.migrate(iconPriority,
+                            bool(icons, "show_island_icon", false)))
                     .tintDeviceIcon(bool(icons, "tint_device_icon", defaults.tintDeviceIcon))
-                    .showIslandIcon(bool(icons, "show_island_icon", defaults.showIslandIcon))
                     .tintIslandIcon(bool(icons, "tint_island_icon", defaults.tintIslandIcon))
                     .useSmallIconFallback(bool(icons, "use_small_icon_fallback", defaults.useSmallIconFallback))
                     .build();
@@ -251,8 +251,7 @@ final class SettingsBackupCodec {
                         "touch_width_dp", settings.touchWidthDp,
                         "touch_width_landscape_dp", settings.touchWidthLandscapeDp,
                         "intercept_element_animation", settings.interceptElementAnimation),
-                "icons", entries("show_island_icon", settings.showIslandIcon,
-                        "tint_island_icon", settings.tintIslandIcon,
+                "icons", entries("tint_island_icon", settings.tintIslandIcon,
                         "use_small_icon_fallback", settings.useSmallIconFallback,
                         "focus_icon_priority", settings.focusIconPriority,
                         "tint_device_icon", settings.tintDeviceIcon, "focus_icon_size_dp", settings.focusIconSizeDp,

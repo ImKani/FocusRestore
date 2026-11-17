@@ -9,11 +9,11 @@ import static org.junit.Assert.*;
 
 /** 只验证自带模板的选择/缺项回退；不运行Android RemoteViews或证明文字像素。 */
 public class RemoteViewsFocusBannerSourceTest {
-    @Test public void glassPreferenceSelectsSuppliedNightVariant() {
+    @Test public void systemDarkSelectsSuppliedNightVariant() {
         assertTrue(RemoteViewsFocusBannerSource.chooseDarkVariant(true, true, true));
     }
 
-    @Test public void systemLightKeepsDayVariantWithoutGlassPreference() {
+    @Test public void systemLightSelectsSuppliedDayVariant() {
         assertFalse(RemoteViewsFocusBannerSource.chooseDarkVariant(false, true, true));
     }
 

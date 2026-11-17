@@ -370,6 +370,26 @@ public class IslandPayloadParserTest {
         assertNull(IslandPayloadParser.findIslandPictureReference("{invalid", false));
     }
 
+    @Test public void statusBarIslandKeepsNormalIconWhenOtherNodeHasDarkThumbnail() {
+        String payload = "{\"param_v2\":{\"param_island\":{"
+                + "\"smallIslandArea\":{\"picInfo\":{\"pic\":\"miui.focus.pic_island\"}},"
+                + "\"bigIslandArea\":{\"picInfo\":{\"picDark\":\"miui.focus.pic_thumbnail\"}}}}}";
+        assertEquals("miui.focus.pic_thumbnail", IslandPayloadParser.findIslandPictureReference(payload, true));
+        assertEquals("miui.focus.pic_island", IslandPayloadParser.findStatusBarIslandPictureReference(payload));
+    }
+    @Test public void statusBarIslandUsesSameNormalReferenceEvenWithExplicitDarkVariant() {
+        String payload = "{\"param_v2\":{\"baseInfo\":{\"pic\":\"miui.focus.pic_island\","
+                + "\"picDark\":\"miui.focus.pic_thumbnail\"}}}";
+        assertEquals("miui.focus.pic_island", IslandPayloadParser.findStatusBarIslandPictureReference(payload));
+    }
+    @Test public void statusBarIslandDarkOnlyFallbackStaysWithinIconNodes() {
+        assertEquals("miui.focus.pic_only_dark", IslandPayloadParser.findStatusBarIslandPictureReference(
+                "{\"param_v2\":{\"baseInfo\":{\"picDark\":\"miui.focus.pic_only_dark\"}}}"));
+        assertNull(IslandPayloadParser.findStatusBarIslandPictureReference(
+                "{\"param_v2\":{\"bannerPicInfo\":{\"picDark\":\"miui.focus.pic_thumbnail\"}}}"));
+        assertNull(IslandPayloadParser.findStatusBarIslandPictureReference("{invalid"));
+    }
+
     private static String repeat(char value, int count) {
         StringBuilder result = new StringBuilder(count);
         for (int index = 0; index < count; index++) result.append(value);

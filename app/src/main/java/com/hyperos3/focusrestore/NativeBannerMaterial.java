@@ -67,6 +67,51 @@ final class NativeBannerMaterial {
         }
     }
 
+    static boolean hasHunGlassParameters(Context context) {
+        if (NativeFocusAppearance.isOs3() || !NativeFocusAppearance.useNativeMaterial()) return false;
+        return readHunGlassParameters(context) != null;
+    }
+
+    private static float[] readHunGlassParameters(Context context) {
+        Context app = context.getApplicationContext();
+        Context live = app != null ? app : context;
+        boolean dark = (live.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+        float[] values = NativeHunGlassParameterCapture.read(live, dark);
+        return values != null && hunResourcesReady(live) ? values : null;
+    }
+
+    private static Resources readyResources;
+    private static Configuration readyConfiguration;
+    private static boolean readyHunResources;
+
+    private static synchronized boolean hunResourcesReady(Context context) {
+        Resources resources = context.getResources();
+        Configuration configuration = resources.getConfiguration();
+        if (resources == readyResources && readyConfiguration != null
+                && readyConfiguration.equals(configuration)) return readyHunResources;
+        boolean ready = false;
+        try {
+            int drawable = resources.getIdentifier("notification_heads_up_transparent_bg", "drawable", "com.android.systemui");
+            if (drawable == 0 || resources.getDrawable(drawable, context.getTheme()) == null)
+                throw new IllegalStateException("transparent HUN drawable missing");
+            for (String suffix : new String[]{"color_1", "mode_1", "color_2", "mode_2"}) {
+                boolean color = suffix.startsWith("color");
+                String name = "notification_element_blend_headsUp_" + suffix;
+                int id = resources.getIdentifier(name, color ? "color" : "integer", "com.android.systemui");
+                if (id == 0) throw new IllegalStateException("HUN blend resource missing: " + name);
+                if (color) resources.getColor(id, null); else resources.getInteger(id);
+            }
+            ready = true;
+        } catch (Throwable error) {
+            Log.w(TAG, "banner HUN resources not ready; retain legacy content and material", error);
+        }
+        readyResources = resources;
+        readyConfiguration = new Configuration(configuration);
+        readyHunResources = ready;
+        return ready;
+    }
+
     private static boolean materialObservationFailed;
 
     /** OS3无materialInteractor；OS4只认通知门控后的Flow，不读取原始material_style。 */
@@ -106,6 +151,13 @@ final class NativeBannerMaterial {
         private Configuration blendConfiguration;
         private int[] notificationBlendColors;
         private boolean blendHun, appliedHun;
+        private boolean blendFocusHun;
+        private final boolean hunEligible;
+        private int appliedRecipe = BannerMaterialRecipe.LEGACY;
+        private Drawable hunBackground;
+        private Resources hunResources;
+        private Configuration hunConfiguration;
+        private String fallbackReason;
         private boolean glassReadyLogged;
         private boolean glassOutlineFailed, glassOutlineTouched;
         private boolean resolved, failed, touched;
@@ -121,7 +173,11 @@ final class NativeBannerMaterial {
         private boolean materialReady, waitingForState;
         private int preparationRevision;
 
-        Session(View target) { this.target = target; }
+        Session(View target) { this(target, false); }
+        Session(View target, boolean hunEligible) {
+            this.target = target;
+            this.hunEligible = hunEligible;
+        }
 
         boolean hasFailed() { return failed; }
 
@@ -173,11 +229,36 @@ final class NativeBannerMaterial {
                 int value = XposedHelpers.getIntField(current,
                         useGlass ? "modalMaxGlassBlurRadius" : "miBlurMaxRadius");
                 if (value <= 0) { clear(); return; }
-                // GLASS 时使用 HUN 专用混色，BLUR/OS3 时使用 shade 配方。
                 boolean useHun = NativeFocusAppearance.useOs4GlassHunBlend(useGlass);
-                int[] nativeColors = loadNotificationBlendColors(current, useHun);
-                if (useGlass) loadGlassParameters(current);
-                if (touched && value == appliedRadius && useGlass == appliedGlass && useHun == appliedHun
+                Context liveContext = liveContext(current);
+                float[] captured = useGlass && hunEligible ? readHunGlassParameters(liveContext) : null;
+                int recipe = BannerMaterialRecipe.choose(hunEligible, NativeFocusAppearance.isOs3(),
+                        useGlass, captured != null);
+                int[] nativeColors;
+                if (recipe != BannerMaterialRecipe.LEGACY) {
+                    try {
+                        loadHunBackground(liveContext);
+                        nativeColors = loadNotificationBlendColors(current, useHun,
+                                recipe == BannerMaterialRecipe.OS3_FOCUS_HUN);
+                    } catch (Throwable error) {
+                        reportFallback("HUN resources unavailable: " + error.getClass().getSimpleName() + ": " + error.getMessage());
+                        recipe = BannerMaterialRecipe.LEGACY;
+                        nativeColors = loadNotificationBlendColors(current, useHun, false);
+                    }
+                } else {
+                    reportFallback(!hunEligible ? "render pinned to legacy (eligibility/sample checked at creation)"
+                            : useGlass ? "no current-configuration native HUN glass sample" : "material uses legacy BLUR");
+                    nativeColors = loadNotificationBlendColors(current, useHun, false);
+                }
+                if (useGlass) {
+                    if (recipe == BannerMaterialRecipe.OS4_CAPTURED_HUN) {
+                        if (!Arrays.equals(captured, nativeGlassParameters)) preparationRevision++;
+                        nativeGlassParameters = captured;
+                        glassResources = null;
+                        glassConfiguration = null;
+                    } else loadGlassParameters(current);
+                }
+                if (touched && recipe == appliedRecipe && value == appliedRadius && useGlass == appliedGlass && useHun == appliedHun
                         && Arrays.equals(nativeColors, appliedColors)) {
                     syncBlendBounds();
                     materialReady = updateGlassMaterial(useGlass);
@@ -210,21 +291,27 @@ final class NativeBannerMaterial {
                     invokeOn(blendLayer, addBlend, nativeColors[i], nativeColors[i + 1]);
                 }
                 materialReady = updateGlassMaterial(useGlass);
-                // 原背景不再完全透明，保留少量主题底色以改善明暗壁纸上的文字对比。
-                // 只更改自有外壳 Drawable，保留 padding；显式轮廓 alpha=1 保留模糊圆角。
-                int backgroundAlpha = Math.min(originalAlpha, MATERIAL_BACKGROUND_ALPHA);
+                // HUN 使用 ROM 透明形状，不叠加旧 alpha51 底色；旧配方保留原行为。
+                // 仅替换模块自有外壳；保留 padding 和显式圆角，清理时恢复原 Drawable。
+                int backgroundAlpha = recipe == BannerMaterialRecipe.LEGACY
+                        ? Math.min(originalAlpha, MATERIAL_BACKGROUND_ALPHA) : originalAlpha;
                 originalBackground.setAlpha(backgroundAlpha);
+                setOwnedBackground(recipe == BannerMaterialRecipe.LEGACY ? originalBackground : hunBackground);
                 target.invalidateOutline();
                 target.invalidate();
                 appliedRadius = value;
                 appliedGlass = useGlass;
                 appliedHun = useHun;
+                appliedRecipe = recipe;
                 appliedColors = nativeColors.clone();
                 preparationRevision++;
                 if (BuildConfig.DEBUG) Log.d(TAG, "DIAG banner material pipeline applied type="
                         + (useGlass ? "glass" : "blur") + " radius=" + value
                         + " blendPairs=" + nativeColors.length / 2
-                        + " blendSource=" + (useHun ? "notification-headsup" : "notification-shade")
+                        + " recipe=" + (recipe == BannerMaterialRecipe.OS3_FOCUS_HUN ? "os3-focus-hun"
+                                : recipe == BannerMaterialRecipe.OS4_CAPTURED_HUN ? "os4-captured-hun" : "legacy")
+                        + " blendSource=" + (recipe == BannerMaterialRecipe.OS3_FOCUS_HUN ? "focus-headsup-three"
+                                : useHun ? "notification-headsup" : "notification-shade")
                         + " systemNight=" + (blendConfiguration.uiMode & Configuration.UI_MODE_NIGHT_MASK)
                         + " blendValues=" + Arrays.toString(nativeColors)
                         + " backgroundAlpha=" + originalAlpha + "->" + backgroundAlpha
@@ -238,7 +325,7 @@ final class NativeBannerMaterial {
         }
 
         /** 混色仍读取系统日夜资源；GLASS文字独立选Dark Modal，不强制背景Context。 */
-        private int[] loadNotificationBlendColors(Object current, boolean hun) {
+        private int[] loadNotificationBlendColors(Object current, boolean hun, boolean focusHun) {
             Object owner = XposedHelpers.getObjectField(current, "context");
             if (!(owner instanceof Context)) throw new IllegalStateException("SystemUI blend context unavailable");
             Context context = (Context) owner;
@@ -247,11 +334,11 @@ final class NativeBannerMaterial {
             Configuration configuration = resources.getConfiguration();
             if (resources == blendResources && blendConfiguration != null
                     && blendConfiguration.equals(configuration) && notificationBlendColors != null
-                    && blendHun == hun) {
+                    && blendHun == hun && blendFocusHun == focusHun) {
                 return notificationBlendColors;
             }
             // 四项资源必须属于同一配方；HUN缺项直接走主题回退，不静默冒充已应用HUN。
-            int[] colors = BannerBlendColors.load(new BannerBlendColors.Resources() {
+            BannerBlendColors.Resources reader = new BannerBlendColors.Resources() {
                 private int id(String name, String type) {
                     int id = resources.getIdentifier(name, type, "com.android.systemui");
                     if (id == 0) throw new IllegalStateException("SystemUI blend resource unavailable: " + name);
@@ -259,13 +346,50 @@ final class NativeBannerMaterial {
                 }
                 @Override public int color(String name) { return resources.getColor(id(name, "color"), null); }
                 @Override public int integer(String name) { return resources.getInteger(id(name, "integer")); }
-            }, hun);
+            };
+            int[] colors = focusHun ? BannerBlendColors.loadFocusHun(reader) : BannerBlendColors.load(reader, hun);
             // 四项全部成功后才提交新缓存，避免日夜切换失败时混用两代资源。
             blendResources = resources;
             blendConfiguration = new Configuration(configuration);
             blendHun = hun;
+            blendFocusHun = focusHun;
             notificationBlendColors = colors;
             return colors;
+        }
+
+        private Context liveContext(Object current) {
+            Object owner = XposedHelpers.getObjectField(current, "context");
+            if (!(owner instanceof Context)) throw new IllegalStateException("SystemUI material context unavailable");
+            Context context = (Context) owner;
+            Context app = context.getApplicationContext();
+            return app != null ? app : context;
+        }
+
+        private void reportFallback(String reason) {
+            if (reason.equals(fallbackReason)) return;
+            fallbackReason = reason;
+            Log.i(TAG, "banner HUN recipe fallback: " + reason + "; keep legacy material");
+        }
+
+        private void loadHunBackground(Context context) {
+            Resources resources = context.getResources();
+            Configuration configuration = resources.getConfiguration();
+            if (resources == hunResources && hunConfiguration != null
+                    && hunConfiguration.equals(configuration) && hunBackground != null) return;
+            int id = resources.getIdentifier("notification_heads_up_transparent_bg", "drawable", "com.android.systemui");
+            if (id == 0) throw new IllegalStateException("native transparent HUN drawable missing");
+            Drawable drawable = resources.getDrawable(id, context.getTheme()).mutate();
+            hunBackground = drawable;
+            hunResources = resources;
+            hunConfiguration = new Configuration(configuration);
+        }
+
+        private void setOwnedBackground(Drawable background) {
+            if (target.getBackground() == background) return;
+            int left = target.getPaddingLeft(), top = target.getPaddingTop();
+            int right = target.getPaddingRight(), bottom = target.getPaddingBottom();
+            target.setBackground(background);
+            target.setPadding(left, top, right, bottom);
         }
 
         /** 只使用BlurUtilsExt持有的SystemUI Context，RemoteViews的target可能属于通知应用。 */
@@ -340,7 +464,8 @@ final class NativeBannerMaterial {
             updateGlassOutline(true);
             if (!glassReadyLogged && BuildConfig.DEBUG) {
                 glassReadyLogged = true;
-                Log.d(TAG, "DIAG banner glass ready receiver=blendLayer resource=notification_glass_params_normal"
+                Log.d(TAG, "DIAG banner glass ready receiver=blendLayer resource="
+                        + (glassResources == null ? "observed-native-hun" : "notification_glass_params_normal")
                         + " params=" + nativeGlassParameters.length + " materialType=1 sdf="
                         + blendLayer.getWidth() + "x" + blendLayer.getHeight()
                         + " outline=" + (glassOutlineTouched && !glassOutlineFailed) + "; visual unverified");
@@ -461,6 +586,7 @@ final class NativeBannerMaterial {
             waitingForState = false;
             appliedGlass = false;
             appliedHun = false;
+            appliedRecipe = BannerMaterialRecipe.LEGACY;
             appliedRadius = -1;
             appliedColors = null;
             glassReadyLogged = false;
@@ -482,6 +608,7 @@ final class NativeBannerMaterial {
             if (appearanceOwned && originalBackground != null) {
                 try {
                     originalBackground.setAlpha(originalAlpha);
+                    setOwnedBackground(originalBackground);
                     target.setOutlineProvider(originalOutline);
                     target.invalidateOutline();
                     target.invalidate();

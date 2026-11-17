@@ -174,16 +174,22 @@ public class FocusRestoreSettingsResilienceTest {
                     if ("getAll".equals(method.getName())) return new HashMap<>(values);
                     if ("edit".equals(method.getName())) {
                         Map<String, Object> pending = new HashMap<>();
+                        java.util.Set<String> removed = new java.util.HashSet<>();
                         return Proxy.newProxyInstance(SharedPreferences.Editor.class.getClassLoader(),
                                 new Class<?>[]{SharedPreferences.Editor.class},
                                 (editor, operation, fields) -> {
                                     String name = operation.getName();
                                     if (name.startsWith("put") && fields != null
                                             && fields.length == 2) {
+                                        removed.remove(fields[0]);
                                         pending.put((String) fields[0], fields[1]);
                                         return editor;
                                     }
+                                    if ("remove".equals(name)) {
+                                        pending.remove(fields[0]); removed.add((String) fields[0]); return editor;
+                                    }
                                     if ("commit".equals(name)) {
+                                        for (String key : removed) values.remove(key);
                                         values.putAll(pending);
                                         return true;
                                     }

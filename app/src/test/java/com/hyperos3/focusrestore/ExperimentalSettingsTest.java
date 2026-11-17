@@ -163,64 +163,72 @@ public class ExperimentalSettingsTest {
 
     @Test
     public void iconChoicesAndIndependentTintRoundTripWithoutChangingPriority() throws Exception {
-        assertEquals(0, FocusRestoreSettings.defaults().focusIconPriority);
-        assertFalse(FocusRestoreSettings.defaults().showIslandIcon);
+        assertEquals(FocusIconPriority.DEFAULT_ORDER, FocusRestoreSettings.defaults().focusIconPriority);
+        assertArrayEquals(new int[]{0, 1, 3, 2}, FocusIconPriority.order(
+                FocusRestoreSettings.fromPreferences(memoryPreferences(new HashMap<>())).focusIconPriority));
         assertTrue(FocusRestoreSettings.defaults().tintDeviceIcon);
         for (int priority = 0; priority < FocusRestoreSettings.ICON_ORDER_COUNT; priority++) {
-            for (int mask = 0; mask < 8; mask++) {
+            int expected = FocusIconPriority.migrate(priority, false);
+            for (int mask = 0; mask < 4; mask++) {
                 FocusRestoreSettings settings = FocusRestoreSettings.edit().focusIconPriority(priority)
-                        .showIslandIcon((mask & 1) != 0).tintIslandIcon((mask & 2) != 0)
-                        .tintDeviceIcon((mask & 4) != 0).build();
+                        .tintIslandIcon((mask & 1) != 0).tintDeviceIcon((mask & 2) != 0).build();
                 Map<String, Object> values = new HashMap<>();
+                values.put("show_island_icon", true); // 保存要清除废弃状态，不能让它再次影响排序。
                 SharedPreferences store = memoryPreferences(values);
                 assertTrue(settings.save(store));
+                assertFalse(values.containsKey("show_island_icon"));
                 for (FocusRestoreSettings copy : new FocusRestoreSettings[]{
                         FocusRestoreSettings.edit(settings).build(), FocusRestoreSettings.fromPreferences(store),
                         SettingsBackupCodec.decode(SettingsBackupCodec.encode(settings))}) {
-                    assertEquals(priority, copy.focusIconPriority);
-                    assertEquals(priority == 2 || priority == 5, copy.useSmallIconFallback);
-                    assertEquals(settings.showIslandIcon, copy.showIslandIcon);
+                    assertEquals(expected, copy.focusIconPriority);
+                    assertEquals(FocusIconPriority.smallFirst(expected), copy.useSmallIconFallback);
                     assertEquals(settings.tintIslandIcon, copy.tintIslandIcon);
                     assertEquals(settings.tintDeviceIcon, copy.tintDeviceIcon);
                     HookSettings hook = HookSettings.fromCursor(SettingsContractTest.namedCursor(
                             SettingsContract.COLUMNS, SettingsContract.toRow(copy, "")));
-                    assertEquals(priority, hook.focusIconPriority);
+                    assertEquals(expected, hook.focusIconPriority);
                     assertEquals(settings.tintDeviceIcon, hook.tintDeviceIcon);
                 }
-                assertEquals(priority, FocusRestoreSettings.edit(settings)
-                        .showIslandIcon(!settings.showIslandIcon).build().focusIconPriority);
             }
         }
     }
 
     @Test
     public void missingPriorityMigratesLegacyFlagsOnceAndExplicitPriorityWins() {
-        for (boolean small : new boolean[]{false, true}) {
+        Map<String, Object> metadata = new HashMap<>();
+        assertEquals(6, FocusRestoreSettings.fromPreferences(memoryPreferences(metadata)).focusIconPriority);
+        metadata.put("island_app_cache", "cached");
+        metadata.put("hook_settings_ready", true);
+        metadata.put("settings_generation", 4L);
+        assertEquals(6, FocusRestoreSettings.fromPreferences(memoryPreferences(metadata)).focusIconPriority);
+        for (int old = -1; old < 6; old++) for (boolean small : new boolean[]{false, true}) {
             for (boolean island : new boolean[]{false, true}) {
                 Map<String, Object> values = legacyPreferences();
                 values.put("use_small_icon_fallback", small);
                 values.put("show_island_icon", island);
+                if (old >= 0) values.put("focus_icon_priority", old);
+                int raw = old >= 0 ? old : small ? 2 : island ? 1 : 0;
+                int expected = FocusIconPriority.migrate(raw, island);
                 SharedPreferences store = memoryPreferences(values);
-                int expected = small ? 2 : island ? 1 : 0;
                 FocusRestoreSettings migrated = FocusRestoreSettings.fromPreferences(store);
                 assertEquals(expected, migrated.focusIconPriority);
-                assertTrue(migrated.tintDeviceIcon);
-                HookSettings hook = HookSettings.fromCursor(SettingsContractTest.namedCursor(
-                        SettingsContractTest.LEGACY_COLUMNS, SettingsContract.toRow(migrated, "",
-                                SettingsContractTest.LEGACY_COLUMNS)));
-                assertEquals(expected, hook.focusIconPriority);
-                assertTrue(hook.tintDeviceIcon);
-                assertTrue(FocusRestoreSettings.edit(migrated).focusIconPriority(0).build().save(store));
-                values.put("show_island_icon", true);
-                values.put("use_small_icon_fallback", true);
-                assertEquals(0, FocusRestoreSettings.fromPreferences(store).focusIconPriority);
+                int[] order = FocusIconPriority.order(expected);
+                assertEquals(3, order[island ? 0 : 3]);
+                HookSettings oldProvider = HookSettings.fromCursor(SettingsContractTest.namedCursor(
+                        new String[]{"limit_text_width", "text_width_dp", "marquee_delay_ms",
+                                "focus_icon_priority", "show_island_icon"},
+                        new Object[]{0, 244, 1700, raw, island ? 1 : 0}));
+                assertEquals(expected, oldProvider.focusIconPriority);
+                assertTrue(migrated.save(store));
+                assertFalse("retired switch must be removed on save", values.containsKey("show_island_icon"));
+                values.put("show_island_icon", !island);
+                values.put("use_small_icon_fallback", !small);
+                assertEquals(expected, FocusRestoreSettings.fromPreferences(store).focusIconPriority);
             }
         }
-        assertEquals(0, FocusRestoreSettings.edit().focusIconPriority(-1).build().focusIconPriority);
-        assertEquals(0, FocusRestoreSettings.edit().focusIconPriority(6).build().focusIconPriority);
-        assertArrayEquals(new int[]{0, 1, 2}, FocusIconPriority.order(0));
-        assertArrayEquals(new int[]{1, 0, 2}, FocusIconPriority.order(1));
-        assertArrayEquals(new int[]{2, 0, 1}, FocusIconPriority.order(2));
+        assertEquals(FocusIconPriority.migrate(0, false),
+                FocusRestoreSettings.edit().focusIconPriority(-1).build().focusIconPriority);
+        assertEquals(6, FocusRestoreSettings.edit().focusIconPriority(6).build().focusIconPriority);
     }
 
     @Test
@@ -228,20 +236,27 @@ public class ExperimentalSettingsTest {
         int[][] expected = {{0, 1, 2}, {1, 0, 2}, {2, 0, 1},
                 {0, 2, 1}, {1, 2, 0}, {2, 1, 0}};
         for (int priority = 0; priority < expected.length; priority++) {
-            int[] order = FocusIconPriority.order(priority);
-            assertArrayEquals(expected[priority], order);
-            assertEquals(priority, FocusIconPriority.indexOf(order));
-            order[0] = -1;
             assertArrayEquals(expected[priority], FocusIconPriority.order(priority));
         }
-        assertEquals(-1, FocusIconPriority.indexOf(new int[]{0, 0, 2}));
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (int priority = 6; priority < 30; priority++) {
+            int[] order = FocusIconPriority.order(priority);
+            assertEquals(4, order.length);
+            int[] sorted = order.clone(); java.util.Arrays.sort(sorted);
+            assertArrayEquals(new int[]{0, 1, 2, 3}, sorted);
+            assertTrue(seen.add(java.util.Arrays.toString(order)));
+            assertEquals(priority, FocusIconPriority.indexOf(order));
+            order[0] = -1;
+            assertTrue(FocusIconPriority.order(priority)[0] >= 0);
+        }
+        assertEquals(24, seen.size());
+        assertEquals(-1, FocusIconPriority.indexOf(new int[]{0, 0, 2, 3}));
         assertEquals(-1, FocusIconPriority.indexOf(new int[]{0, 1}));
         assertEquals(-1, FocusIconPriority.indexOf(null));
-        for (int invalid : new int[]{Integer.MIN_VALUE, -1, 6, Integer.MAX_VALUE}) {
+        for (int invalid : new int[]{Integer.MIN_VALUE, -1, 30, Integer.MAX_VALUE}) {
             assertArrayEquals(expected[0], FocusIconPriority.order(invalid));
         }
     }
-
     @Test
     public void customTouchWidthIsOptionalAndIndependentAcrossStoresProviderAndBackup() throws Exception {
         FocusRestoreSettings defaults = FocusRestoreSettings.defaults();
@@ -596,7 +611,6 @@ public class ExperimentalSettingsTest {
     @Test
     public void iconFallbackAndBannerDefaultsMatchStatusBarPolicy() {
         FocusRestoreSettings settings = FocusRestoreSettings.defaults();
-        assertFalse(settings.showIslandIcon);
         assertTrue(settings.tintIslandIcon);
         assertFalse(settings.useSmallIconFallback);
         assertFalse(settings.notificationRowClickFallback);
@@ -619,7 +633,6 @@ public class ExperimentalSettingsTest {
                     .allowFocusClick(allowClick)
                     .hideNotificationIcons(true)
                     .showFocusDivider(true)
-                    .showIslandIcon(true)
                     .tintIslandIcon(true)
                     .useSmallIconFallback(false)
                     .notificationRowClickFallback(rowFallback)
@@ -832,7 +845,6 @@ public class ExperimentalSettingsTest {
                 .allowFocusClick(true)
                 .hideNotificationIcons(false)
                 .showFocusDivider(false)
-                .showIslandIcon(true)
                 .tintIslandIcon(false)
                 .useSmallIconFallback(true)
                 .notificationRowClickFallback(true)
@@ -858,7 +870,6 @@ public class ExperimentalSettingsTest {
         assertTrue(all.allowFocusClick);
         assertFalse(all.hideNotificationIcons);
         assertFalse(all.showFocusDivider);
-        assertTrue(all.showIslandIcon);
         assertFalse(all.tintIslandIcon);
         assertTrue(all.useSmallIconFallback);
         assertTrue(all.notificationRowClickFallback);
@@ -890,7 +901,6 @@ public class ExperimentalSettingsTest {
         assertEquals(defaults.islandRichText, hookDefaults.islandRichText);
         assertEquals(defaults.islandTextMode, hookDefaults.islandTextMode);
         assertEquals(defaults.focusMaxDisplaySeconds, hookDefaults.focusMaxDisplaySeconds, 0.0001f);
-        assertEquals(defaults.showIslandIcon, hookDefaults.showIslandIcon);
         assertEquals(defaults.tintIslandIcon, hookDefaults.tintIslandIcon);
         assertEquals(defaults.focusTimeoutExemptPackages, hookDefaults.focusTimeoutExemptPackages);
     }
@@ -954,6 +964,7 @@ public class ExperimentalSettingsTest {
                             return new HashMap<>(values);
                         case "edit":
                             Map<String, Object> pending = new HashMap<>();
+                            java.util.Set<String> removed = new java.util.HashSet<>();
                             return Proxy.newProxyInstance(SharedPreferences.Editor.class.getClassLoader(),
                                     new Class<?>[]{SharedPreferences.Editor.class}, (editor, operation, fields) -> {
                                         switch (operation.getName()) {
@@ -963,9 +974,15 @@ public class ExperimentalSettingsTest {
                                             case "putFloat":
                                             case "putString":
                                             case "putStringSet":
+                                                removed.remove(fields[0]);
                                                 pending.put((String) fields[0], fields[1]);
                                                 return editor;
+                                            case "remove":
+                                                pending.remove(fields[0]);
+                                                removed.add((String) fields[0]);
+                                                return editor;
                                             case "commit":
+                                                for (String key : removed) values.remove(key);
                                                 values.putAll(pending);
                                                 return true;
                                             default: throw new AssertionError(

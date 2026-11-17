@@ -58,6 +58,9 @@ final class HyperOS4FocusController {
         DisplayItem create(Object notificationEntry);
         boolean isExpired(Object notificationEntry);
         boolean isAllowed(Object notificationEntry);
+        default String blockedReason(Object notificationEntry) {
+            return isAllowed(notificationEntry) ? null : "entry-policy";
+        }
         /** Milliseconds until the display limit is reached, or {@link Long#MAX_VALUE} when unlimited. */
         long expiryRemainingMillis(Object notificationEntry);
         /** Called once when this entry actually starts being displayed; starts the display window. */
@@ -133,6 +136,7 @@ final class HyperOS4FocusController {
     private final Logger logger;
     private final Map<String, DisplayItem> items = new LinkedHashMap<>();
     private final FocusSwipeSelection swipeSelection = new FocusSwipeSelection();
+    private final FocusSelectionDiagnostics selectionDiagnostics = new FocusSelectionDiagnostics();
     private final Set<Object> registeredPipelines = Collections.newSetFromMap(
             new WeakHashMap<Object, Boolean>());
     private volatile Object activePipeline;
@@ -322,6 +326,7 @@ final class HyperOS4FocusController {
         }
         synchronized (items) {
             activePipeline = pipeline;
+            selectionDiagnostics.clear();
             items.clear();
             swipeSelection.clear();
         }
@@ -422,6 +427,7 @@ final class HyperOS4FocusController {
             DisplayItem current = items.get(key);
             if (current != null && current.notificationEntry != entry) return;
             items.remove(key);
+            selectionDiagnostics.removed(key);
             swipeSelection.remove(key);
         }
         itemFactory.onNotificationRemoved(entry, key);
@@ -609,13 +615,27 @@ final class HyperOS4FocusController {
             generation = renderGeneration;
         }
         final DisplayItem best;
+        final int storedCount, eligibleCount;
+        final boolean manualSelection;
+        final String queueSelection;
         synchronized (items) {
             ArrayList<DisplayItem> eligible = new ArrayList<>();
             for (DisplayItem candidate : items.values()) {
-                if (itemFactory.isExpired(candidate.notificationEntry)
-                        || !currentlyAllowed(candidate.notificationEntry, candidate.key)) continue;
+                boolean expired = itemFactory.isExpired(candidate.notificationEntry);
+                boolean nativeAllowed = nativeChipPolicy.allows(candidate.key);
+                // 保持原来的短路门控；只把实际阻挡阶段写清，不额外调用被前序门控挡住的隐私接口。
+                String blocked = expired ? "not-checked-expired" : !nativeAllowed ? "not-checked-native-chips"
+                        : itemFactory.blockedReason(candidate.notificationEntry);
+                if (BuildConfig.DEBUG) {
+                    String decision = selectionDiagnostics.changed(candidate.key, candidate.postTime,
+                            itemFactory.expiryRemainingMillis(candidate.notificationEntry), nativeAllowed, blocked);
+                    if (decision != null) logger.log("DIAG " + decision);
+                }
+                if (expired || !nativeAllowed || blocked != null) continue;
                 eligible.add(candidate);
             }
+            storedCount = items.size();
+            eligibleCount = eligible.size();
             eligible.sort((first, second) -> -OS4FocusPriorityPolicy.compare(
                     first.priority, first.updateSequence, second.priority, second.updateSequence));
             ArrayList<String> keys = new ArrayList<>();
@@ -635,10 +655,14 @@ final class HyperOS4FocusController {
                 if (!stillEligible) resolved = null;
             }
             best = resolved;
+            manualSelection = swipeSelection.manual();
+            queueSelection = selected;
         }
         if (BuildConfig.DEBUG) logger.log("DIAG device stage=os4-select key="
-                + (best == null ? "none" : best.key) + " candidates=" + items.size()
-                + " generation=" + generation);
+                + (best == null ? "none" : best.key) + " stored=" + storedCount + " eligible=" + eligibleCount
+                + " manual=" + manualSelection + " selected=" + queueSelection
+                + " generation=" + generation + " version=" + BuildConfig.VERSION_NAME
+                + " code=" + BuildConfig.VERSION_CODE + " pid=" + android.os.Process.myPid());
         boolean committed = render(host, best, generation);
         if (best == null) {
             displayedKey = null;
@@ -1247,7 +1271,8 @@ final class HyperOS4FocusController {
                     bindClick(iconView, item, settings);
                     contentInsetPx = FocusContentGeometry.textStart(contentInsetPx, iconSize, iconGap);
                     logger.log("OS4 focus icon attached key=" + item.key
-                            + " tinted=" + tintCurrentIcon + " sizePx=" + currentIconSizePx);
+                            + " tintRequested=" + tintCurrentIcon + " tintApplied=" + iconResult.tintApplied
+                            + " island=" + currentIslandIcon + " sizePx=" + currentIconSizePx);
                 } catch (Throwable throwable) {
                     iconView = null;
                     tintCurrentIcon = false;

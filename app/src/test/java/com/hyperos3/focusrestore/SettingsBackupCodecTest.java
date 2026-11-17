@@ -39,8 +39,8 @@ public class SettingsBackupCodecTest {
     public void defaultsRoundTripAndMissingFieldsUseDefaults() throws Exception {
         FocusRestoreSettings defaults = FocusRestoreSettings.defaults();
         assertEverySettingEquals(defaults, SettingsBackupCodec.decode(SettingsBackupCodec.encode(defaults)));
-        assertEverySettingEquals(defaults, decodeGroups("{}"));
-        assertEverySettingEquals(defaults, decodeGroups("{\"focus\":{},\"interaction\":{}}"));
+        assertEverySettingEquals(legacyDefaults(), decodeGroups("{}"));
+        assertEverySettingEquals(legacyDefaults(), decodeGroups("{\"focus\":{},\"interaction\":{}}"));
     }
 
     @Test
@@ -95,7 +95,7 @@ public class SettingsBackupCodecTest {
         int fields = 0;
         JSONObject groups = root.getJSONObject("settings");
         for (String group : groupOrder) fields += groups.getJSONObject(group).length();
-        assertEquals(52, fields);
+        assertEquals(51, fields);
         for (String excluded : new String[]{"island_app_cache", "hook_settings_ready", "settings_generation",
                 "island_separator", "expand_island_on_click", "notification_icon_hide_mode", "island_custom_rules",
                 "focus_divider_start_dp", "focus_divider_end_dp"}) {
@@ -142,7 +142,7 @@ public class SettingsBackupCodecTest {
             reject(root.toString());
         }
         root.put("appVersion", repeat('v', 64));
-        assertEverySettingEquals(FocusRestoreSettings.defaults(),
+        assertEverySettingEquals(legacyDefaults(),
                 SettingsBackupCodec.decode(root.toString().getBytes(StandardCharsets.UTF_8)));
         reject(backup("{}").replace("\"appVersion\":\"0.31.3(266)\"",
                 "\"appVersion\":\"0.31.3(266)\",\"appVersion\":\"edited\""));
@@ -428,7 +428,7 @@ public class SettingsBackupCodecTest {
         Arrays.fill(padded, (byte) ' ');
         byte[] header = backup("{}").getBytes(StandardCharsets.UTF_8);
         System.arraycopy(header, 0, padded, 0, header.length);
-        assertEverySettingEquals(FocusRestoreSettings.defaults(), SettingsBackupCodec.decode(padded));
+        assertEverySettingEquals(legacyDefaults(), SettingsBackupCodec.decode(padded));
         rejectBytes(new byte[SettingsBackupCodec.MAX_FILE_BYTES + 1]);
         rejectBytes(new byte[0]);
         rejectBytes(null);
@@ -440,7 +440,7 @@ public class SettingsBackupCodecTest {
         InputStream stream = new ByteArrayInputStream(backup("{}").getBytes(StandardCharsets.UTF_8)) {
             @Override public void close() { closed[0] = true; }
         };
-        assertEverySettingEquals(FocusRestoreSettings.defaults(), SettingsBackupCodec.read(stream));
+        assertEverySettingEquals(legacyDefaults(), SettingsBackupCodec.read(stream));
         assertFalse("stream ownership belongs to SAF caller", closed[0]);
         InputStream huge = new InputStream() {
             private int left = SettingsBackupCodec.MAX_FILE_BYTES + 1;
@@ -511,7 +511,7 @@ public class SettingsBackupCodecTest {
             rejectGroups("{\"focus\":{\"focus_divider_style\":" + invalid + "}}");
         }
         FocusRestoreSettings automatic = decodeGroups("{\"icons\":{\"focus_icon_size_dp\":0},\"focus\":{\"focus_divider_start_dp\":-1,\"focus_divider_end_dp\":-1,\"focus_divider_width_dp\":0,\"focus_divider_style\":0}}");
-        assertEverySettingEquals(FocusRestoreSettings.edit().focusIconSizeDp(0).build(), automatic);
+        assertEverySettingEquals(FocusRestoreSettings.edit(legacyDefaults()).focusIconSizeDp(0).build(), automatic);
         for (int size : new int[]{1, 7, 8, 32}) {
             assertEquals(size, decodeGroups("{\"icons\":{\"focus_icon_size_dp\":" + size + "}}").focusIconSizeDp);
         }
@@ -592,7 +592,7 @@ public class SettingsBackupCodecTest {
                 .mediaFocusEnabled(true).mediaFocusNativeBanner(true).mediaFocusCastPicker(1).mediaFocusCastDirect(direct)
                 .compatRetry(true).marqueeBounce(false).islandCompat(true).islandRichText(false)
                 .disableIslandProperty(false).disableIslandFeatureCache(false).allowFocusClick(true)
-                .hideNotificationIcons(false).showFocusDivider(false).showIslandIcon(true).tintIslandIcon(false)
+                .hideNotificationIcons(false).showFocusDivider(false).tintIslandIcon(false)
                 .focusIconSizeDp(23).focusIconTextGapDp(12).focusDividerStartDp(0).focusDividerEndDp(24)
                 .focusDividerWidthDp(4).focusDividerStyle(3)
                 .useSmallIconFallback(true).focusIconPriority(1).tintDeviceIcon(false)
@@ -614,23 +614,24 @@ public class SettingsBackupCodecTest {
             for (boolean island : new boolean[]{false, true}) {
                 FocusRestoreSettings migrated = decodeGroups("{\"icons\":{\"use_small_icon_fallback\":"
                         + small + ",\"show_island_icon\":" + island + "}}");
-                assertEquals(small ? 2 : island ? 1 : 0, migrated.focusIconPriority);
+                assertEquals(FocusIconPriority.migrate(small ? 2 : island ? 1 : 0, island), migrated.focusIconPriority);
                 assertTrue(migrated.tintDeviceIcon);
-                assertEquals(island, migrated.showIslandIcon);
+                assertFalse(new String(SettingsBackupCodec.encode(migrated), StandardCharsets.UTF_8)
+                        .contains("show_island_icon"));
             }
         }
         FocusRestoreSettings explicit = decodeGroups("{\"icons\":{\"focus_icon_priority\":0,"
                 + "\"use_small_icon_fallback\":true,\"show_island_icon\":true,\"tint_device_icon\":false}}");
-        assertEquals(0, explicit.focusIconPriority);
+        assertEquals(FocusIconPriority.migrate(0, true), explicit.focusIconPriority);
         assertFalse(explicit.useSmallIconFallback);
         assertFalse(explicit.tintDeviceIcon);
         for (int priority = 0; priority < FocusRestoreSettings.ICON_ORDER_COUNT; priority++) {
             FocusRestoreSettings imported = decodeGroups("{\"icons\":{\"focus_icon_priority\":"
                     + priority + ",\"use_small_icon_fallback\":true}}");
-            assertEquals(priority, imported.focusIconPriority);
-            assertEquals(priority == 2 || priority == 5, imported.useSmallIconFallback);
+            assertEquals(FocusIconPriority.migrate(priority, false), imported.focusIconPriority);
+            assertEquals(FocusIconPriority.smallFirst(priority), imported.useSmallIconFallback);
         }
-        for (String invalid : new String[]{"-1", "6", "2147483647", "1.5", "true", "\"1\""}) {
+        for (String invalid : new String[]{"-1", "30", "2147483647", "1.5", "true", "\"1\""}) {
             rejectGroups("{\"icons\":{\"focus_icon_priority\":" + invalid + "}}");
         }
     }
@@ -644,7 +645,11 @@ public class SettingsBackupCodecTest {
             assertEquals(field.getName(), field.get(expected), field.get(actual));
             count++;
         }
-        assertEquals("current user snapshot field count", 52, count);
+        assertEquals("current user snapshot field count", 51, count);
+    }
+
+    private static FocusRestoreSettings legacyDefaults() {
+        return FocusRestoreSettings.edit().focusIconPriority(FocusIconPriority.migrate(0, false)).build();
     }
 
     private static FocusRestoreSettings decodeGroups(String groups) throws IOException {

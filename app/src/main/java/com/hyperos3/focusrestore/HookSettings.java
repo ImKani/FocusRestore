@@ -48,7 +48,6 @@ final class HookSettings {
     final int focusDividerWidthDp;
     final int focusDividerStyle;
 
-    final boolean showIslandIcon;
     final boolean tintIslandIcon;
     final boolean useSmallIconFallback;
     final int focusIconPriority;
@@ -78,7 +77,7 @@ final class HookSettings {
                          boolean allowFocusClick, boolean hideNotificationIcons,
                          boolean showFocusDivider,
                          int focusIconSizeDp, int focusIconTextGapDp, int focusDividerStartDp, int focusDividerEndDp,
-                         int focusDividerWidthDp, int focusDividerStyle, boolean showIslandIcon,
+                         int focusDividerWidthDp, int focusDividerStyle,
                          boolean tintIslandIcon, boolean useSmallIconFallback,
                          int focusIconPriority, boolean tintDeviceIcon,
                          boolean notificationRowClickFallback, boolean independentFocusBanner,
@@ -121,10 +120,9 @@ final class HookSettings {
         this.focusDividerWidthDp = FocusRestoreSettings.normalizeFocusDividerWidthDp(focusDividerWidthDp);
         this.focusDividerStyle = FocusRestoreSettings.normalizeFocusDividerStyle(focusDividerStyle);
 
-        this.showIslandIcon = showIslandIcon;
         this.tintIslandIcon = tintIslandIcon;
         this.useSmallIconFallback = useSmallIconFallback;
-        this.focusIconPriority = FocusRestoreSettings.normalizeIconPriority(focusIconPriority);
+        this.focusIconPriority = FocusIconPriority.migrate(focusIconPriority, false);
         this.tintDeviceIcon = tintDeviceIcon;
         this.notificationRowClickFallback = notificationRowClickFallback;
         this.independentFocusBanner = independentFocusBanner;
@@ -172,7 +170,7 @@ final class HookSettings {
                 source.disableIslandFeatureCache, source.allowFocusClick,
                 source.hideNotificationIcons, source.showFocusDivider,
                 source.focusIconSizeDp, source.focusIconTextGapDp, source.focusDividerStartDp, source.focusDividerEndDp,
-                source.focusDividerWidthDp, source.focusDividerStyle, source.showIslandIcon,
+                source.focusDividerWidthDp, source.focusDividerStyle,
                 source.tintIslandIcon, source.useSmallIconFallback,
                 source.focusIconPriority, source.tintDeviceIcon,
                 source.notificationRowClickFallback, source.independentFocusBanner,
@@ -241,16 +239,15 @@ final class HookSettings {
                 readDivider(cursor, false),
                 readInt(cursor, SettingsContract.FOCUS_DIVIDER_WIDTH_DP, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_WIDTH_DP),
                 readInt(cursor, SettingsContract.FOCUS_DIVIDER_STYLE, FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_STYLE),
-                readBoolean(cursor, SettingsContract.SHOW_ISLAND_ICON,
-                        FocusRestoreSettings.DEFAULT_SHOW_ISLAND_ICON),
                 readBoolean(cursor, SettingsContract.TINT_ISLAND_ICON,
                         FocusRestoreSettings.DEFAULT_TINT_ISLAND_ICON),
                 readBoolean(cursor, SettingsContract.USE_SMALL_ICON_FALLBACK,
                         FocusRestoreSettings.DEFAULT_USE_SMALL_ICON_FALLBACK),
-                readInt(cursor, SettingsContract.FOCUS_ICON_PRIORITY,
+                FocusIconPriority.migrate(readInt(cursor, SettingsContract.FOCUS_ICON_PRIORITY,
                         FocusRestoreSettings.legacyIconPriority(
                                 readBoolean(cursor, SettingsContract.USE_SMALL_ICON_FALLBACK, false),
                                 readBoolean(cursor, SettingsContract.SHOW_ISLAND_ICON, false))),
+                        readBoolean(cursor, SettingsContract.SHOW_ISLAND_ICON, false)),
                 readBoolean(cursor, SettingsContract.TINT_DEVICE_ICON,
                         FocusRestoreSettings.DEFAULT_TINT_DEVICE_ICON),
                 readBoolean(cursor, SettingsContract.NOTIFICATION_ROW_CLICK_FALLBACK,
@@ -316,7 +313,6 @@ final class HookSettings {
                 + " focusDividerEndDp=" + focusDividerEndDp
                 + " focusDividerWidthDp=" + focusDividerWidthDp
                 + " focusDividerStyle=" + focusDividerStyle
-                + " showIslandIcon=" + showIslandIcon
                 + " tintIslandIcon=" + tintIslandIcon
                 + " expandIslandOnClick=false(deprecated)"
                 + " focusIconPriority=" + focusIconPriority + " tintDeviceIcon=" + tintDeviceIcon

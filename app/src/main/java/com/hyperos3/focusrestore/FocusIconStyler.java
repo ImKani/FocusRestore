@@ -15,16 +15,18 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 
-/** 等比绘制图标，岛图标保留安全边距；可选状态栏单色着色。 */
+/** 等比绘制图标，岛图标保留安全边距；单色岛图随前景着色，多色岛图保留原色。 */
 final class FocusIconStyler {
     private static boolean sizeFallbackLogged;
     static final class Result {
         final Icon icon;
         final Drawable drawable;
+        final boolean tintApplied;
 
-        Result(Icon icon, Drawable drawable) {
+        Result(Icon icon, Drawable drawable, boolean tintApplied) {
             this.icon = icon;
             this.drawable = drawable;
+            this.tintApplied = tintApplied;
         }
     }
 
@@ -91,15 +93,14 @@ final class FocusIconStyler {
         Canvas canvas = new Canvas(bitmap);
         drawable.setBounds(bounds[0], bounds[1], bounds[2], bounds[3]);
         drawable.draw(canvas);
+        boolean tintApplied = false;
         if (tint) {
             int[] pixels = new int[size * size];
             bitmap.getPixels(pixels, 0, size, 0, 0, size, size);
-            for (int index = 0; index < pixels.length; index++) {
-                pixels[index] = FocusIconPixels.recolor(pixels[index], tintColor);
-            }
-            bitmap.setPixels(pixels, 0, size, 0, 0, size, size);
+            tintApplied = FocusIconPixels.tint(pixels, size, bounds, islandIcon, tintColor);
+            if (tintApplied) bitmap.setPixels(pixels, 0, size, 0, 0, size, size);
         }
         return new Result(Icon.createWithBitmap(bitmap),
-                new BitmapDrawable(context.getResources(), bitmap));
+                new BitmapDrawable(context.getResources(), bitmap), tintApplied);
     }
 }

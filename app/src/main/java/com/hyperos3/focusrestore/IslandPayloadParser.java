@@ -217,6 +217,15 @@ final class IslandPayloadParser {
         }
     }
 
+    /** 状态栏两种前景共用同一素材，不把另一节点的 picDark 缩略图误作图标变体。 */
+    static String findStatusBarIslandPictureReference(String payload) {
+        // 来源：作者互传抓包 capture-1794913224380-693ceb0d 及画面反馈；
+        // pic_island 与 pic_thumbnail 被选成浅深配对，协议所有者／版本未确认。
+        // 独立选择普通岛图；只有完全缺少普通引用时才用深色引用，两种前景仍保持一致。
+        String reference = findIslandPictureReference(payload, false);
+        return reference != null ? reference : findIslandPictureReference(payload, true);
+    }
+
     /** 优先图标仅取岛区域及已知图标节点，不能把横幅背景或任意根图片当应用图标。 */
     static String findIslandPictureReference(String payload, boolean dark) {
         if (!InputLimits.isPayloadAllowed(payload) || payload.trim().length() == 0) return null;

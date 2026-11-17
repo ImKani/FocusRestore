@@ -95,11 +95,13 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
     private final String containerBackground;
     private final Context appearanceContext;
     private final boolean requestedDark;
+    private final boolean hunEligible;
+    private final boolean systemDark;
     private boolean closed;
 
     private RemoteViewsFocusBannerSource(View view, Context context, StatusBarNotification sbn,
                                          int widthPx, String source, String containerBackground,
-                                         Context appearanceContext, boolean requestedDark) {
+                                         Context appearanceContext, boolean requestedDark, boolean hunEligible) {
         this.view = view;
         this.context = context;
         this.sbn = sbn;
@@ -108,6 +110,8 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
         this.containerBackground = containerBackground;
         this.appearanceContext = appearanceContext;
         this.requestedDark = requestedDark;
+        this.hunEligible = hunEligible;
+        this.systemDark = NativeFocusAppearance.isSystemDark(appearanceContext);
     }
 
     /** True when the notification carries a RemoteViews this source can inflate. */
@@ -119,15 +123,21 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
      * Inflates the notification's focus RemoteViews. Throws when the notification carries none, so
      * the caller can fall back to reporting the original native failure instead of guessing.
      */
-    static FocusBannerSource create(Context sysuiContext, StatusBarNotification sbn)
+    static FocusBannerSource create(Context sysuiContext, StatusBarNotification sbn) throws Exception {
+        return create(sysuiContext, sbn, false);
+    }
+
+    static FocusBannerSource create(Context sysuiContext, StatusBarNotification sbn, boolean hunEligible)
             throws Exception {
         if (sysuiContext == null || sbn == null || sbn.getNotification() == null) {
             throw new IllegalStateException("no notification to inflate focus content from");
         }
-        // Xiaomi SystemUI 17.03.260226.r / FocusUtils.getFocusView在有效GLASS下优先rvNight；
-        // 接口来源：Knowledge/rom/os4-notification-material-chain.md（厂商许可未确认）。
-        // 仅独立选取应用提供的模板，不遍历改字色；首次创建同样读取本次实际材质。
-        boolean requestedDark = NativeFocusAppearance.isDarkTemplate(sysuiContext, false);
+        // 应用 RemoteViews 可预先写入字色；独立窗口没有原生 HUN 的完整正文重绑定链，
+        // 因此其日夜模板只跟随系统主题，不能套用 HUN 固定 rv 或旧 GLASS 强制 rvNight。
+        // 来源：2026-11-17 作者日夜抓包及已核对的 SystemUI 17.03.260226.r 内容接口；
+        // Xiaomi，许可未确认。仅选择应用提供的模板，不遍历改字色。
+        hunEligible = NativeFocusAppearance.freezeHunEligibility(sysuiContext, hunEligible);
+        boolean requestedDark = NativeFocusAppearance.isSystemDark(sysuiContext);
         RemoteViews light = pick(sbn, false);
         RemoteViews dark = pick(sbn, true);
         boolean useDark = chooseDarkVariant(requestedDark, light != null, dark != null);
@@ -135,7 +145,8 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
         if (views == null) {
             throw new IllegalStateException("notification has no miui.focus.rv RemoteViews");
         }
-        Context packageContext = nightContext(packageContextFor(sysuiContext, sbn), useDark);
+        boolean contentNight = useDark;
+        Context packageContext = nightContext(packageContextFor(sysuiContext, sbn), contentNight);
         // A null parent keeps inflation unattached and lets us supply the banner layout params.
         View content = views.apply(packageContext, null);
         if (content == null) {
@@ -147,7 +158,7 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
         FrameLayout host = new FrameLayout(packageContext);
         host.addView(content, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        String background = applyContainerBackground(sysuiContext, host, content, useDark);
+        String background = applyContainerBackground(sysuiContext, host, content, contentNight, hunEligible);
         // The ROM measures the application's layout inside a fixed-height box and the layout centres
         // its own rows and buttons in that box. Giving the height to the host alone left the layout at
         // its natural, shorter size pinned to the top, so everything inside drifted upwards; the same
@@ -159,16 +170,18 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
         DisplayMetrics metrics = sysuiContext.getResources().getDisplayMetrics();
         String label = "remoteviews/" + (useDark ? DARK : LIGHT) + "/" + sbn.getPackageName();
         return new RemoteViewsFocusBannerSource(host, packageContext, sbn,
-                Math.max(1, metrics.widthPixels), label, background, sysuiContext, requestedDark);
+                Math.max(1, metrics.widthPixels), label, background, sysuiContext, requestedDark, hunEligible);
     }
 
     static boolean chooseDarkVariant(boolean requestedDark, boolean hasLight, boolean hasDark) {
         return hasDark && (requestedDark || !hasLight);
     }
 
+    @Override public boolean hunMaterialEligible() { return hunEligible; }
+
     @Override public boolean isAppearanceCurrent(boolean materialFailed) {
         // 缺rvNight时允许原有亮版回退；比较请求策略而非实际回退结果，避免每帧反复收起。
-        return requestedDark == NativeFocusAppearance.isDarkTemplate(appearanceContext, materialFailed);
+        return systemDark == NativeFocusAppearance.isSystemDark(appearanceContext);
     }
 
     /**
@@ -181,11 +194,22 @@ final class RemoteViewsFocusBannerSource implements FocusBannerSource {
      * the same ROM shape, so the banner is at least a legible card rather than nothing.
      */
     private static String applyContainerBackground(Context sysuiContext, View host, View content,
-                                                    boolean nightVariant) {
+                                                    boolean nightVariant, boolean hunEligible) {
         if (forceNormalBackground) {
             int radiusPx = focusRadiusPx(sysuiContext, host.getContext());
             // 普通背景保留电话/通知栏旧卡片的主题和透明度，不强制改成纯色。
-            Drawable normal = notificationCardBackground(sysuiContext);
+            Drawable normal = null;
+            String selectedBackground = NativeFocusAppearance.backgroundName(hunEligible);
+            if ("notification_focus_heads_up_bg".equals(selectedBackground)) {
+                try {
+                    int id = sysuiContext.getResources().getIdentifier(selectedBackground, "drawable", SYSTEMUI_PACKAGE);
+                    if (id == 0) throw new IllegalStateException("focus HUN drawable missing");
+                    normal = sysuiContext.getDrawable(id).mutate();
+                } catch (Throwable error) {
+                    Log.w("HyperOS3FocusRestore", "banner focus HUN background unavailable; keep notification card", error);
+                }
+            }
+            if (normal == null) normal = notificationCardBackground(sysuiContext);
             if (normal == null) normal = roundedSurface(host.getContext(), radiusPx, nightVariant);
             if (normal != null) {
                 content.setBackground(null);

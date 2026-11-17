@@ -362,6 +362,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             log("mode installation deferred: SystemUI context unavailable");
             return;
         }
+        if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4) {
+            NativeHunGlassParameterCapture.install(classLoader);
+        }
         if (visibilityPolicy == null) {
             loadedStatusRequests = new android.database.ContentObserver(mainHandler) {
                 @Override public void onChange(boolean selfChange) {
@@ -792,6 +795,11 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
 
                     @Override public boolean isAllowed(Object notificationEntry) {
                         return entryAllowed(notificationEntry);
+                    }
+
+                    @Override public String blockedReason(Object notificationEntry) {
+                        return visibilityPolicy == null ? "privacy-policy-unavailable"
+                                : visibilityPolicy.blocked(notificationEntry);
                     }
 
                     @Override
@@ -5674,8 +5682,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 error(stage + " applyIslandContent", t);
             }
         } else if (convert && hasSelectableIslandIcon(data)) {
-            // Some island payloads publish a picture without a text section. The icon is still
-            // meaningful for the experimental switch, so preserve OEM content and patch the icon.
+            // 仅有图片的岛载荷仍可转换；资格与图标优先级分开，实际显示图标继续按四来源排序。
             String current = stringValue(getField(bean, "content"));
             OriginalBeanState state;
             synchronized (originalBeanStates) {
@@ -5822,6 +5829,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
         log(stage + " applied island focus icon light=" + light.source
                 + " dark=" + dark.source + " sizePx=" + iconSizePx
+                + " tintRequested=" + light.tint + "/" + dark.tint
+                + " tintApplied=" + styledLight.tintApplied + "/" + styledDark.tintApplied
                 + " nativeIconOnly=" + state.nativeIconOnly);
         return true;
     }
@@ -5979,23 +5988,20 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     private boolean hasSelectableIslandIcon(FocusData data) {
-        if (data == null || !currentSettings.showIslandIcon) return false;
-        SelectedFocusIcon light = selectFocusIcon(data.notification, data.islandParam,
-                data.packageName, false, false);
-        return light != null && light.islandIcon;
+        if (data == null || data.notification == null) return false;
+        return parsedIslandIcon(data.notification, data.islandParam, data.packageName) != null;
     }
 
     private SelectedFocusIcon selectFocusIcon(Notification notification, String islandParam,
                                                 String packageName, boolean dark,
                                                 boolean allowFallback) {
         if (notification == null) return null;
-        // 深色图仅从浅色已选来源寻找配对；缺图或加载失败沿用浅色，不能跳到另一类来源。
+        // 解析岛图浅深共用原图，颜色由像素与对比度规则处理；其他来源保留既有浅深配对。
         if (dark) {
             SelectedFocusIcon light = selectFocusIcon(notification, islandParam, packageName, false, allowFallback);
-            if (light == null) return null;
+            if (light == null || light.islandIcon) return light;
             SelectedFocusIcon variant = null;
-            if (light.islandIcon) variant = parsedIslandIcon(notification, islandParam, packageName, true);
-            else if (light.source.startsWith("ticker")) variant = tickerFocusIcon(notification, islandParam, true,
+            if (light.source.startsWith("ticker")) variant = tickerFocusIcon(notification, islandParam, true,
                     isConstructedDevice(notification));
             return variant == null ? light : variant;
         }
@@ -6004,14 +6010,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             return device != null ? device : usableFocusIcon(notification.getSmallIcon(),
                     currentSettings.tintDeviceIcon, false, "deviceSmallIcon");
         }
-        if (currentSettings.showIslandIcon) {
-            SelectedFocusIcon parsed = parsedIslandIcon(notification, islandParam, packageName, false);
-            if (parsed != null) return parsed;
-        }
-        if (!allowFallback) return null;
         for (int source : FocusIconPriority.order(currentSettings.focusIconPriority)) {
+            if (!allowFallback && source != FocusIconPriority.ISLAND) continue;
             SelectedFocusIcon candidate;
-            if (source == FocusIconPriority.APP) {
+            if (source == FocusIconPriority.ISLAND) {
+                candidate = parsedIslandIcon(notification, islandParam, packageName);
+            } else if (source == FocusIconPriority.APP) {
                 candidate = usableFocusIcon(applicationIcon(packageName), false, false, "applicationIcon");
             } else if (source == FocusIconPriority.FOCUS) {
                 candidate = tickerFocusIcon(notification, islandParam, false, false);
@@ -6046,9 +6050,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     private SelectedFocusIcon parsedIslandIcon(Notification notification, String islandParam,
-                                               String packageName, boolean dark) {
+                                               String packageName) {
         Bundle pictures = notification.extras == null ? null : notification.extras.getBundle("miui.focus.pics");
-        String reference = IslandPayloadParser.findIslandPictureReference(islandParam, dark);
+        String reference = IslandPayloadParser.findStatusBarIslandPictureReference(islandParam);
         SelectedFocusIcon result = usableFocusIcon(iconFromBundle(pictures, reference),
                 currentSettings.tintIslandIcon, true, "island:" + reference);
         if (result != null) return result;
@@ -6153,7 +6157,6 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
         }
         debug("focus icon resolution dark=" + dark
-                + " showIslandIcon=" + currentSettings.showIslandIcon
                 + " package=" + packageName
                 + " islandRef=" + islandReference
                 + " islandValue=" + (islandValue == null ? "absent" : islandValue.getClass().getSimpleName())

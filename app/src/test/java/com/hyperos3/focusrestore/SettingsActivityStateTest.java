@@ -91,6 +91,11 @@ public class SettingsActivityStateTest {
         // 旧间距key只读取迁移，不再写入；其余所有字段仍必须严格三路径一致。
         restored.remove("m3.focusDividerStartDp");
         restored.remove("m3.focusDividerEndDp");
+        // 废弃岛图开关仅读取旧 Activity 状态以迁移顺序，不再写回。
+        restored.remove("m3.showIslandIcon");
+        assertFalse(written.contains("m3.showIslandIcon"));
+        assertFalse(fields.contains("pendingShowIslandIcon"));
+        assertTrue(source.contains("FocusIconPriority.migrate("));
         assertTrue("saved activity state should carry keys", written.size() > 10);
         assertEquals("saved and restored activity state keys must match", written, restored);
 
@@ -176,9 +181,14 @@ public class SettingsActivityStateTest {
         assertTrue(appearance.contains("defaultAction(defaultValue == automatic ? \"跟随系统（默认）\" : \"跟随系统\""));
         assertTrue(appearance.contains("current[0] = automatic; apply.accept(automatic);"));
         assertTrue(appearance.contains("() -> current[0] == automatic, () -> slider.isEnabled()"));
-        // 程序设置进度不会触发 fromUser 分支，恢复必须显式同步 pending 和数值。
+        // 自动仍是独立配置；滑块回显只显示系统尺寸，不能把它保存为明确值。
+        assertTrue(appearance.contains("final int[] current = {initial}"));
+        assertTrue(appearance.contains("float displayed = value == automatic ? systemDp : value"));
+        assertTrue(appearance.contains("slider.setProgress(Math.max(0, Math.min(max - min, Math.round(displayed) - min)))"));
+        assertTrue(appearance.contains("if (!fromUser) return;"));
         assertTrue(appearance.contains("update.accept(value);"));
         assertTrue(appearance.contains("setAppearanceValue(valueLabel, value, automatic, systemDp)"));
+        assertTrue(source.contains("if (view instanceof SeekBar) ((SeekBar) view).setOnSeekBarChangeListener(null)"));
     }
 
     @Test

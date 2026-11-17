@@ -154,7 +154,8 @@ final class SettingsContract {
         row[FOCUS_DIVIDER_WIDTH_DP] = settings.focusDividerWidthDp;
         row[FOCUS_DIVIDER_STYLE] = settings.focusDividerStyle;
 
-        row[SHOW_ISLAND_ICON] = settings.showIslandIcon ? 1 : 0;
+        // 废弃开关仅作旧 Hook 的协议占位；当前四来源排序不读取此状态。
+        row[SHOW_ISLAND_ICON] = 1;
         row[TINT_ISLAND_ICON] = settings.tintIslandIcon ? 1 : 0;
         row[USE_SMALL_ICON_FALLBACK] = settings.useSmallIconFallback ? 1 : 0;
 

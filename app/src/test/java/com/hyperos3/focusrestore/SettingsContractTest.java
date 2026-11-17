@@ -247,7 +247,8 @@ public class SettingsContractTest {
         assertEquals(FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_WIDTH_DP, sparse.focusDividerWidthDp);
         assertEquals(FocusRestoreSettings.DEFAULT_FOCUS_DIVIDER_STYLE, sparse.focusDividerStyle);
 
-        assertEquals(FocusRestoreSettings.DEFAULT_SHOW_ISLAND_ICON, sparse.showIslandIcon);
+        assertArrayEquals(new int[]{0, 1, 2, 3}, FocusIconPriority.order(sparse.focusIconPriority));
+        assertEquals(1, SettingsContract.toRow(FocusRestoreSettings.defaults(), "")[SettingsContract.SHOW_ISLAND_ICON]);
         assertEquals(FocusRestoreSettings.DEFAULT_TINT_ISLAND_ICON, sparse.tintIslandIcon);
         assertEquals(FocusRestoreSettings.DEFAULT_USE_SMALL_ICON_FALLBACK, sparse.useSmallIconFallback);
         assertEquals(FocusRestoreSettings.DEFAULT_NOTIFICATION_ROW_CLICK_FALLBACK, sparse.notificationRowClickFallback);
@@ -455,7 +456,8 @@ public class SettingsContractTest {
         return FocusRestoreSettings.edit().hookMode(4).limitWidth(false).widthDp(244).widthLandscapeDp(388)
                 .marqueeDelayMs(1700).compatRetry(true).marqueeBounce(false).islandCompat(true)
                 .disableIslandProperty(false).disableIslandFeatureCache(false).allowFocusClick(true)
-                .hideNotificationIcons(false).showFocusDivider(false).showIslandIcon(true).tintIslandIcon(false)
+                .hideNotificationIcons(false).showFocusDivider(false).tintIslandIcon(false)
+                .focusIconPriority(FocusIconPriority.migrate(2, true))
                 .useSmallIconFallback(true).notificationRowClickFallback(true).independentFocusBanner(true)
                 .specialBannerNormalBackground(true).longPressNotificationRowClick(true).longPressSeconds(2.75f)
                 .islandTextMode(1).focusMaxDisplaySeconds(12.5f).islandGeneralSeparator("general").islandSideSeparator("side")

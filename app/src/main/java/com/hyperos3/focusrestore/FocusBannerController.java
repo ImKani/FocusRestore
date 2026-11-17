@@ -531,7 +531,8 @@ public final class FocusBannerController {
                 // notification carries none, rethrow so the original diagnosis is what gets logged.
                 if (!RemoteViewsFocusBannerSource.isAvailable(currentSbn)) throw nativeError;
                 event(currentKey, "native template unavailable; using the notification's own RemoteViews");
-                candidate = RemoteViewsFocusBannerSource.create(anchor.getContext(), currentSbn);
+                candidate = RemoteViewsFocusBannerSource.create(anchor.getContext(), currentSbn,
+                        renderer.hunMaterialEligible(currentKey, currentSbn));
                 }
             }
             if (candidate == null || candidate.view() == null || candidate.context() == null) {
@@ -964,7 +965,7 @@ public final class FocusBannerController {
             try {
                 releaseContent();
                 render = prepared.render;
-                material = new NativeBannerMaterial.Session(render.materialTarget());
+                material = new NativeBannerMaterial.Session(render.materialTarget(), render.hunMaterialEligible());
                 material.prepare();
                 maxHeight = prepared.geometry.maxHeight;
                 setMinimumHeight(0);

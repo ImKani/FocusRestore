@@ -115,6 +115,15 @@ final class NativeFocusTemplateRenderer {
         // handleLoadPackage need not have a Looper. Resolve the main Handler only when needed.
     }
 
+    boolean hunMaterialEligible(String key, StatusBarNotification sbn) {
+        try {
+            return BannerHunEligibility.read(rowProvider == null ? null : rowProvider.findRow(key), sbn);
+        } catch (Throwable error) {
+            report("banner HUN eligibility row", error);
+            return false;
+        }
+    }
+
     /** Called synchronously when the real plugin ClassLoader is discovered, before plugin onCreate. */
     void install(ClassLoader pluginLoader) {
         if (pluginLoader == null) return;
@@ -252,7 +261,7 @@ final class NativeFocusTemplateRenderer {
             NativeLegacyAppearanceContext.Result resolved =
                     NativeLegacyAppearanceContext.resolve(hostContext, row == null ? null : row.getContext(), context);
             stage = "read-appearance";
-            NativeFocusAppearance appearance = NativeFocusAppearance.read(row, resolved.context);
+            NativeFocusAppearance appearance = NativeFocusAppearance.read(row, resolved.context, binding);
             debug("native legacy appearance key=" + binding.getKey()
                     + " source=" + (source.progress ? "legacy-progress" : "legacy-sms-verification")
                     + " contextOrigin=" + resolved.origin
@@ -481,7 +490,7 @@ final class NativeFocusTemplateRenderer {
             Context sysuiContext = (Context) get(adapters.get(0), "sysuiContext");
             View row = rowProvider == null ? null : rowProvider.findRow(key);
             // 背景由统一外观读取器选择：默认纯色，普通背景开关开启时沿用 ROM 通知卡片主题。
-            NativeFocusAppearance appearance = NativeFocusAppearance.read(row, sysuiContext);
+            NativeFocusAppearance appearance = NativeFocusAppearance.read(row, sysuiContext, bindingSbn);
             String getter = appearance.dark ? "getFocusNotificationDarkModal" : "getFocusNotificationModal";
             Object result = call(content, getter);
             if (!(result instanceof View)) throw unavailable("independent builder returned no notification modal view");
@@ -914,6 +923,7 @@ final class NativeFocusTemplateRenderer {
 
         @Override public View view() { return view; }
         @Override public View materialTarget() { return view; }
+        @Override public boolean hunMaterialEligible() { return appearance.hunEligible; }
         @Override public boolean isAppearanceCurrent(boolean materialFailed) { return appearance.isCurrent(materialFailed); }
         @Override public Context context() { return context; }
         @Override public int widthPx() { return widthPx; }

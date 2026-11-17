@@ -37,7 +37,18 @@ final class NativeFocusAppearance {
     }
 
     static boolean useDarkTemplate(boolean systemDark, boolean glass, boolean materialFailed) {
-        return systemDark || (!materialFailed && useGlassDarkTemplate(glass));
+        return useDarkTemplate(systemDark, glass, materialFailed, false);
+    }
+
+    static boolean useDarkTemplate(boolean systemDark, boolean glass, boolean materialFailed, boolean hunReady) {
+        return systemDark || (!hunReady && !materialFailed && useGlassDarkTemplate(glass));
+    }
+
+    static boolean isOs3() { return installedHookMode == FocusRestoreSettings.HOOK_MODE_OS3; }
+
+    static String backgroundName(boolean hunEligible) {
+        return useNativeMaterial() && isOs3() && hunEligible ? "notification_focus_heads_up_bg"
+                : useNormalNotificationBackground ? "notification_item_bg" : "notification_focus_item_bg";
     }
 
     static void setAdvancedMaterialEnabled(boolean enabled) {
@@ -59,8 +70,12 @@ final class NativeFocusAppearance {
     final String description;
     private final Context themeContext;
 
+    private final boolean systemDark;
+    final boolean hunEligible;
     private NativeFocusAppearance(boolean dark, int width, float radius,
-                                  Drawable background, String description, Context themeContext) {
+                                  Drawable background, String description, Context themeContext, boolean hunEligible) {
+        this.hunEligible = hunEligible;
+        this.systemDark = isSystemDark(themeContext);
         this.dark = dark;
         this.width = width;
         this.radius = radius;
@@ -69,25 +84,49 @@ final class NativeFocusAppearance {
         this.themeContext = themeContext;
     }
 
-    boolean isCurrent(boolean materialFailed) { return dark == isDarkTemplate(themeContext, materialFailed); }
-
-    static boolean isDarkTemplate(Context sysuiContext, boolean materialFailed) {
-        Context app = sysuiContext.getApplicationContext();
-        Context context = app != null ? app : sysuiContext;
-        return useDarkTemplate((context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
-                == Configuration.UI_MODE_NIGHT_YES, !materialFailed && NativeBannerMaterial.isGlassActive(), materialFailed);
+    boolean isCurrent(boolean materialFailed) {
+        return systemDark == isSystemDark(themeContext)
+                && dark == isDarkTemplate(themeContext, materialFailed, hunEligible);
     }
 
-    static NativeFocusAppearance read(View row, Context sysuiContext) {
+    static boolean freezeHunEligibility(Context context, boolean eligible) {
+        // 缺样本创建的横幅始终用旧配方；同一代显示期间的迟到样本不能改变正文或触发收起。
+        boolean sample = eligible && !isOs3() && NativeBannerMaterial.hasHunGlassParameters(context);
+        boolean frozen = BannerMaterialRecipe.freezeEligibility(eligible, isOs3(), sample);
+        if (eligible && !frozen) android.util.Log.i("HyperOS3FocusRestore",
+                "banner HUN unavailable at render creation; keep legacy until next render");
+        return frozen;
+    }
+
+    static boolean isSystemDark(Context context) {
+        Context app = context.getApplicationContext();
+        Context live = app != null ? app : context;
+        return (live.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES;
+    }
+
+    static boolean isDarkTemplate(Context sysuiContext, boolean materialFailed) {
+        return isDarkTemplate(sysuiContext, materialFailed, false);
+    }
+
+    static boolean isDarkTemplate(Context sysuiContext, boolean materialFailed, boolean hunEligible) {
+        Context app = sysuiContext.getApplicationContext();
+        Context context = app != null ? app : sysuiContext;
+        boolean glass = !materialFailed && NativeBannerMaterial.isGlassActive();
+        boolean hunReady = hunEligible && glass && NativeBannerMaterial.hasHunGlassParameters(context);
+        return useDarkTemplate((context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
+                == Configuration.UI_MODE_NIGHT_YES, glass, materialFailed, hunReady);
+    }
+
+    static NativeFocusAppearance read(View row, Context sysuiContext,
+                                     android.service.notification.StatusBarNotification sbn) {
         // Use the current application configuration, not a plugin/row context with a forced theme.
         Context app = sysuiContext.getApplicationContext();
         Context context = app != null ? app : sysuiContext;
         int night = context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
-        boolean glassDark = useGlassDarkTemplate(NativeBannerMaterial.isGlassActive());
-        // Xiaomi SystemUI 17.03.260226.r的普通GLASS正文独立强制dark；本模块选择
-        // 已生成的Dark Modal，不改系统Context/背景限定符、不遍历或硬编码文字颜色。
-        // 接口证据：Knowledge/rom/os4-notification-material-chain.md；未复制ROM实现。
-        boolean dark = night == Configuration.UI_MODE_NIGHT_YES || glassDark;
+        boolean hunEligible = freezeHunEligibility(context, BannerHunEligibility.read(row, sbn));
+        boolean dark = isDarkTemplate(context, false, hunEligible);
+        boolean glassDark = dark && night != Configuration.UI_MODE_NIGHT_YES;
         int padding = dimension(context, "notification_side_paddings");
         int width = row != null ? row.getWidth() : 0;
         String geometrySource = "row-width";
@@ -105,16 +144,20 @@ final class NativeFocusAppearance {
             throw new IllegalStateException("native notification geometry resources unavailable");
         }
         // 普通背景模式必须使用通知栏旧卡片 drawable；关闭时沿用原生 Focus 纯色背景，避免改变默认外观。
-        String backgroundName = useNormalNotificationBackground
-                ? "notification_item_bg" : "notification_focus_item_bg";
+        String backgroundName = backgroundName(hunEligible);
         int id = identifier(context, "drawable", backgroundName);
+        if (id == 0 && "notification_focus_heads_up_bg".equals(backgroundName)) {
+            android.util.Log.w("HyperOS3FocusRestore", "banner focus HUN background missing; keep notification_item_bg");
+            backgroundName = "notification_item_bg";
+            id = identifier(context, "drawable", backgroundName);
+        }
         if (id == 0) throw new IllegalStateException("native themed notification background unavailable: " + backgroundName);
         Drawable background = context.getDrawable(id);
         if (background == null) throw new IllegalStateException("native notification background is null: " + backgroundName);
         background = background.mutate();
         return new NativeFocusAppearance(dark, width, radius, background,
                 (glassDark ? "glass-dark-template" : dark ? "system-dark" : "system-light") + "/" + geometrySource
-                        + "/" + backgroundName + "; systemNight=" + night + "; blur-and-modal-animation-not-copied", context);
+                        + "/" + backgroundName + "; systemNight=" + night + "; blur-and-modal-animation-not-copied", context, hunEligible);
     }
 
     /** 复用本类已接入的 SystemUI 面板资源；不读取或改挂原生媒体 View。 */

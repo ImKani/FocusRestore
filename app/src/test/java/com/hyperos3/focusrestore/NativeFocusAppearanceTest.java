@@ -64,6 +64,41 @@ public class NativeFocusAppearanceTest {
         }
     }
 
+    @Test public void currentHunSampleRemovesOnlyLegacyGlassDarkOverride() {
+        try {
+            NativeFocusAppearance.setInstalledHookMode(FocusRestoreSettings.HOOK_MODE_OS4);
+            NativeFocusAppearance.setAdvancedMaterialEnabled(true);
+            NativeFocusAppearance.setUseNormalNotificationBackground(true);
+            assertFalse(NativeFocusAppearance.useDarkTemplate(false, true, false, true));
+            assertTrue(NativeFocusAppearance.useDarkTemplate(true, true, false, true));
+            assertTrue(NativeFocusAppearance.useDarkTemplate(false, true, false, false));
+            assertFalse(NativeFocusAppearance.useDarkTemplate(false, true, true, false));
+        } finally {
+            NativeFocusAppearance.setInstalledHookMode(0);
+            NativeFocusAppearance.setAdvancedMaterialEnabled(false);
+            NativeFocusAppearance.setUseNormalNotificationBackground(false);
+        }
+    }
+
+    @Test public void focusHunThemedFallbackIsRestrictedToOptedInOs3() {
+        try {
+            NativeFocusAppearance.setAdvancedMaterialEnabled(true);
+            NativeFocusAppearance.setUseNormalNotificationBackground(true);
+            NativeFocusAppearance.setInstalledHookMode(FocusRestoreSettings.HOOK_MODE_OS3);
+            org.junit.Assert.assertEquals("notification_focus_heads_up_bg", NativeFocusAppearance.backgroundName(true));
+            org.junit.Assert.assertEquals("notification_item_bg", NativeFocusAppearance.backgroundName(false));
+            NativeFocusAppearance.setInstalledHookMode(FocusRestoreSettings.HOOK_MODE_OS4);
+            org.junit.Assert.assertEquals("notification_item_bg", NativeFocusAppearance.backgroundName(true));
+            NativeFocusAppearance.setInstalledHookMode(FocusRestoreSettings.HOOK_MODE_OS3);
+            NativeFocusAppearance.setAdvancedMaterialEnabled(false);
+            org.junit.Assert.assertEquals("notification_item_bg", NativeFocusAppearance.backgroundName(true));
+        } finally {
+            NativeFocusAppearance.setInstalledHookMode(0);
+            NativeFocusAppearance.setAdvancedMaterialEnabled(false);
+            NativeFocusAppearance.setUseNormalNotificationBackground(false);
+        }
+    }
+
     @Test public void advancedMaterialRequiresBothExplicitOptInAndNormalBackground() {
         try {
             NativeFocusAppearance.setAdvancedMaterialEnabled(false);
