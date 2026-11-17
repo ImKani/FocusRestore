@@ -97,7 +97,13 @@ final class FocusIconStyler {
         if (tint) {
             int[] pixels = new int[size * size];
             bitmap.getPixels(pixels, 0, size, 0, 0, size, size);
-            tintApplied = FocusIconPixels.tint(pixels, size, bounds, islandIcon, tintColor);
+            FocusIconPixels.Analysis analysis = islandIcon
+                    ? FocusIconPixels.analyze(pixels, size, bounds) : null;
+            tintApplied = FocusIconPixels.tint(pixels, tintColor, analysis);
+            if (BuildConfig.DEBUG && analysis != null) {
+                android.util.Log.i("HyperOS3FocusRestore", "DIAG island-icon-pixels sizePx=" + size
+                        + " " + analysis.diagnostic() + " tintRequested=true tintApplied=" + tintApplied);
+            }
             if (tintApplied) bitmap.setPixels(pixels, 0, size, 0, 0, size, size);
         }
         return new Result(Icon.createWithBitmap(bitmap),

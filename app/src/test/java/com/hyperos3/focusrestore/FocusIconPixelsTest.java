@@ -107,6 +107,88 @@ public class FocusIconPixelsTest {
         assertArrayEquals(original, pixels);
     }
 
+    @Test public void blueGradientFormsOneDominantClusterWithoutChangingAnalysisInput() {
+        int[] pixels = new int[100];
+        java.util.Arrays.fill(pixels, 0xff2196f3);
+        java.util.Arrays.fill(pixels, 80, 100, 0xff1976d2);
+        int[] original = pixels.clone();
+        FocusIconPixels.Analysis result = FocusIconPixels.analyze(pixels, 10, new int[]{0, 0, 10, 10});
+        assertTrue(result.monochrome);
+        assertEquals(100, result.valid);
+        assertEquals(80, result.bestCount);
+        assertEquals(100, result.near);
+        assertEquals(0x1f8fec, result.average);
+        assertArrayEquals(original, pixels);
+        System.out.println("synthetic-blue-gradient " + result.diagnostic());
+    }
+    @Test public void dominantClusterUsesExactNinetyPercentBoundary() {
+        int[] pixels = new int[100];
+        java.util.Arrays.fill(pixels, 0xff2196f3);
+        java.util.Arrays.fill(pixels, 90, 100, 0xffffffff);
+        FocusIconPixels.Analysis accepted = FocusIconPixels.analyze(pixels, 10, new int[]{0, 0, 10, 10});
+        assertTrue(accepted.monochrome);
+        assertEquals(90, accepted.near);
+        assertEquals(0x2196f3, accepted.average);
+        assertTrue(accepted.maxDistanceSquared > 64 * 64);
+        pixels[89] = 0xffffffff;
+        FocusIconPixels.Analysis rejected = FocusIconPixels.analyze(pixels, 10, new int[]{0, 0, 10, 10});
+        assertFalse(rejected.monochrome);
+        assertEquals(89, rejected.near);
+        assertTrue(rejected.diagnostic().contains("reason=outside-dominant-cluster"));
+    }
+    @Test public void blueAndWhiteArtworkWithTwentyPercentDetailRemainsUntouched() {
+        int[] pixels = new int[100];
+        java.util.Arrays.fill(pixels, 0xff2196f3);
+        java.util.Arrays.fill(pixels, 80, 100, 0xffffffff);
+        int[] original = pixels.clone();
+        assertFalse(FocusIconPixels.tint(pixels, 10, new int[]{0, 0, 10, 10}, true, 0xff000000));
+        assertArrayEquals(original, pixels);
+    }
+    @Test public void alphaThresholdAndFivePercentCoverageAreIndependentOfRgbNoise() {
+        int[] pixels = new int[100];
+        java.util.Arrays.fill(pixels, 0x7fffffff);
+        java.util.Arrays.fill(pixels, 0, 5, 0x802196f3);
+        FocusIconPixels.Analysis accepted = FocusIconPixels.analyze(pixels, 10, new int[]{0, 0, 10, 10});
+        assertTrue(accepted.monochrome);
+        assertEquals(5, accepted.valid);
+        pixels[4] = 0x7f2196f3;
+        FocusIconPixels.Analysis rejected = FocusIconPixels.analyze(pixels, 10, new int[]{0, 0, 10, 10});
+        assertFalse(rejected.monochrome);
+        assertEquals(4, rejected.valid);
+        assertTrue(rejected.diagnostic().contains("reason=coverage-below-5pct"));
+    }
+    @Test public void upperQuantizationBucketUsesSixteenWideCenters() {
+        int[] pixels = new int[100];
+        java.util.Arrays.fill(pixels, 0xfff0f0f0);
+        java.util.Arrays.fill(pixels, 80, 100, 0xffdcdcdc);
+        FocusIconPixels.Analysis result = FocusIconPixels.analyze(pixels, 10, new int[]{0, 0, 10, 10});
+        assertTrue(result.monochrome);
+        assertEquals(100, result.near);
+        assertEquals(0xececec, result.average);
+    }
+    @Test public void generatedPaddingDoesNotReduceOriginalArtworkCoverage() {
+        int[] pixels = new int[400];
+        pixels[189] = pixels[190] = pixels[209] = pixels[210] = 0xff2196f3;
+        FocusIconPixels.Analysis result = FocusIconPixels.analyze(pixels, 20, new int[]{9, 9, 11, 11});
+        assertTrue(result.monochrome);
+        assertEquals(4, result.total);
+        assertEquals(4, result.valid);
+    }
+    @Test public void dominantGradientTintPreservesAlphaAndUsesRequestedForegroundNotAverage() {
+        int[] pixels = {0, 0x802196f3, 0xff1976d2, 0x402196f3};
+        assertTrue(FocusIconPixels.tint(pixels, 2, new int[]{0, 0, 2, 2}, true, 0xffffffff));
+        assertArrayEquals(new int[]{0x00ffffff, 0x80ffffff, 0xffffffff, 0x40ffffff}, pixels);
+    }
+    @Test public void emptyAndInvalidAnalysisHaveExplicitReasonsAndNoDivisionByZero() {
+        FocusIconPixels.Analysis empty = FocusIconPixels.analyze(new int[4], 2, new int[]{0, 0, 2, 2});
+        assertFalse(empty.monochrome);
+        assertTrue(empty.diagnostic().contains("reason=no-foreground"));
+        assertTrue(empty.diagnostic().contains("nearRatio=0.0000"));
+        assertFalse(FocusIconPixels.analyze(null, 2, new int[]{0, 0, 2, 2}).monochrome);
+        assertTrue(FocusIconPixels.analyze(new int[4], 2, new int[]{2, 2, 0, 0})
+                .diagnostic().contains("reason=invalid-bounds"));
+    }
+
     @Test public void squareLeavesSafeMargin() {
         assertArrayEquals(new int[]{3, 3, 36, 36}, FocusIconPixels.bounds(39, 3, 24, 24));
     }
