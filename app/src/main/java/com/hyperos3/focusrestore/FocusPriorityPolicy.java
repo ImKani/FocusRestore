@@ -18,6 +18,10 @@ final class FocusPriorityPolicy {
         return hasClockTimer && !hasBarRemoteViews && !hasTicker;
     }
 
+    static boolean allowsRuleBody(boolean islandCompat, int textMode) {
+        return islandCompat && textMode == FocusRestoreSettings.ISLAND_TEXT_MODE_FULL;
+    }
+
     static boolean shouldConvertIsland(boolean originalFocus, boolean whitelisted,
                                        boolean smsVerification, boolean clockTimerFallback) {
         return !originalFocus || whitelisted || smsVerification || clockTimerFallback;

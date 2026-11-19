@@ -145,7 +145,6 @@ final class RomFocusVisibility {
     }
 
     String blocked(Object entry) {
-        String reason;
         String key="unknown";
         try {
             Object expanded=field(entry,"mSbn");
@@ -157,29 +156,116 @@ final class RomFocusVisibility {
             if (keyguard == null || power == null) return reportReason(key,"privacy-services-unavailable");
             boolean locked=keyguard.isKeyguardLocked() || keyguard.isDeviceLocked();
             Object manager=userManager;
-            if (manager == null) reason=FocusVisibilityPolicy.blocked(power.isInteractive(),locked,false,false,false,false,false,false);
-            else {
-                int user=sbn.getUserId();
-                boolean current=Boolean.TRUE.equals(XposedHelpers.callMethod(manager,"isCurrentProfile",user));
-                // USER_ALL按ROM当前用户合成资料锁定状态，不能把-1交给isUserRunning。
-                int resolvedUser=user == -1 ? XposedHelpers.getIntField(manager,"mCurrentUserId") : user;
-                boolean available=current && Boolean.TRUE.equals(XposedHelpers.callMethod(manager,"isProfileAvailable",resolvedUser));
-                boolean profilePublic=Boolean.TRUE.equals(XposedHelpers.callMethod(manager,"isLockscreenPublicMode",resolvedUser));
-                boolean hidden=false, protectedContent=false;
-                if (os4 && power.isInteractive() && !locked && current && available && !profilePublic) {
-                    if (keyguardProvider == null || sensitiveController == null || secretFilter == null) return reportReason(key,"native-privacy-policy-unavailable");
-                    hidden=Boolean.TRUE.equals(XposedHelpers.callMethod(keyguardProvider,"shouldHideNotification",entry));
-                    protectedContent=Boolean.TRUE.equals(XposedHelpers.callMethod(sensitiveController,"shouldProtectNotification",entry))
-                            || Boolean.TRUE.equals(XposedHelpers.callMethod(secretFilter,"shouldFilterOut",entry,0L));
+            Object visibility=keyguardProvider;
+            Object protection=sensitiveController;
+            Object filter=secretFilter;
+            return blocked(key, locked, new Checks() {
+                @Override public boolean interactive() { return power.isInteractive(); }
+                @Override public boolean hasUserManager() { return manager != null; }
+                @Override public int notificationUser() { return sbn.getUserId(); }
+                @Override public Object currentUser() {
+                    if (os4) return XposedHelpers.getObjectField(manager,"mCurrentUserId");
+                    return XposedHelpers.getIntField(manager,"mCurrentUserId");
                 }
-                reason=FocusVisibilityPolicy.blocked(power.isInteractive(),locked,true,current,available,profilePublic,hidden,protectedContent);
-            }
+                @Override public Object profile(String method, int user) {
+                    return XposedHelpers.callMethod(manager,method,user);
+                }
+                @Override public boolean hasNativePolicy() {
+                    return visibility != null && protection != null && filter != null;
+                }
+                @Override public Object shouldHide() {
+                    return XposedHelpers.callMethod(visibility,"shouldHideNotification",entry);
+                }
+                @Override public Object shouldProtect() {
+                    return XposedHelpers.callMethod(protection,"shouldProtectNotification",entry);
+                }
+                @Override public Object shouldFilterOut() {
+                    return XposedHelpers.callMethod(filter,"shouldFilterOut",entry,0L);
+                }
+            });
+        } catch (Throwable error) {
+            return reportReason(key,evaluationFailed(error));
+        }
+    }
+
+    interface Checks {
+        boolean interactive();
+        boolean hasUserManager();
+        int notificationUser();
+        Object currentUser();
+        Object profile(String method, int user);
+        boolean hasNativePolicy();
+        Object shouldHide();
+        Object shouldProtect();
+        Object shouldFilterOut();
+    }
+
+    String blocked(String key, boolean locked, Checks checks) {
+        String reason;
+        try {
+            reason = os4 ? blockedOs4(locked, checks) : blockedOs3(locked, checks);
             errorLogged=false;
         } catch (Throwable error) {
-            if (!errorLogged) { errorLogged=true; logger.error("visibility evaluation",error); }
-            reason="privacy-check-failed";
+            reason=evaluationFailed(error);
         }
         return reportReason(key,reason);
+    }
+
+    private static String blockedOs3(boolean locked, Checks checks) {
+        if (!checks.hasUserManager()) {
+            return FocusVisibilityPolicy.blocked(checks.interactive(),locked,false,false,false,false,false,false);
+        }
+        int user = checks.notificationUser();
+        boolean current = Boolean.TRUE.equals(checks.profile("isCurrentProfile", user));
+        int resolvedUser = user == -1 ? (Integer) checks.currentUser() : user;
+        boolean available = current && Boolean.TRUE.equals(checks.profile("isProfileAvailable", resolvedUser));
+        boolean profilePublic = Boolean.TRUE.equals(checks.profile("isLockscreenPublicMode", resolvedUser));
+        return FocusVisibilityPolicy.blocked(checks.interactive(),locked,true,current,available,profilePublic,false,false);
+    }
+
+    private static String blockedOs4(boolean locked, Checks checks) {
+        // 本次交互状态决定整次判定，不能跳过原生检查后再采样出允许结果。
+        if (!checks.interactive()) return "screen-not-interactive";
+        if (locked) return "device-locked";
+        if (!checks.hasUserManager()) return "user-policy-unavailable";
+
+        int user = checks.notificationUser();
+        if (user < -1) return "notification-user-unavailable";
+        if (!profileFlag(checks,"isCurrentProfile",user)) return "other-user";
+        // USER_ALL 仍交给 ROM 判定是否为当前资料，后续查询必须使用已解析的当前用户。
+        int resolvedUser = user;
+        if (user == -1) {
+            Object currentUser = checks.currentUser();
+            if (!(currentUser instanceof Integer) || (Integer) currentUser < 0) {
+                return "notification-user-unavailable";
+            }
+            resolvedUser = (Integer) currentUser;
+        }
+        if (!profileFlag(checks,"isProfileAvailable",resolvedUser)) return "profile-unavailable";
+        if (profileFlag(checks,"isLockscreenPublicMode",resolvedUser)) return "profile-locked";
+        if (!checks.hasNativePolicy()) return "native-privacy-policy-unavailable";
+        if (requiredBoolean(checks.shouldHide(),"shouldHideNotification")) return "native-hidden";
+        if (requiredBoolean(checks.shouldProtect(),"shouldProtectNotification")
+                || requiredBoolean(checks.shouldFilterOut(),"shouldFilterOut")) {
+            return "screen-share-protected";
+        }
+        return null;
+    }
+
+    private static boolean profileFlag(Checks checks, String method, int user) {
+        return requiredBoolean(checks.profile(method,user),method);
+    }
+
+    private static boolean requiredBoolean(Object value, String method) {
+        if (!(value instanceof Boolean)) {
+            throw new IllegalStateException("OS4 privacy boolean unavailable: " + method);
+        }
+        return (Boolean) value;
+    }
+
+    private String evaluationFailed(Throwable error) {
+        if (!errorLogged) { errorLogged=true; logger.error("visibility evaluation",error); }
+        return "privacy-check-failed";
     }
 
     private String reportReason(String key,String reason) {

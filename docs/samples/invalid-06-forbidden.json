@@ -1,0 +1,64 @@
+{
+  "ruleVersion": 1,
+  "meta": {
+    "packageName": "com.miui.personalassistant",
+    "focusNotificationName": "出行 / Travel (human label)",
+    "notificationTag": null,
+    "systemUiVersion": null,
+    "hyperOsVersion": null,
+    "deviceModel": null,
+    "deviceCodename": null,
+    "protocolVersion": 1,
+    "business": "train",
+    "templateType": "param_island",
+    "notificationChannelId": null,
+    "notificationCategory": null,
+    "ruleAuthor": "ImKani",
+    "ruleDescription": "Stage B example: train number then area label; icons and timers unchanged.",
+    "createdAt": "2026-11-18T00:00:00+08:00"
+  },
+  "match": {
+    "all": [
+      {
+        "field": "business",
+        "op": "equals",
+        "value": "train"
+      },
+      {
+        "field": "protocolVersion",
+        "op": "equals",
+        "value": "1"
+      }
+    ]
+  },
+  "extract": [
+    {
+      "id": "trainNo",
+      "path": "/param_island/bigIslandArea/imageTextInfoLeft/textInfo/title",
+      "required": true
+    },
+    {
+      "id": "gate",
+      "path": "/param_island/bigIslandArea/textInfo/title",
+      "required": true
+    }
+  ],
+  "display": {
+    "order": [
+      {
+        "slot": "title",
+        "ref": "trainNo"
+      },
+      {
+        "slot": "subtitle",
+        "ref": "gate"
+      }
+    ],
+    "separator": "·",
+    "dedupe": true,
+    "intent": {
+      "action": "android.intent.action.VIEW",
+      "url": "https://example.invalid"
+    }
+  }
+}

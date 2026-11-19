@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -55,6 +56,9 @@ import de.robv.android.xposed.XposedHelpers;
  */
 final class HyperOS4FocusController {
     interface ItemFactory {
+        default void onCapturePipelineRegistered(boolean supported) { }
+        default void onRuleEntryRemoved(Object notificationEntry, String key) { }
+        default void onCaptureEntry(Object owner, Object entry, String displayText) { }
         DisplayItem create(Object notificationEntry);
         boolean isExpired(Object notificationEntry);
         boolean isAllowed(Object notificationEntry);
@@ -84,8 +88,12 @@ final class HyperOS4FocusController {
         final long postTime;
         final String key;
         final String packageName;
-        final String text;
-        final String source;
+        String text;
+        final String baseText;
+        String source;
+        final String baseSource;
+        String rulePayloadDigest;
+        long ruleSnapshotGeneration = -1L;
         final RemoteViews remoteViews;
         final RemoteViews remoteViewsNight;
         final PendingIntent contentIntent;
@@ -109,7 +117,9 @@ final class HyperOS4FocusController {
             this.key = key;
             this.packageName = packageName;
             this.text = text;
+            this.baseText = text;
             this.source = source;
+            this.baseSource = source;
             this.remoteViews = remoteViews;
             this.remoteViewsNight = remoteViewsNight;
             this.contentIntent = contentIntent;
@@ -305,14 +315,30 @@ final class HyperOS4FocusController {
         }
     }
 
+    private static boolean supportsCaptureCallbacks(Class<?> listener) {
+        boolean add = false;
+        boolean update = false;
+        for (Method callback : listener.getMethods()) {
+            Class<?>[] args = callback.getParameterTypes();
+            if (callback.getReturnType() != void.class || args.length == 0
+                    || !"com.android.systemui.statusbar.notification.collection.NotificationEntry".equals(args[0].getName())) continue;
+            if ("onEntryAdded".equals(callback.getName()) && args.length == 1) add = true;
+            if ("onEntryUpdated".equals(callback.getName()) && args.length == 2
+                    && "UpdateSource".equals(args[1].getSimpleName())) update = true;
+        }
+        return add && update;
+    }
+
     private void registerPipeline(Object pipeline) {
         if (pipeline == null) return;
         synchronized (registeredPipelines) {
             if (!registeredPipelines.add(pipeline)) return;
         }
+        boolean captureCallbacks;
         try {
             Class<?> listenerClass = FocusReflection.findClass(classLoader,
                     "com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionListener");
+            captureCallbacks = supportsCaptureCallbacks(listenerClass);
             Object listener = Proxy.newProxyInstance(classLoader, new Class<?>[]{listenerClass},
                     new NotificationListener(pipeline));
             Method addListener = pipeline.getClass().getMethod("addCollectionListener", listenerClass);
@@ -330,6 +356,7 @@ final class HyperOS4FocusController {
             items.clear();
             swipeSelection.clear();
         }
+        itemFactory.onCapturePipelineRegistered(captureCallbacks);
         itemFactory.dismissFocusBanner("pipeline-replaced");
         logger.log("OS4 notifPipelineListener=registered activeOwner="
                 + System.identityHashCode(pipeline));
@@ -363,7 +390,9 @@ final class HyperOS4FocusController {
             try {
                 if (("onEntryAdded".equals(name) || "onEntryUpdated".equals(name)
                         || "onEntryBind".equals(name)) && args != null && args.length > 0) {
-                    updateEntry(args[0], name, owner);
+                    boolean activePost = ("onEntryAdded".equals(name) && args.length == 1)
+                            || ("onEntryUpdated".equals(name) && args.length == 2);
+                    updateEntry(args[0], name, owner, activePost);
                 } else if (("onEntryRemoved".equals(name) || "onEntryCleanUp".equals(name))
                         && args != null && args.length > 0) {
                     removeEntry(args[0], name, owner);
@@ -376,13 +405,21 @@ final class HyperOS4FocusController {
     }
 
     private void updateEntry(Object entry, String stage, Object owner) {
+        updateEntry(entry, stage, owner, false);
+    }
+
+    private void updateEntry(Object entry, String stage, Object owner, boolean activePost) {
         if (entry == null || owner != activePipeline) return;
         DisplayItem item = itemFactory.create(entry);
         String key = item == null ? entryKey(entry) : item.key;
+        boolean removed = false;
+        Object removedEntry = null;
         synchronized (items) {
             if (owner != activePipeline) return;
             if (item == null || TextUtils.isEmpty(key) || !item.hasContent()) {
-                if (!TextUtils.isEmpty(key)) items.remove(key);
+                DisplayItem previous = TextUtils.isEmpty(key) ? null : items.remove(key);
+                removed = previous != null;
+                removedEntry = previous == null ? null : previous.notificationEntry;
             } else {
                 item.updateSequence = ++updateSequence;
                 items.put(key, item);
@@ -393,7 +430,64 @@ final class HyperOS4FocusController {
                         + " text=" + item.text);
             }
         }
+        if (activePost && owner == activePipeline && item != null && !TextUtils.isEmpty(key) && item.hasContent()) {
+            itemFactory.onCaptureEntry(owner, entry, item.text);
+        }
+        if (removed && !TextUtils.isEmpty(key)) {
+            itemFactory.onRuleEntryRemoved(removedEntry == null ? entry : removedEntry, key);
+        }
         renderBest();
+    }
+
+    void refreshCurrentItems(String stage) {
+        final Object owner;
+        final List<Object> entries = new ArrayList<>();
+        synchronized (items) {
+            owner = activePipeline;
+            if (owner == null) return;
+            for (DisplayItem item : items.values()) entries.add(item.notificationEntry);
+        }
+        for (Object entry : entries) updateEntry(entry, stage, owner);
+    }
+
+    long ruleCandidateSequence(String key, Object entry, String payloadDigest) {
+        synchronized (items) {
+            DisplayItem item = items.get(key);
+            return item != null && item.notificationEntry == entry
+                    && payloadDigest != null && payloadDigest.equals(item.rulePayloadDigest)
+                    ? item.updateSequence : -1L;
+        }
+    }
+
+    boolean applyRuleText(String key, Object entry, long expectedSequence, String payloadDigest,
+            long snapshotGeneration, String text) {
+        synchronized (items) {
+            DisplayItem item = items.get(key);
+            if (item == null || item.notificationEntry != entry || item.updateSequence != expectedSequence
+                    || payloadDigest == null || !payloadDigest.equals(item.rulePayloadDigest)
+                    || text == null || text.isEmpty()) return false;
+            item.text = text;
+            item.source = "islandRule";
+            item.ruleSnapshotGeneration = snapshotGeneration;
+        }
+        renderBest();
+        return true;
+    }
+
+    void clearRuleTextSnapshot(long currentGeneration) {
+        boolean changed = false;
+        synchronized (items) {
+            for (DisplayItem item : items.values()) {
+                if (item.ruleSnapshotGeneration >= 0L
+                        && (currentGeneration < 0L || item.ruleSnapshotGeneration != currentGeneration)) {
+                    item.text = item.baseText;
+                    item.source = item.baseSource;
+                    item.ruleSnapshotGeneration = -1L;
+                    changed = true;
+                }
+            }
+        }
+        if (changed) renderBest();
     }
 
     void refreshMediaEntry(String key) {
@@ -430,6 +524,7 @@ final class HyperOS4FocusController {
             selectionDiagnostics.removed(key);
             swipeSelection.remove(key);
         }
+        itemFactory.onRuleEntryRemoved(entry, key);
         itemFactory.onNotificationRemoved(entry, key);
         logger.log("OS4 candidate " + stage + " key=" + key);
         renderBest();
@@ -713,6 +808,13 @@ final class HyperOS4FocusController {
         return host == focusHost && generation == renderGeneration;
     }
 
+    // 规则结果与撤销都会原位改正文。复用要求上一次真正绑定到视图的文本也一致。
+    static boolean canReuseContent(Object boundItem, Object item, Object boundSettings, Object settings,
+            Object boundConfiguration, Object configuration, String boundText, String text) {
+        return boundItem == item && boundSettings == settings && configuration.equals(boundConfiguration)
+                && java.util.Objects.equals(boundText, text);
+    }
+
     private boolean render(FocusHostView host, DisplayItem item, long generation) {
         if (!isRenderCurrent(host, generation)) return false;
         if (item != null && !currentlyAllowed(item.notificationEntry, item.key)) {
@@ -735,8 +837,8 @@ final class HyperOS4FocusController {
         }
         HookSettings settings = itemFactory.settings();
         Configuration configuration = host.getResources().getConfiguration();
-        if (host.renderedItem == item && host.renderedSettings == settings
-                && configuration.equals(host.renderedConfiguration)) {
+        if (canReuseContent(host.renderedItem, item, host.renderedSettings, settings,
+                host.renderedConfiguration, configuration, host.renderedText, item.text)) {
             if (BuildConfig.DEBUG && (++renderReuseCount & (renderReuseCount - 1)) == 0) {
                 logger.log("DIAG OS4 render reused=" + renderReuseCount + " rvApply=" + remoteViewsApplyCount
                         + " rvApplyNanos=" + remoteViewsApplyNanos);
@@ -799,6 +901,7 @@ final class HyperOS4FocusController {
             setClockHidden(settings.hideTimeForKind(item.kind));
             host.setVisibility(View.VISIBLE);
             host.showContent(content, item, settings);
+            host.renderedText = item.text;
             host.renderedItem = item;
             host.renderedSettings = settings;
             host.renderedConfiguration = new Configuration(configuration);
@@ -1112,6 +1215,7 @@ final class HyperOS4FocusController {
 
     private final class FocusHostView extends FrameLayout {
         private boolean iconOnly;
+        private String renderedText;
         private DisplayItem renderedItem;
         private HookSettings renderedSettings;
         private Configuration renderedConfiguration;
@@ -1330,6 +1434,7 @@ final class HyperOS4FocusController {
         }
 
         private void clearContent(boolean preserveBannerGesture) {
+            renderedText = null;
             renderedItem = null;
             renderedSettings = null;
             renderedConfiguration = null;

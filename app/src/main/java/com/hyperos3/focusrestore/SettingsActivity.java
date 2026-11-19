@@ -25,6 +25,7 @@ import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -73,6 +74,9 @@ import android.text.TextWatcher;
 
 import java.util.function.IntConsumer;
 import java.util.function.BooleanSupplier;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.concurrent.Executor;
 
 
 import java.util.ArrayList;
@@ -129,6 +133,9 @@ public final class SettingsActivity extends Activity {
     private boolean saveWorkerRunning;
     private Future<?> saveFuture;
     private volatile boolean destroyed;
+    private IslandRuleImportUi ruleImportUi;
+    private IslandRulePackUi rulePackUi;
+    private IslandCaptureUi islandCaptureUi;
     private static final int REQUEST_IMPORT_SETTINGS = 4101;
     private static final int REQUEST_EXPORT_SETTINGS = 4102;
     private static final long BACKUP_IO_TIMEOUT_MS = 60_000L;
@@ -345,8 +352,6 @@ public final class SettingsActivity extends Activity {
     private Set<String> pendingTimeoutExemptPackages = new HashSet<>();
     private Button forcePackagesButton;
     private Button timeoutExemptButton;
-    /** Which list the shared app picker is editing. */
-    private boolean dialogEditsExempt;
     private List<ApplicationInfo> dialogAllApps = new ArrayList<>();
     private List<ApplicationInfo> dialogVisibleApps = new ArrayList<>();
     private Set<String> dialogSelectedPackages;
@@ -356,6 +361,7 @@ public final class SettingsActivity extends Activity {
     private Switch dialogShowSystemSwitch;
     private TextView dialogEmptyView;
     private boolean dialogAppsLoaded;
+    private boolean dialogAppsLoading;
     private static final String APP_CACHE_SEPARATOR = "\u001e";
     private final Map<String, String> appLabels = new java.util.HashMap<>();
 
@@ -366,6 +372,11 @@ public final class SettingsActivity extends Activity {
         setTheme(systemNight ? android.R.style.Theme_Material_NoActionBar
                 : android.R.style.Theme_Material_Light_NoActionBar);
         super.onCreate(savedInstanceState);
+        ruleImportUi = new IslandRuleImportUi(this);
+        ruleImportUi.restore(savedInstanceState);
+        rulePackUi = new IslandRulePackUi(this, ruleImportUi::refreshSavedRevision);
+        rulePackUi.restore(savedInstanceState);
+        islandCaptureUi = new IslandCaptureUi(this, ruleImportUi);
         applySystemPalette();
         configureSystemBars(getWindow());
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
@@ -396,10 +407,16 @@ public final class SettingsActivity extends Activity {
         getContentResolver().registerContentObserver(RuntimeStatus.URI, false, loadedStatusObserver);
         refreshLoadedStatus();
         if (importCandidate != null) confirmSettingsImport();
+        ruleImportUi.resume();
+        rulePackUi.resume();
+        islandCaptureUi.resume();
     }
 
     @Override
     protected void onPause() {
+        ruleImportUi.pause();
+        rulePackUi.pause();
+        islandCaptureUi.pause();
         getContentResolver().unregisterContentObserver(loadedStatusObserver);
         backupUiResumed = false;
         // 合并保存的文本框输入必须在离开页面前落盘，否则最后一次输入会丢。
@@ -436,6 +453,9 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onDestroy() {
         destroyed = true;
+        ruleImportUi.destroy();
+        rulePackUi.destroy();
+        islandCaptureUi.destroy();
         // 未冲刷的合并保存不可能再提交；清掉回调避免 Activity 销毁后触发。
         textSaveHandler.removeCallbacks(textSaveRunnable);
         textSavePending = false;
@@ -897,6 +917,9 @@ public final class SettingsActivity extends Activity {
 
     private void clearPageControls() {
         defaultActionRefreshers.clear();
+        ruleImportUi.unbind();
+        rulePackUi.unbind();
+        islandCaptureUi.unbind();
         clearSettingsSearchHighlight();
         searchTargets.clear();
         // 挂起过渡也可能尚未触发结束回调，切页/导入/销毁统一释放页面闸门。
@@ -1773,6 +1796,41 @@ public final class SettingsActivity extends Activity {
         root.addView(backupPanel, matchWrap(dp(12)));
         updateBackupControls();
 
+        root.addView(sectionHeader("自定义规则"), matchWrap(dp(8)));
+        LinearLayout rulePanel = panel();
+        Button manager = actionButton("查看和编辑已保存规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        TextView ruleStatus = text("", 13, COLOR_TEXT_SECONDARY);
+        Button projection = actionButton("允许 SystemUI 读取应用范围和所选字段路径", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        rulePanel.addView(manager, matchWrap(dp(8)));
+        rulePanel.addView(ruleStatus, matchWrap(dp(8)));
+        rulePanel.addView(projection, matchWrap(dp(8)));
+        Button startCapture = actionButton("开启最近记录", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        TextView captureStatus = text("", 13, COLOR_TEXT_SECONDARY);
+        Button recentCapture = actionButton("从最近记录新增或更新规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button samples = actionButton("选择要导出的样本", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button exportSample = actionButton("导出所选脱敏 JSON", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button endCapture = actionButton("结束并清空最近记录", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button cancelCaptureExport = actionButton("取消导出", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        for (View control : new View[] {startCapture, captureStatus, recentCapture, endCapture}) {
+            rulePanel.addView(control, matchWrap(dp(8)));
+        }
+        root.addView(rulePanel, matchWrap(dp(12)));
+        LinearLayout migration = panel();
+        Button importRule = actionButton("导入单条规则 JSON", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button cancelRule = actionButton("取消读取规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button importPack = actionButton("批量导入规则包", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button exportPack = actionButton("批量导出规则包", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        TextView packStatus = text("", 13, COLOR_TEXT_SECONDARY);
+        Button cancelPack = actionButton("取消规则包操作", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        for (View control : new View[] {importRule, cancelRule, importPack, exportPack, packStatus, cancelPack,
+                samples, exportSample, cancelCaptureExport}) {
+            migration.addView(control, matchWrap(dp(8)));
+        }
+        addCollapsibleSection(root, "规则迁移与样本导出", migration);
+        rulePackUi.bind(importPack, exportPack, cancelPack, packStatus);
+        ruleImportUi.bind(importRule, cancelRule, ruleStatus, projection, manager);
+        islandCaptureUi.bind(startCapture, samples, exportSample, endCapture, cancelCaptureExport, captureStatus, recentCapture);
+
         root.addView(sectionHeader("链接"), matchWrap(dp(8)));
         LinearLayout links = panel();
         Button github = actionButton("打开 GitHub", COLOR_PRIMARY, Color.WHITE);
@@ -1816,6 +1874,18 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent result) {
         super.onActivityResult(requestCode, resultCode, result);
+        if (requestCode == IslandRuleImportUi.REQUEST) {
+            ruleImportUi.onDocumentResult(resultCode, result);
+            return;
+        }
+        if (requestCode == IslandRulePackUi.REQUEST_IMPORT || requestCode == IslandRulePackUi.REQUEST_EXPORT) {
+            rulePackUi.onDocumentResult(requestCode, resultCode, result);
+            return;
+        }
+        if (requestCode == IslandCaptureUi.REQUEST) {
+            islandCaptureUi.onDocumentResult(resultCode, result);
+            return;
+        }
         if (requestCode != REQUEST_IMPORT_SETTINGS && requestCode != REQUEST_EXPORT_SETTINGS) return;
         if (destroyed || requestCode != backupRequestCode) return;
         backupRequestCode = 0;
@@ -2097,6 +2167,8 @@ public final class SettingsActivity extends Activity {
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
+        ruleImportUi.save(outState);
+        rulePackUi.save(outState);
         captureCurrentInputs();
         if (pageScroll != null) scrollPositions[currentPage] = pageScroll.getScrollY();
         outState.putInt("m3.page", currentPage);
@@ -2940,7 +3012,7 @@ public final class SettingsActivity extends Activity {
                 modeEnabled);
         setModeSpecificSwitchEnabled(islandRichTextSwitch, modeEnabled);
         if (contentModeSummary != null) contentModeSummary.setText(modeEnabled
-                ? "全文本：汇总可读文字；左右拼接：只取两侧并去重。仅影响超级岛内容转换。"
+                ? "全文本优先显示规则选中的字段。没有有效结果时使用内置全文。左右拼接只取两侧并去重。"
                 : "需先开启主页“转换超级岛内容为焦点通知”，才能调整此模式。");
         setModeSpecificSwitchEnabled(tintIslandIconSwitch,
                 true);
@@ -3081,18 +3153,45 @@ public final class SettingsActivity extends Activity {
 
     private void showForcePackagesDialog(boolean exempt) {
         if (!exempt && !pendingIslandCompat) return;
-        dialogEditsExempt = exempt;
-        dialogAllApps = readCachedApps();
-        dialogVisibleApps.clear();
-        dialogSelectedPackages = new HashSet<>(exempt
-                ? pendingTimeoutExemptPackages : pendingForcePackages);
+        showPackagePicker(exempt ? "最大显示时间豁免应用" : "强制转换超级岛应用",
+                exempt ? pendingTimeoutExemptPackages : pendingForcePackages, selected -> {
+                    Set<String> sanitized = new HashSet<>(InputLimits.sanitizePackages(selected));
+                    if (exempt) {
+                        pendingTimeoutExemptPackages = sanitized;
+                        updateTimeoutExemptButton();
+                    } else {
+                        pendingForcePackages = sanitized;
+                        updateForcePackagesButton();
+                    }
+                    markPending();
+                }, null);
+    }
+
+    Dialog showCaptureTargetDialog(String current, Executor loader, BiConsumer<String, String> onSelected) {
+        Set<String> selected = current == null ? Collections.emptySet() : Collections.singleton(current);
+        return showPackagePicker("选择要捕获的应用", selected, packages -> {
+            String packageName = packages.iterator().next();
+            onSelected.accept(packageName, appLabels.get(packageName));
+        }, loader);
+    }
+
+    private Dialog showPackagePicker(String title, Set<String> selected,
+                                     Consumer<Set<String>> onDone, Executor captureLoader) {
+        if (activeDialog != null) return null;
+        dialogAllApps = captureLoader == null ? readCachedApps() : Collections.emptyList();
+        dialogSelectedPackages = new HashSet<>(selected);
         dialogAppsLoaded = !dialogAllApps.isEmpty();
 
         final Dialog dialog = new Dialog(this);
-        dialog.setOnDismissListener(d -> { activeDialog = null; clearDialogState(); });
+        dialog.setOnDismissListener(d -> {
+            if (activeDialog == dialog) {
+                activeDialog = null;
+                clearDialogState();
+            }
+        });
         activeDialog = dialog;
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setContentView(createWhitelistDialogView(dialog));
+        dialog.setContentView(createPackagePickerView(dialog, title, onDone, captureLoader));
         Window window = dialog.getWindow();
         if (window != null) window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         dialog.show();
@@ -3105,16 +3204,19 @@ public final class SettingsActivity extends Activity {
             int height = (int) (getResources().getDisplayMetrics().heightPixels * 0.82f);
             window.setLayout(width, height);
         }
+        if (captureLoader != null) loadCapturePickerApps(dialog, captureLoader);
+        return dialog;
     }
 
-    private View createWhitelistDialogView(final Dialog dialog) {
+    private View createPackagePickerView(Dialog dialog, String caption,
+                                         Consumer<Set<String>> onDone, Executor captureLoader) {
+        boolean singleSelection = captureLoader != null;
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
         if (Build.VERSION.SDK_INT >= 29) root.setForceDarkAllowed(false);
         root.setPadding(dp(16), dp(16), dp(16), dp(16));
-        TextView title = text(dialogEditsExempt ? "最大显示时间豁免应用" : "强制转换超级岛应用",
-                18, COLOR_TEXT_PRIMARY);
+        TextView title = text(caption, 18, COLOR_TEXT_PRIMARY);
         title.setTypeface(title.getTypeface(), Typeface.BOLD);
         root.addView(title, matchWrap(dp(8)));
 
@@ -3163,7 +3265,10 @@ public final class SettingsActivity extends Activity {
         flattenButton(refresh);
         refresh.setMinHeight(dp(40));
         refresh.setPadding(dp(16), 0, dp(16), 0);
-        refresh.setOnClickListener(v -> loadDialogApps());
+        refresh.setOnClickListener(v -> {
+            if (singleSelection) loadCapturePickerApps(dialog, captureLoader);
+            else loadDialogApps();
+        });
         options.addView(refresh, new LinearLayout.LayoutParams(-2, -2));
         root.addView(options, matchWrap(dp(4)));
 
@@ -3175,7 +3280,10 @@ public final class SettingsActivity extends Activity {
         dialogListView.setVisibility(View.GONE);
         dialogListView.setOnItemClickListener((parent, view, position, id) -> {
             ApplicationInfo app = dialogVisibleApps.get(position);
-            if (dialogSelectedPackages.contains(app.packageName)) {
+            if (singleSelection) {
+                dialogSelectedPackages.clear();
+                dialogSelectedPackages.add(app.packageName);
+            } else if (dialogSelectedPackages.contains(app.packageName)) {
                 dialogSelectedPackages.remove(app.packageName);
             } else if (dialogSelectedPackages.size() >= InputLimits.MAX_FORCE_PACKAGES) {
                 showFeedback("最多选择 " + InputLimits.MAX_FORCE_PACKAGES + " 个应用");
@@ -3200,16 +3308,11 @@ public final class SettingsActivity extends Activity {
         buttons.addView(cancel, new LinearLayout.LayoutParams(-2, dp(40)));
         Button done = actionButton("完成", COLOR_PRIMARY, Color.WHITE);
         done.setOnClickListener(v -> {
-            Set<String> selected = new HashSet<>(InputLimits.sanitizePackages(
-                    dialogSelectedPackages));
-            if (dialogEditsExempt) {
-                pendingTimeoutExemptPackages = selected;
-                updateTimeoutExemptButton();
-            } else {
-                pendingForcePackages = selected;
-                updateForcePackagesButton();
+            if (singleSelection && (dialogAppsLoading || dialogSelectedPackages.isEmpty())) {
+                showFeedback(dialogAppsLoading ? "正在加载应用…" : "请选择一个应用");
+                return;
             }
-            markPending();
+            onDone.accept(new HashSet<>(dialogSelectedPackages));
             dialog.dismiss();
         });
         LinearLayout.LayoutParams doneParams = new LinearLayout.LayoutParams(-2, dp(40));
@@ -3229,6 +3332,44 @@ public final class SettingsActivity extends Activity {
         dialogShowSystemSwitch = null;
         dialogEmptyView = null;
         dialogAppsLoaded = false;
+        dialogAppsLoading = false;
+    }
+
+    private void loadCapturePickerApps(Dialog dialog, Executor executor) {
+        if (dialogAppsLoading) return;
+        dialogAppsLoading = true;
+        if (!dialogAppsLoaded) dialogEmptyView.setText("正在加载应用…");
+        executor.execute(() -> {
+            PackageManager pm = getPackageManager();
+            List<ApplicationInfo> apps = new ArrayList<>();
+            Map<String, String> labels = new java.util.HashMap<>();
+            boolean failed = false;
+            try {
+                for (ApplicationInfo app : pm.getInstalledApplications(0)) {
+                    if (!app.enabled || !IslandCaptureRuntime.validPackage(app.packageName)) continue;
+                    CharSequence label = pm.getApplicationLabel(app);
+                    apps.add(app);
+                    labels.put(app.packageName, label == null ? app.packageName : label.toString());
+                }
+            } catch (RuntimeException failure) {
+                apps.clear();
+                labels.clear();
+                failed = true;
+            }
+            boolean loadFailed = failed;
+            runOnUiThread(() -> {
+                // 页面切换或取消后，旧列表不能写进另一个选包弹窗。
+                if (activeDialog != dialog || !dialog.isShowing()) return;
+                dialogAppsLoading = false;
+                dialogAppsLoaded = true;
+                dialogAllApps = apps;
+                appLabels.clear();
+                appLabels.putAll(labels);
+                dialogSelectedPackages.retainAll(labels.keySet());
+                filterDialogApps();
+                if (loadFailed) dialogEmptyView.setText("无法读取应用列表，请点击“刷新”重试");
+            });
+        });
     }
 
     private void loadDialogApps() {

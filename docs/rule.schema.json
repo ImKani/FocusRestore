@@ -1,0 +1,1057 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ImKani/FocusRestore/blob/master/docs/rule.schema.json",
+  "title": "FocusRestore island text rule v1 (C1 contract)",
+  "description": "ImKani / FocusRestore / GPL-3.0-only. C1 immutable model and strict decoder only; no runtime integration.",
+  "$comment": "File <=65536 UTF-8 bytes including whitespace. Strict reader: container depth <=8 (root=1), object keys <=64, array items <=32, key <=256 UTF-16 units, string and number token <=4096 UTF-16 units. All apply inside x-* annotations; annotations do not enter the model. Schema maxLength counts code points; decoder additionally checks UTF-16 units. Duplicate keys, strict UTF-8, date-time assertions, cross references and L3/R need hand validation. No remote schema loading. Runtime quotas are contract only in C1. See island-rules-spec.md and island-rule-paths.md.",
+  "x-jsonMaxDepth": 8,
+  "x-maxObjectKeys": 64,
+  "x-maxArrayItems": 32,
+  "x-maxKeyUtf16Units": 256,
+  "x-maxStringUtf16Units": 4096,
+  "x-maxPathSegments": 8,
+  "x-pathClassification": "106 canonical paths: structural=11, freeText=95, unsafe=0. Capture/export preserves structural values by default and placeholders freeText; runtime does not redact either class. Structural describes field semantics, not verified input types. No aliases. See island-rule-paths.md and island-rules-spec.md section 7.",
+  "x-maxUtf8Bytes": 65536,
+  "x-forbiddenKeys": [
+    "code",
+    "script",
+    "expression",
+    "eval",
+    "exec",
+    "class",
+    "method",
+    "reflection",
+    "url",
+    "network",
+    "file",
+    "filePath",
+    "intent",
+    "Intent",
+    "action",
+    "Action",
+    "pendingIntent",
+    "PendingIntent",
+    "layout",
+    "style",
+    "view",
+    "color",
+    "font",
+    "html",
+    "regex"
+  ],
+  "type": "object",
+  "additionalProperties": false, "patternProperties": {"^x-": true},
+  "properties": {
+    "ruleVersion": {
+      "const": 1
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false, "patternProperties": {"^x-": true},
+      "properties": {
+        "packageName": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$"
+        },
+        "focusNotificationName": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notificationTag": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "systemUiVersion": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false, "patternProperties": {"^x-": true},
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "maxLength": 128
+                },
+                "code": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "name",
+                "code"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hyperOsVersion": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deviceModel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deviceCodename": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "protocolVersion": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "business": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "templateType": {
+          "description": "A named group restricts extract paths to that group. The mixed selector accepts paths from the global registry in binding order and resolves each within its registered group.",
+          "enum": [
+            "baseInfo",
+            "highlightInfo",
+            "highlightInfoV3",
+            "chatInfo",
+            "iconTextInfo",
+            "animTextInfo",
+            "coverInfo",
+            "hintInfo",
+            "stepInfo",
+            "progressInfo",
+            "multiProgressInfo",
+            "param_island",
+            "fallback",
+            "legacy",
+            "mixed"
+          ]
+        },
+        "notificationChannelId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 255
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notificationCategory": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ruleAuthor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ruleDescription": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?!0000)[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])[Tt]([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?([Zz]|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$",
+          "$comment": "V1 RFC3339 subset: year 0001..9999, valid calendar, seconds 00..59 (no unverified leap seconds), optional fraction, explicit offset. Strict calendar/UTF-16 checks are in C1; format is not a standalone certification.",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "packageName",
+        "templateType",
+        "ruleAuthor",
+        "ruleDescription",
+        "createdAt"
+      ]
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false, "patternProperties": {"^x-": true},
+      "properties": {
+        "all": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false, "patternProperties": {"^x-": true},
+            "properties": {
+              "field": {
+                "enum": [
+                  "packageName",
+                  "protocolVersion",
+                  "business",
+                  "scene"
+                ]
+              },
+              "op": {
+                "enum": [
+                  "equals",
+                  "contains",
+                  "startsWith"
+                ]
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "field",
+              "op",
+              "value"
+            ]
+          }
+        }
+      },
+      "required": [
+        "all"
+      ]
+    },
+    "extract": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false, "patternProperties": {"^x-": true},
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$",
+            "maxLength": 32
+          },
+          "path": {
+            "enum": [
+              "/baseInfo/title",
+              "/baseInfo/subTitle",
+              "/baseInfo/specialTitle",
+              "/baseInfo/extraTitle",
+              "/baseInfo/content",
+              "/baseInfo/subContent",
+              "/highlightInfo/title",
+              "/highlightInfo/content",
+              "/highlightInfo/subContent",
+              "/highlightInfoV3/primaryText",
+              "/highlightInfoV3/secondaryText",
+              "/highlightInfoV3/highLightText",
+              "/highlightInfoV3/label",
+              "/chatInfo/title",
+              "/chatInfo/content",
+              "/iconTextInfo/title",
+              "/iconTextInfo/content",
+              "/iconTextInfo/subContent",
+              "/animTextInfo/title",
+              "/animTextInfo/content",
+              "/coverInfo/title",
+              "/coverInfo/content",
+              "/coverInfo/subContent",
+              "/hintInfo/title",
+              "/hintInfo/subTitle",
+              "/hintInfo/content",
+              "/hintInfo/subContent",
+              "/stepInfo/title",
+              "/stepInfo/content",
+              "/stepInfo/subContent",
+              "/stepInfo/step",
+              "/progressInfo/title",
+              "/progressInfo/content",
+              "/progressInfo/label",
+              "/progressInfo/progress",
+              "/progressInfo/progressInfo/title",
+              "/progressInfo/progressInfo/content",
+              "/progressInfo/progressInfo/label",
+              "/progressInfo/progressInfo/progress",
+              "/multiProgressInfo/title",
+              "/multiProgressInfo/content",
+              "/multiProgressInfo/label",
+              "/multiProgressInfo/progress",
+              "/multiProgressInfo/progressInfo/title",
+              "/multiProgressInfo/progressInfo/content",
+              "/multiProgressInfo/progressInfo/label",
+              "/multiProgressInfo/progressInfo/progress",
+              "/param_island/title",
+              "/param_island/content",
+              "/param_island/frontTitle",
+              "/param_island/bigIslandArea/imageTextInfoLeft/textInfo/frontTitle",
+              "/param_island/bigIslandArea/imageTextInfoLeft/textInfo/title",
+              "/param_island/bigIslandArea/imageTextInfoLeft/textInfo/content",
+              "/param_island/bigIslandArea/imageTextInfoLeft/textInfo/subContent",
+              "/param_island/bigIslandArea/imageTextInfoLeft/miui.focus.paramtextInfo/frontTitle",
+              "/param_island/bigIslandArea/imageTextInfoLeft/miui.focus.paramtextInfo/title",
+              "/param_island/bigIslandArea/imageTextInfoLeft/miui.focus.paramtextInfo/content",
+              "/param_island/bigIslandArea/imageTextInfoLeft/miui.focus.paramtextInfo/subContent",
+              "/param_island/bigIslandArea/imageTextInfoRight/textInfo/frontTitle",
+              "/param_island/bigIslandArea/imageTextInfoRight/textInfo/title",
+              "/param_island/bigIslandArea/imageTextInfoRight/textInfo/content",
+              "/param_island/bigIslandArea/imageTextInfoRight/textInfo/subContent",
+              "/param_island/bigIslandArea/imageTextInfoRight/miui.focus.paramtextInfo/frontTitle",
+              "/param_island/bigIslandArea/imageTextInfoRight/miui.focus.paramtextInfo/title",
+              "/param_island/bigIslandArea/imageTextInfoRight/miui.focus.paramtextInfo/content",
+              "/param_island/bigIslandArea/imageTextInfoRight/miui.focus.paramtextInfo/subContent",
+              "/param_island/bigIslandArea/textInfo/frontTitle",
+              "/param_island/bigIslandArea/textInfo/title",
+              "/param_island/bigIslandArea/textInfo/content",
+              "/param_island/bigIslandArea/textInfo/subContent",
+              "/param_island/bigIslandArea/miui.focus.paramtextInfo/frontTitle",
+              "/param_island/bigIslandArea/miui.focus.paramtextInfo/title",
+              "/param_island/bigIslandArea/miui.focus.paramtextInfo/content",
+              "/param_island/bigIslandArea/miui.focus.paramtextInfo/subContent",
+              "/param_island/bigIslandArea/progressTextInfo/title",
+              "/param_island/bigIslandArea/progressTextInfo/content",
+              "/param_island/bigIslandArea/progressTextInfo/label",
+              "/param_island/bigIslandArea/progressTextInfo/progress",
+              "/param_island/bigIslandArea/progressTextInfo/progressInfo/title",
+              "/param_island/bigIslandArea/progressTextInfo/progressInfo/content",
+              "/param_island/bigIslandArea/progressTextInfo/progressInfo/label",
+              "/param_island/bigIslandArea/progressTextInfo/progressInfo/progress",
+              "/param_island/bigIslandArea/fixedWidthDigitInfo/title",
+              "/param_island/bigIslandArea/fixedWidthDigitInfo/content",
+              "/param_island/bigIslandArea/fixedWidthDigitInfo/label",
+              "/param_island/bigIslandArea/fixedWidthDigitInfo/progress",
+              "/param_island/bigIslandArea/fixedWidthDigitInfo/progressInfo/title",
+              "/param_island/bigIslandArea/fixedWidthDigitInfo/progressInfo/content",
+              "/param_island/bigIslandArea/fixedWidthDigitInfo/progressInfo/label",
+              "/param_island/bigIslandArea/fixedWidthDigitInfo/progressInfo/progress",
+              "/param_island/bigIslandArea/sameWidthDigitInfo/title",
+              "/param_island/bigIslandArea/sameWidthDigitInfo/content",
+              "/param_island/bigIslandArea/sameWidthDigitInfo/label",
+              "/param_island/bigIslandArea/sameWidthDigitInfo/progress",
+              "/param_island/bigIslandArea/sameWidthDigitInfo/progressInfo/title",
+              "/param_island/bigIslandArea/sameWidthDigitInfo/progressInfo/content",
+              "/param_island/bigIslandArea/sameWidthDigitInfo/progressInfo/label",
+              "/param_island/bigIslandArea/sameWidthDigitInfo/progressInfo/progress",
+              "/param_island/smallIslandArea/title",
+              "/param_island/smallIslandArea/content",
+              "/param_island/smallIslandArea/subContent",
+              "/aodTitle",
+              "/ticker",
+              "/title",
+              "/desc1",
+              "/desc2"
+            ]
+          },
+          "required": {
+            "type": "boolean",
+            "default": false
+          },
+          "replace": {
+            "type": "array",
+            "maxItems": 8,
+            "default": [],
+            "items": {
+              "type": "object",
+              "additionalProperties": false, "patternProperties": {"^x-": true},
+              "properties": {
+                "from": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "to": {
+                  "type": "string",
+                  "maxLength": 128
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "path"
+        ]
+      }
+    },
+    "display": {
+      "type": "object",
+      "additionalProperties": false, "patternProperties": {"^x-": true},
+      "properties": {
+        "order": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false, "patternProperties": {"^x-": true},
+            "properties": {
+              "slot": {
+                "enum": [
+                  "title",
+                  "subtitle",
+                  "progress",
+                  "extra"
+                ]
+              },
+              "ref": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$",
+                "maxLength": 32
+              }
+            },
+            "required": [
+              "slot",
+              "ref"
+            ]
+          }
+        },
+        "separator": {
+          "type": "string",
+          "maxLength": 32,
+          "default": "·"
+        },
+        "dedupe": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "order"
+      ]
+    }
+  },
+  "required": [
+    "ruleVersion",
+    "meta",
+    "match",
+    "extract",
+    "display"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "baseInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/baseInfo/title",
+                    "/baseInfo/subTitle",
+                    "/baseInfo/specialTitle",
+                    "/baseInfo/extraTitle",
+                    "/baseInfo/content",
+                    "/baseInfo/subContent"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "highlightInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/highlightInfo/title",
+                    "/highlightInfo/content",
+                    "/highlightInfo/subContent"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "highlightInfoV3"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/highlightInfoV3/primaryText",
+                    "/highlightInfoV3/secondaryText",
+                    "/highlightInfoV3/highLightText",
+                    "/highlightInfoV3/label"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "chatInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/chatInfo/title",
+                    "/chatInfo/content"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "iconTextInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/iconTextInfo/title",
+                    "/iconTextInfo/content",
+                    "/iconTextInfo/subContent"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "animTextInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/animTextInfo/title",
+                    "/animTextInfo/content"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "coverInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/coverInfo/title",
+                    "/coverInfo/content",
+                    "/coverInfo/subContent"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "hintInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/hintInfo/title",
+                    "/hintInfo/subTitle",
+                    "/hintInfo/content",
+                    "/hintInfo/subContent"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "stepInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/stepInfo/title",
+                    "/stepInfo/content",
+                    "/stepInfo/subContent",
+                    "/stepInfo/step"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "progressInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/progressInfo/title",
+                    "/progressInfo/content",
+                    "/progressInfo/label",
+                    "/progressInfo/progress",
+                    "/progressInfo/progressInfo/title",
+                    "/progressInfo/progressInfo/content",
+                    "/progressInfo/progressInfo/label",
+                    "/progressInfo/progressInfo/progress"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "multiProgressInfo"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/multiProgressInfo/title",
+                    "/multiProgressInfo/content",
+                    "/multiProgressInfo/label",
+                    "/multiProgressInfo/progress",
+                    "/multiProgressInfo/progressInfo/title",
+                    "/multiProgressInfo/progressInfo/content",
+                    "/multiProgressInfo/progressInfo/label",
+                    "/multiProgressInfo/progressInfo/progress"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "param_island"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/param_island/title",
+                    "/param_island/content",
+                    "/param_island/frontTitle",
+                    "/param_island/bigIslandArea/imageTextInfoLeft/textInfo/frontTitle",
+                    "/param_island/bigIslandArea/imageTextInfoLeft/textInfo/title",
+                    "/param_island/bigIslandArea/imageTextInfoLeft/textInfo/content",
+                    "/param_island/bigIslandArea/imageTextInfoLeft/textInfo/subContent",
+                    "/param_island/bigIslandArea/imageTextInfoLeft/miui.focus.paramtextInfo/frontTitle",
+                    "/param_island/bigIslandArea/imageTextInfoLeft/miui.focus.paramtextInfo/title",
+                    "/param_island/bigIslandArea/imageTextInfoLeft/miui.focus.paramtextInfo/content",
+                    "/param_island/bigIslandArea/imageTextInfoLeft/miui.focus.paramtextInfo/subContent",
+                    "/param_island/bigIslandArea/imageTextInfoRight/textInfo/frontTitle",
+                    "/param_island/bigIslandArea/imageTextInfoRight/textInfo/title",
+                    "/param_island/bigIslandArea/imageTextInfoRight/textInfo/content",
+                    "/param_island/bigIslandArea/imageTextInfoRight/textInfo/subContent",
+                    "/param_island/bigIslandArea/imageTextInfoRight/miui.focus.paramtextInfo/frontTitle",
+                    "/param_island/bigIslandArea/imageTextInfoRight/miui.focus.paramtextInfo/title",
+                    "/param_island/bigIslandArea/imageTextInfoRight/miui.focus.paramtextInfo/content",
+                    "/param_island/bigIslandArea/imageTextInfoRight/miui.focus.paramtextInfo/subContent",
+                    "/param_island/bigIslandArea/textInfo/frontTitle",
+                    "/param_island/bigIslandArea/textInfo/title",
+                    "/param_island/bigIslandArea/textInfo/content",
+                    "/param_island/bigIslandArea/textInfo/subContent",
+                    "/param_island/bigIslandArea/miui.focus.paramtextInfo/frontTitle",
+                    "/param_island/bigIslandArea/miui.focus.paramtextInfo/title",
+                    "/param_island/bigIslandArea/miui.focus.paramtextInfo/content",
+                    "/param_island/bigIslandArea/miui.focus.paramtextInfo/subContent",
+                    "/param_island/bigIslandArea/progressTextInfo/title",
+                    "/param_island/bigIslandArea/progressTextInfo/content",
+                    "/param_island/bigIslandArea/progressTextInfo/label",
+                    "/param_island/bigIslandArea/progressTextInfo/progress",
+                    "/param_island/bigIslandArea/progressTextInfo/progressInfo/title",
+                    "/param_island/bigIslandArea/progressTextInfo/progressInfo/content",
+                    "/param_island/bigIslandArea/progressTextInfo/progressInfo/label",
+                    "/param_island/bigIslandArea/progressTextInfo/progressInfo/progress",
+                    "/param_island/bigIslandArea/fixedWidthDigitInfo/title",
+                    "/param_island/bigIslandArea/fixedWidthDigitInfo/content",
+                    "/param_island/bigIslandArea/fixedWidthDigitInfo/label",
+                    "/param_island/bigIslandArea/fixedWidthDigitInfo/progress",
+                    "/param_island/bigIslandArea/fixedWidthDigitInfo/progressInfo/title",
+                    "/param_island/bigIslandArea/fixedWidthDigitInfo/progressInfo/content",
+                    "/param_island/bigIslandArea/fixedWidthDigitInfo/progressInfo/label",
+                    "/param_island/bigIslandArea/fixedWidthDigitInfo/progressInfo/progress",
+                    "/param_island/bigIslandArea/sameWidthDigitInfo/title",
+                    "/param_island/bigIslandArea/sameWidthDigitInfo/content",
+                    "/param_island/bigIslandArea/sameWidthDigitInfo/label",
+                    "/param_island/bigIslandArea/sameWidthDigitInfo/progress",
+                    "/param_island/bigIslandArea/sameWidthDigitInfo/progressInfo/title",
+                    "/param_island/bigIslandArea/sameWidthDigitInfo/progressInfo/content",
+                    "/param_island/bigIslandArea/sameWidthDigitInfo/progressInfo/label",
+                    "/param_island/bigIslandArea/sameWidthDigitInfo/progressInfo/progress",
+                    "/param_island/smallIslandArea/title",
+                    "/param_island/smallIslandArea/content",
+                    "/param_island/smallIslandArea/subContent"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "fallback"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/aodTitle",
+                    "/ticker"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "meta": {
+            "properties": {
+              "templateType": {
+                "const": "legacy"
+              }
+            },
+            "required": [
+              "templateType"
+            ]
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "then": {
+        "properties": {
+          "extract": {
+            "items": {
+              "properties": {
+                "path": {
+                  "enum": [
+                    "/title",
+                    "/desc1",
+                    "/desc2"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

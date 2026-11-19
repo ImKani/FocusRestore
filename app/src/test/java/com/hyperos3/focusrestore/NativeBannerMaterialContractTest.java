@@ -20,7 +20,7 @@ import org.junit.Test;
 public class NativeBannerMaterialContractTest {
     private String source() throws Exception {
         return new String(Files.readAllBytes(Paths.get(
-                "src/main/java/com/hyperos3/focusrestore/NativeBannerMaterial.java")),
+                "app/src/main/java/com/hyperos3/focusrestore/NativeBannerMaterial.java")),
                 StandardCharsets.UTF_8);
     }
 
@@ -54,7 +54,7 @@ public class NativeBannerMaterialContractTest {
 
     @Test public void materialIsPreparedOutsideBothHostDrawPaths() throws Exception {
         String source = new String(Files.readAllBytes(Paths.get(
-                "src/main/java/com/hyperos3/focusrestore/FocusBannerController.java")),
+                "app/src/main/java/com/hyperos3/focusrestore/FocusBannerController.java")),
                 StandardCharsets.UTF_8);
         assertTrue(source.contains("material.prepareForDraw()"));
         assertTrue(source.contains("addOnPreDrawListener(materialPreDraw)"));
@@ -102,7 +102,7 @@ public class NativeBannerMaterialContractTest {
 
     @Test public void keepsMediaRootOutOfNativeMaterialUntilItsSurfaceIsValidated() throws Exception {
         String source = new String(Files.readAllBytes(Paths.get(
-                "src/main/java/com/hyperos3/focusrestore/MediaNotificationBannerSource.java")),
+                "app/src/main/java/com/hyperos3/focusrestore/MediaNotificationBannerSource.java")),
                 StandardCharsets.UTF_8);
         assertTrue(source.contains("implements FocusBannerSource"));
         assertTrue(source.contains("private final View root"));

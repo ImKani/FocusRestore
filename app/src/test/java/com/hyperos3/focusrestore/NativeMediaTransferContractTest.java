@@ -18,7 +18,7 @@ import org.junit.Test;
 /** 源码契约守卫：Android View/ROM 私有 CTA 的实际读取仍需真机验证。 */
 public class NativeMediaTransferContractTest {
     private String source(String name) throws Exception {
-        return new String(Files.readAllBytes(Paths.get("src/main/java/com/hyperos3/focusrestore", name)),
+        return new String(Files.readAllBytes(Paths.get("app/src/main/java/com/hyperos3/focusrestore", name)),
                 StandardCharsets.UTF_8);
     }
 

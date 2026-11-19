@@ -71,6 +71,17 @@ public final class SettingsProvider extends ContentProvider {
             if (status.isEmpty()) getContext().getContentResolver().notifyChange(RuntimeStatus.REQUEST_URI, null);
             return status;
         }
+        if (IslandRuleAppliedStatus.METHOD.equals(method)) {
+            int uid = Binder.getCallingUid();
+            String caller = getCallingPackage();
+            boolean projection = IslandRuleProjectionProvider.trusted(getContext(), uid, caller);
+            if (!projection && !IslandRuleProvider.trusted(getContext(), uid, caller)) {
+                throw new SecurityException("RULE_STATUS_CALLER_REJECTED");
+            }
+            // 共享 UID 只能报告投影就绪，不能确认严格身份的完整仓库修订。
+            IslandRuleAppliedStatus.report(extras, projection);
+            return new android.os.Bundle();
+        }
         if (!RuntimeStatus.REPORT.equals(method)) return super.call(method, arg, extras);
         // 写入加载状态不使用配置读取的特殊ROM身份查询失败放行策略。
         int uid = Binder.getCallingUid();

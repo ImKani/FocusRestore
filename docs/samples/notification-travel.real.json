@@ -1,0 +1,67 @@
+{
+  "provenance": {
+    "kind": "verbatim-real-payload-from-existing-fixture",
+    "sourceFile": "app/src/test/java/com/hyperos3/focusrestore/IslandPayloadParserTest.java",
+    "sourceLines": "19-34",
+    "sourceCommit": "2b1d30d0ca507b14fd143a6ecaf3da14de1ce1a8",
+    "sourceField": "miui.focus.param.custom",
+    "rawParamSha256": "9b59b6d1bb2f69b76d1f2116f5338368c2e297ba588c4a8a3976ca13fdf9f720",
+    "notice": "Real param only, not a full SBN dump; no capture time/tag/channel/device/ROM values invented."
+  },
+  "packageName": "com.miui.personalassistant",
+  "rawParam": "{\"timeout\":470,\"enableFloat\":true,\"updatable\":true,\"reopen\":\"reopen\",\"business\":\"train\",\"protocol\":1,\"scene\":\"personal-assistant-travel\",\"aodTitle\":\"检票口 检票口\",\"aodPic\":\"miui.focus.travel_aod_pic\",\"param_island\":{\"islandProperty\":1,\"highlightColor\":\"#3482FF\",\"islandTimeout\":28200,\"bigIslandArea\":{\"imageTextInfoLeft\":{\"type\":1,\"picInfo\":{\"type\":1,\"pic\":\"island_pic\"},\"textInfo\":{\"title\":\"D8396\",\"showHighlightColor\":true}},\"textInfo\":{\"title\":\"检票口\",\"showHighlightColor\":true}},\"smallIslandArea\":{\"picInfo\":{\"type\":1,\"pic\":\"island_pic_small\"}}}}",
+  "decodedParam": {
+    "timeout": 470,
+    "enableFloat": true,
+    "updatable": true,
+    "reopen": "reopen",
+    "business": "train",
+    "protocol": 1,
+    "scene": "personal-assistant-travel",
+    "aodTitle": "检票口 检票口",
+    "aodPic": "miui.focus.travel_aod_pic",
+    "param_island": {
+      "islandProperty": 1,
+      "highlightColor": "#3482FF",
+      "islandTimeout": 28200,
+      "bigIslandArea": {
+        "imageTextInfoLeft": {
+          "type": 1,
+          "picInfo": {
+            "type": 1,
+            "pic": "island_pic"
+          },
+          "textInfo": {
+            "title": "D8396",
+            "showHighlightColor": true
+          }
+        },
+        "textInfo": {
+          "title": "检票口",
+          "showHighlightColor": true
+        }
+      },
+      "smallIslandArea": {
+        "picInfo": {
+          "type": 1,
+          "pic": "island_pic_small"
+        }
+      }
+    }
+  },
+  "expected": {
+    "builtinFullText": "D8396·检票口",
+    "customText": "D8396·检票口",
+    "slotProjection": [
+      {
+        "slot": "title",
+        "text": "D8396"
+      },
+      {
+        "slot": "subtitle",
+        "text": "检票口"
+      }
+    ],
+    "basis": "Builtin asserted at IslandPayloadParserTest.java:142-151; custom result calculated from draft, not Android-tested."
+  }
+}

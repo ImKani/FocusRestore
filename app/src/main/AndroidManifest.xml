@@ -25,6 +25,25 @@
             android:directBootAware="true"
             android:exported="true"
             android:grantUriPermissions="false" />
+        <provider
+            android:name=".IslandRuleProvider"
+            android:authorities="com.hyperos3.focusrestore.islandrules"
+            android:directBootAware="false"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+        <!-- call() 内检查平台共享 UID、包归属、签名及 App 独立授权。 -->
+        <provider
+            android:name=".IslandRuleProjectionProvider"
+            android:authorities="com.hyperos3.focusrestore.islandruleprojection"
+            android:directBootAware="false"
+            android:exported="true"
+            android:grantUriPermissions="false" />
+        <provider
+            android:name=".IslandCaptureProvider"
+            android:authorities="com.hyperos3.focusrestore.islandcapture"
+            android:directBootAware="false"
+            android:exported="true"
+            android:grantUriPermissions="false" />
         <meta-data android:name="xposedmodule" android:value="true" />
         <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
         <meta-data android:name="xposeddescription" android:value="恢复 HyperOS 3/4 的焦点通知状态栏显示" />

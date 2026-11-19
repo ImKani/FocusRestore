@@ -47,6 +47,7 @@ import android.widget.FrameLayout;
 
 import java.lang.reflect.Method;
 import java.lang.ref.WeakReference;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -87,6 +88,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
      * payload re-parse and the redundant view writes.
      */
     private final Map<Object, AppliedIslandText> appliedIslandTexts = new WeakHashMap<>();
+    private final Map<View, CharSequence> originalPromptDescriptions = new WeakHashMap<>();
+    private final Map<View, CharSequence> writtenPromptDescriptions = new WeakHashMap<>();
     /** UI 线程拥有；值只弱引用视图，避免 WeakHashMap 的值反向保活键。 */
     private final Map<Object, OS3ClockTimerBinding> clockTimerBindings = new WeakHashMap<>();
     /**
@@ -154,6 +157,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     private boolean modeHooksInstalled;
     private int installedHookMode;
     private HyperOS4FocusController os4Controller;
+    private IslandRuleSystemUi islandRuleSnapshots;
+    private final IslandRuleTextEngine islandRuleTextEngine = new IslandRuleTextEngine();
+    private final Map<String, RuleTextCacheEntry> islandRuleTextCache =
+            Collections.synchronizedMap(new HashMap<String, RuleTextCacheEntry>());
+    private final Map<String, RuleRequestState> islandRuleRequests =
+            Collections.synchronizedMap(new HashMap<String, RuleRequestState>());
+    private final java.util.concurrent.atomic.AtomicLong ruleRequestGeneration =
+            new java.util.concurrent.atomic.AtomicLong();
+    private IslandRuleSetLoader.Snapshot activeRuleSnapshot;
     private OS3FocusDivider os3FocusDivider;
     private volatile FocusBannerController bannerController;
     private NativeFocusTemplateRenderer nativeBannerRenderer;
@@ -178,14 +190,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             Collections.synchronizedMap(new WeakHashMap<>());
     private final Map<View, ParentWidthState> originalParentWidths =
             Collections.synchronizedMap(new WeakHashMap<>());
-    private final Set<Object> convertedBeans = Collections.synchronizedSet(
-            Collections.newSetFromMap(new WeakHashMap<>()));
+    // 转换标记只在接管成功后设置，媒体和原生图标则可单独留有恢复状态。
+    private final WeakIdentityMap<Boolean> convertedBeans = new WeakIdentityMap<>();
     private final Map<Object, Boolean> preMarkedOriginalFocus = Collections.synchronizedMap(
             new WeakHashMap<>());
     private final Set<Object> preMarkedIslands = Collections.synchronizedSet(
             Collections.newSetFromMap(new WeakHashMap<>()));
-    private final Map<Object, OriginalBeanState> originalBeanStates =
-            Collections.synchronizedMap(new WeakHashMap<>());
+    private final WeakIdentityMap<OriginalBeanState> originalBeanStates = new WeakIdentityMap<>();
+    private final WeakIdentityMap<WeakReference<Object>> promptCopyWriters = new WeakIdentityMap<>();
     private final Map<View, Integer> remoteViewsHiddenPrompts =
             Collections.synchronizedMap(new WeakHashMap<>());
     private final Map<View, Map<View, Integer>> remoteViewsHiddenContainers =
@@ -477,7 +489,24 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         SETTINGS_EXECUTOR.execute(this::reportLoadedStatus);
         FocusBannerController banner = bannerController;
         if (banner != null) banner.dismiss("visibility-policy-changed");
-        if (os4Controller != null) os4Controller.onVisibilityPolicyChanged();
+        if (os4Controller != null) {
+            os4Controller.onVisibilityPolicyChanged();
+            if (mainHandler != null) mainHandler.post(() -> {
+                clearIslandRuleOverrides();
+                os4Controller.refreshCurrentItems("rule-visibility-policy");
+            });
+        } else if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS3 && mainHandler != null) {
+            mainHandler.post(() -> {
+                clearIslandRuleOverrides();
+                for (View prompt : promptViewsSnapshot()) {
+                    Object bean = getField(prompt, "mData");
+                    FocusData data = inspectBean(bean);
+                    restoreOriginalBean(bean, data, "rule-visibility-policy");
+                    patchBean(bean, "rule-visibility-policy");
+                }
+                refreshConvertedPromptTexts();
+            });
+        }
         Object controller = os3PromptControllerRef.get();
         if (controller != null && installedHookMode == FocusRestoreSettings.HOOK_MODE_OS3) {
             try { XposedHelpers.callMethod(controller, "updateVisibilityCore"); }
@@ -742,7 +771,44 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 + " notificationRowClickFallback=" + settings.notificationRowClickFallback;
     }
 
+    private void ensureIslandRuleSnapshots(Context context) {
+        if (islandRuleSnapshots != null) return;
+        islandRuleSnapshots = new IslandRuleSystemUi(context, mainHandler);
+        islandRuleSnapshots.setSnapshotListener(this::onIslandRuleSnapshot);
+    }
+
+    private void onIslandRuleSnapshot(IslandRuleSetLoader.Snapshot snapshot) {
+        if (snapshot == activeRuleSnapshot) return;
+        activeRuleSnapshot = snapshot;
+        clearIslandRuleOverrides();
+        for (View prompt : promptViewsSnapshot()) {
+            Object bean = getField(prompt, "mData");
+            if (bean == null) continue;
+            FocusData data = inspectBean(bean);
+            restoreOriginalBean(bean, data, "islandRuleSnapshotChanged");
+            patchBean(bean, "islandRuleSnapshotChanged");
+        }
+        if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS4 && os4Controller != null) {
+            os4Controller.refreshCurrentItems("island-rule-snapshot");
+        }
+        refreshConvertedPromptTexts();
+        debug("rule snapshot state=" + (snapshot != null && snapshot.loaded ? "loaded" : "unavailable")
+                + " generation=" + (snapshot == null ? -1L : snapshot.generation)
+                + " activeRules=" + (snapshot == null ? 0 : snapshot.orderedActiveEntries.size()));
+    }
+
+    private IslandCaptureOs3Source os3CaptureSource;
+    private boolean os3CaptureInstalled;
     private void installOS3Hooks() {
+        Context context = systemUiContext;
+        if (context != null) {
+            ensureIslandRuleSnapshots(context);
+        }
+        if (context != null && !os3CaptureInstalled) {
+            os3CaptureInstalled = true;
+            IslandCaptureSystemUi capture = IslandCaptureSystemUi.create(context, mainHandler, 3);
+            if (capture != null) os3CaptureSource = IslandCaptureOs3Source.install(context, classLoader, hookInstaller, capture);
+        }
         hookFocusCoordinatorMediaPromotion();
         hookOS3NotificationRemoval();
         hookShowOnStatusBar();
@@ -777,12 +843,28 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             error("installOS4Hooks", new IllegalStateException("SystemUI context unavailable"));
             return;
         }
+        ensureIslandRuleSnapshots(context);
         if (os4Controller == null) {
+        IslandCaptureSystemUi capture = IslandCaptureSystemUi.create(context, mainHandler, 4);
         synchronized (focusDisplayWindows) {
             focusDisplayWindows.clear();
         }
         os4Controller = new HyperOS4FocusController(classLoader, context,
                 new HyperOS4FocusController.ItemFactory() {
+                    @Override public void onCapturePipelineRegistered(boolean supported) {
+                        clearIslandRuleOverrides();
+                        if (capture != null) capture.pipelineRegistered(supported);
+                    }
+
+                    @Override public void onRuleEntryRemoved(Object notificationEntry, String key) {
+                        Object value = notificationEntrySbn(notificationEntry);
+                        removeIslandRuleRequest(key, notificationEntry,
+                                value instanceof StatusBarNotification ? (StatusBarNotification) value : null);
+                    }
+
+                    @Override public void onCaptureEntry(Object owner, Object entry, String displayText) {
+                        if (capture != null) capture.onEntry(owner, entry, () -> getField(entry, "mSbn"), displayText);
+                    }
                     @Override
                     public HyperOS4FocusController.DisplayItem create(Object notificationEntry) {
                         return createOS4DisplayItem(notificationEntry);
@@ -1876,6 +1958,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         Object removed = notificationEntrySbn(entry);
         StatusBarNotification removedSbn = removed instanceof StatusBarNotification
                 ? (StatusBarNotification) removed : null;
+        removeIslandRuleRequest(key, entry, removedSbn);
         if (mainHandler != null) mainHandler.post(() -> {
             for (OS3ClockTimerBinding binding : new ArrayList<>(clockTimerBindings.values())) {
                 if (binding.key.equals(key) && (removedSbn == null
@@ -3133,6 +3216,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         return text.toString();
     }
 
+    private void recordOS3FocusDecision(FocusData data, boolean accepted, String displayText) {
+        if (os3CaptureSource != null) {
+            os3CaptureSource.onFocusDecision(data.key, data.packageName, data.notification, accepted, displayText);
+        }
+    }
+
     private void hookShowOnStatusBar() {
         try {
             Class<?> utils = FocusReflection.findClass(
@@ -3155,9 +3244,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 return;
                             }
                             if (data != null && currentSettings.mediaFocusEnabled
-                                    
-                                    && activeMediaNotificationKeys.contains(data.key)
-) {
+                                    && activeMediaNotificationKeys.contains(data.key)) {
                                 try {
                                     boolean originalFocus = getBooleanField(param.args[0],
                                             "mIsFocusNotification", false);
@@ -3195,14 +3282,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             if (isFocusDisplayExpired(data)) {
                                 clearPreMark(param.args[0], true);
                                 param.setResult(false);
+                                recordOS3FocusDecision(data, false, null);
                                 log("focus display limit reached key=" + data.key);
                                 return;
                             }
 
                             boolean original = Boolean.TRUE.equals(param.getResult());
-                            if (data != null && currentSettings.mediaFocusEnabled
-                                    && activeMediaNotificationKeys.contains(data.key)
-) {
+                            if (currentSettings.mediaFocusEnabled
+                                    && activeMediaNotificationKeys.contains(data.key)) {
                                 try {
                                     XposedHelpers.setBooleanField(param.args[0],
                                             "mIsFocusNotification", true);
@@ -3210,6 +3297,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                     error("markMediaFocus", t);
                                 }
                                 param.setResult(true);
+                                recordOS3FocusDecision(data, true, null);
                                 log("media converted to focus key=" + data.key
                                         + " playing=" + (data.mediaContent == null ? "unknown"
                                         : data.mediaContent.playing));
@@ -3224,12 +3312,14 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                     error("markIslandFocus", t);
                                 }
                                 param.setResult(true);
+                                recordOS3FocusDecision(data, true, islandText.text);
                                 log("island converted to focus source=" + islandText.source
                                         + " content=" + islandText.text);
                                 return;
                             }
                             clearPreMark(param.args[0], true);
                             boolean fallback = data.isFocus && data.hasMainRv;
+                            recordOS3FocusDecision(data, original || fallback, data.ticker);
                             if (!original && fallback) {
                                 param.setResult(true);
                                 log("showOnStatusBar fallback=true " + data.summary());
@@ -3239,6 +3329,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         }
                     });
         } catch (Throwable t) {
+            if (os3CaptureSource != null) os3CaptureSource.disable();
             error("hookShowOnStatusBar", t);
         }
     }
@@ -3375,6 +3466,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             Object bean = param.args[0];
                             // null、换通知、暂停/恢复及同 key 新代次都先撤销旧 tick，防止复用视图串写。
                             stopClockTimer(param.thisObject);
+                            releasePromptDescription((View) param.thisObject);
                             synchronized (appliedIslandTexts) { appliedIslandTexts.remove(param.thisObject); }
                             FocusLongPressGesture gesture = promptLongPressGesture(param.thisObject);
                             if (gesture != null) {
@@ -3390,7 +3482,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             // that carries no miui.focus.rv. The prompt view is reused across
                             // notifications, so a container left GONE for an earlier notification
                             // would blank the pill of any later one this module does not manage.
-                            if (!convertedBeans.contains(bean)) {
+                            if (!convertedBeans.containsKey(bean)) {
                                 String reverted = restoreRemoteViewsPrompt(param.thisObject);
                                 if (reverted != null) {
                                     debug("setData reverted a leaked RemoteViews hide " + reverted);
@@ -3413,7 +3505,15 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                     XposedHelpers.setAdditionalInstanceField(displayView, "focusRestoreDisplayLayout", listener);
                                 }
                             }
-                            FocusData data = inspectBean(param.args[0]);
+                            Object bound = getField(param.thisObject, "mData");
+                            Object writer = param.args[0];
+                            if (bound != null && bound != writer && writer != null
+                                    && getField(bound, "sbn") == getField(writer, "sbn")) {
+                                promptCopyWriters.put(bound, new WeakReference<>(writer));
+                            } else {
+                                promptCopyWriters.remove(bound);
+                            }
+                            FocusData data = inspectBean(bound);
                             log("after setData "
                                     + (data == null ? "bean=null" : data.summary()));
                             reloadSettings(false);
@@ -3500,6 +3600,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 swipeChanged = currentSettings.focusSwipeEnabled != next.focusSwipeEnabled;
                 appearanceChanged = !sameFocusAppearance(currentSettings, next);
                 islandConversionChanged = currentSettings.islandCompat != next.islandCompat
+                        || currentSettings.islandTextMode != next.islandTextMode
+                        || !TextUtils.equals(currentSettings.generalSeparator, next.generalSeparator)
+                        || !TextUtils.equals(currentSettings.sideSeparator, next.sideSeparator)
                         || !currentSettings.islandForcePackages.equals(next.islandForcePackages);
                 richTextChanged = currentSettings.islandRichText != next.islandRichText;
                 advancedMaterialChanged = currentSettings.advancedMaterialEnabled != next.advancedMaterialEnabled;
@@ -3537,7 +3640,8 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
             if (islandConversionChanged && modeHooksInstalled && mainHandler != null) {
                 mainHandler.post(() -> {
-                    if (currentSettings != next) return;
+                    // 在主线程按最新配置重算，即使后续无关配置已经替换了 next 也须撤回旧正文。
+                    clearIslandRuleOverrides();
                     for (OS3ClockTimerBinding binding : new ArrayList<>(clockTimerBindings.values())) {
                         View prompt = binding.promptRef.get();
                         if (!binding.isCurrent() && prompt != null) {
@@ -3551,6 +3655,17 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                             try { setData.invoke(prompt, bean, false); }
                             catch (Throwable failure) { error("OS3 clock timer settings restore", failure); }
                         }
+                    }
+                    if (installedHookMode == FocusRestoreSettings.HOOK_MODE_OS3) {
+                        for (View prompt : promptViewsSnapshot()) {
+                            Object bean = getField(prompt, "mData");
+                            FocusData data = inspectBean(bean);
+                            restoreOriginalBean(bean, data, "islandRuleSettingsChanged");
+                            patchBean(bean, "islandRuleSettingsChanged");
+                        }
+                        refreshConvertedPromptTexts();
+                    } else if (os4Controller != null) {
+                        os4Controller.refreshCurrentItems("island-rule-settings");
                     }
                 });
             }
@@ -4915,7 +5030,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                                 }
                                 return;
                             }
-                            boolean converted = convertedBeans.contains(bean)
+                            boolean converted = convertedBeans.containsKey(bean)
                                     || isConvertedNotificationKey(data == null ? null : data.key);
                             boolean focus = data != null && (data.isFocus || data.hasExplicitFocusData);
                             if (focus || converted) {
@@ -5216,9 +5331,29 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         return true;
     }
 
+    private void releasePromptDescription(View prompt) {
+        CharSequence written = writtenPromptDescriptions.remove(prompt);
+        CharSequence original = originalPromptDescriptions.remove(prompt);
+        if (written != null && TextUtils.equals(prompt.getContentDescription(), written)) {
+            prompt.setContentDescription(original);
+        }
+    }
+
+    private void bindPromptDescription(View prompt, CharSequence display) {
+        CharSequence current = prompt.getContentDescription();
+        // ROM 可能在两次重绘间更新描述；只恢复本模块最后一次写入前的值。
+        if (!writtenPromptDescriptions.containsKey(prompt)
+                || !TextUtils.equals(current, writtenPromptDescriptions.get(prompt))) {
+            originalPromptDescriptions.put(prompt, current);
+        }
+        if (!TextUtils.equals(current, display)) prompt.setContentDescription(display);
+        writtenPromptDescriptions.put(prompt, display);
+    }
+
     private boolean preferConvertedIslandText(Object promptObject, FocusData data) {
         if (!(promptObject instanceof View)) return false;
         if (data == null || !shouldConvert(data)) {
+            releasePromptDescription((View) promptObject);
             stopClockTimer(promptObject);
             synchronized (appliedIslandTexts) { appliedIslandTexts.remove(promptObject); }
             return false;
@@ -5227,8 +5362,10 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         if (!(content instanceof TextView)) { stopClockTimer(promptObject); return false; }
         TextView textView = (TextView) content;
 
+        IslandText ruleText = cachedIslandRuleText(data);
         IslandClockTimer timer = clockTimer(data);
-        if (timer != null && mainHandler != null && data.sbn != null) {
+        if (timer != null && mainHandler != null && data.sbn != null && ruleText == null) {
+            releasePromptDescription((View) promptObject);
             hideKnownRemoteViewsContainers(promptObject, textView, data.key);
             textView.setVisibility(View.VISIBLE);
             OS3ClockTimerBinding binding = clockTimerBindings.get(promptObject);
@@ -5251,12 +5388,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
         String text;
         String source = null;
-        boolean reused = applied != null && TextUtils.equals(data.content, applied.raw);
+        boolean reused = applied != null && applied.canReuse(data.content, ruleText == null ? null : ruleText.text);
         if (reused) {
-            // Same payload as the previous pass: reuse the conversion instead of re-parsing the JSON.
             text = applied.raw;
         } else {
-            IslandText parsed = shouldConvert(data) ? extractIslandContent(data) : null;
+            // setData 的 mData 是浅拷贝。这里只消费结果，不能用视图副本替换已登记的写入者。
+            IslandText parsed = ruleText != null ? ruleText : extractIslandContent(data);
             if (parsed == null || TextUtils.isEmpty(parsed.text)) return false;
             text = parsed.text;
             source = parsed.source;
@@ -5278,11 +5415,12 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             wrote = true;
         }
         textView.setVisibility(View.VISIBLE);
+        bindPromptDescription((View) promptObject, display);
         boolean changed = !reused;
         if (changed || styleChanged || wrote) {
             synchronized (appliedIslandTexts) {
                 appliedIslandTexts.put(promptObject,
-                        new AppliedIslandText(text, display, rich));
+                        new AppliedIslandText(text, display, rich, ruleText != null));
             }
             scheduleNativeMarquee(promptObject);
         }
@@ -5426,7 +5564,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     /** The island text this module parsed for the notification, or null when there is none to use. */
     private String parsedIslandText(FocusData data) {
         if (data == null || !shouldConvert(data)) return null;
-        IslandText parsed = extractIslandContent(data);
+        IslandText parsed = displayIslandContent(data);
         return parsed == null || TextUtils.isEmpty(parsed.text) ? null : parsed.text;
     }
 
@@ -5674,8 +5812,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 data.content = islandText.text;
                 data.isFocus = true;
                 applyConvertedBeanIcon(bean, state, data, stage);
-                convertedBeans.add(bean);
+                convertedBeans.put(bean, Boolean.TRUE);
                 rememberConvertedNotificationKey(data.key);
+                scheduleOS3BeanRule(bean, data);
                 log(stage + " applied island focus source=" + islandText.source
                         + " oemContent=" + preview(current));
             } catch (Throwable t) {
@@ -5701,8 +5840,9 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             }
             if (applyConvertedBeanIcon(bean, state, data, stage + "IconOnly")) {
                 data.isFocus = true;
-                convertedBeans.add(bean);
+                convertedBeans.put(bean, Boolean.TRUE);
                 rememberConvertedNotificationKey(data.key);
+                scheduleOS3BeanRule(bean, data);
                 log(stage + " applied island icon-only focus");
             } else {
                 restoreOriginalBean(bean, data, stage);
@@ -5721,7 +5861,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
 
         // OS3 时钟可直接成为原生 Focus；图标设置独立于岛文字转换，原生 RV 内部图标仍由 ROM 管理。
-        if (data.isFocus && !convertedBeans.contains(bean) && data.contentRv == null
+        if (data.isFocus && !convertedBeans.containsKey(bean) && data.contentRv == null
                 && data.contentNightRv == null && !data.hasBarRv && !data.hasMainRv) {
             OriginalBeanState iconState;
             synchronized (originalBeanStates) {
@@ -5973,6 +6113,231 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                     + boundedPayload(data.islandParam));
         }
         return new IslandText(parsed.text, parsed.source);
+    }
+
+    private void clearIslandRuleOverrides() {
+        synchronized (islandRuleRequests) {
+            for (RuleRequestState request : islandRuleRequests.values()) cancelIslandRuleRequest(request);
+            islandRuleRequests.clear();
+        }
+        synchronized (islandRuleTextCache) { islandRuleTextCache.clear(); }
+        if (os4Controller != null) os4Controller.clearRuleTextSnapshot(-1L);
+    }
+
+    private void cancelIslandRuleRequest(RuleRequestState state) {
+        IslandRuleTextEngine engine = islandRuleTextEngine;
+        if (engine != null && state != null) {
+            engine.cancel(state.key, state.identityToken, state.notificationGeneration,
+                    state.snapshot, state.snapshotGeneration);
+        }
+    }
+
+    private void removeIslandRuleRequest(String key, Object owner, StatusBarNotification removedSbn) {
+        if (TextUtils.isEmpty(key)) return;
+        StatusBarNotification cacheIdentity = removedSbn;
+        synchronized (islandRuleRequests) {
+            RuleRequestState state = islandRuleRequests.get(key);
+            if (state != null && ((owner != null && state.owner == owner)
+                    || (removedSbn != null && state.sbn == removedSbn))) {
+                islandRuleRequests.remove(key);
+                cancelIslandRuleRequest(state);
+                if (cacheIdentity == null) cacheIdentity = state.sbn;
+            }
+        }
+        synchronized (islandRuleTextCache) {
+            RuleTextCacheEntry cached = islandRuleTextCache.get(key);
+            if (cached != null && cacheIdentity != null && cached.identityToken == cacheIdentity) {
+                islandRuleTextCache.remove(key);
+            }
+        }
+    }
+
+    private boolean fullIslandRulesEnabled() {
+        HookSettings settings = currentSettings;
+        return FocusPriorityPolicy.allowsRuleBody(settings.islandCompat, settings.islandTextMode);
+    }
+
+    private IslandText displayIslandContent(FocusData data) {
+        IslandText custom = cachedIslandRuleText(data);
+        return custom != null ? custom : extractIslandContent(data);
+    }
+
+    private IslandText cachedIslandRuleText(FocusData data) {
+        if (!fullIslandRulesEnabled() || data == null || data.sbn == null || TextUtils.isEmpty(data.islandParam)
+                || islandRuleSnapshots == null) return null;
+        RuleTextCacheEntry cached;
+        synchronized (islandRuleTextCache) { cached = islandRuleTextCache.get(data.key); }
+        if (cached == null) return null;
+        Object entry = entryForKey(data.key);
+        if (cached.matches(data.sbn, notificationEntrySbn(entry), islandRuleSnapshots.current(),
+                islandPayloadDigest(data.islandParam)) && !isFocusDisplayExpired(data)
+                && !(currentSettings.mediaFocusEnabled && activeMediaNotificationKeys.contains(data.key))
+                && entryAllowed(entry)) {
+            return new IslandText(cached.text, "islandRule");
+        }
+        return null;
+    }
+
+    private static String islandPayloadDigest(String raw) {
+        return raw == null ? "" : IslandRuleRepository.digest(raw.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void scheduleOS3BeanRule(Object bean, FocusData data) {
+        if (!fullIslandRulesEnabled() || islandRuleSnapshots == null) return;
+        if (data.sbn == null) {
+            IslandRuleSetLoader.Snapshot snapshot = islandRuleSnapshots.current();
+            if (snapshot != null && snapshot.loaded) debugOS3RuleSkip(data.key, snapshot.generation, "no-active-sbn");
+            return;
+        }
+        scheduleIslandRuleText(bean, data, false, null);
+    }
+
+    private void debugOS3RuleSkip(String key, long generation, String reason) {
+        if (VERBOSE_LOG && firstDiagnosis("os3-rule|" + key + "|" + generation + "|" + reason)) {
+            debug("rule body skipped mode=OS3 key=" + key + " snapshot=" + generation + " reason=" + reason);
+        }
+    }
+
+    private void scheduleIslandRuleText(final Object owner, final FocusData data, final boolean os4,
+            final String expectedDigest) {
+        if (!fullIslandRulesEnabled() || owner == null || data == null || data.sbn == null || TextUtils.isEmpty(data.key)
+                || TextUtils.isEmpty(data.packageName) || TextUtils.isEmpty(data.islandParam)
+                || islandRuleSnapshots == null || islandRuleTextEngine == null) return;
+        final IslandRuleSetLoader.Snapshot snapshot = islandRuleSnapshots.current();
+        if (snapshot == null || !snapshot.loaded) return;
+        final String digest = expectedDigest == null ? islandPayloadDigest(data.islandParam) : expectedDigest;
+        if (!os4) {
+            RuleTextCacheEntry cached = islandRuleTextCache.get(data.key);
+            if (cached != null && cached.matches(data.sbn, notificationEntrySbn(entryForKey(data.key)), snapshot, digest)) return;
+        }
+        final Object notificationToken = os4 ? owner : data.sbn;
+        final long notificationGeneration = os4 && os4Controller != null
+                ? os4Controller.ruleCandidateSequence(data.key, owner, digest) : nextRuleGeneration(data.key,
+                        notificationToken, digest, snapshot);
+        if (notificationGeneration < 0L) return;
+        final RuleRequestState state = new RuleRequestState(data.key, owner, notificationToken,
+                notificationGeneration, data.sbn, data.packageName, digest, snapshot, os4);
+        RuleRequestState prior;
+        synchronized (islandRuleRequests) {
+            prior = islandRuleRequests.get(data.key);
+            if (prior != null && prior.sameAs(state)) return;
+            islandRuleRequests.put(data.key, state);
+            if (islandRuleRequests.size() > 128) {
+                Iterator<Map.Entry<String, RuleRequestState>> it = islandRuleRequests.entrySet().iterator();
+                while (islandRuleRequests.size() > 128 && it.hasNext()) {
+                    Map.Entry<String, RuleRequestState> eldest = it.next();
+                    if (eldest.getValue() == state) continue;
+                    it.remove();
+                    cancelIslandRuleRequest(eldest.getValue());
+                }
+            }
+        }
+        cancelIslandRuleRequest(prior);
+        IslandRuleTextEngine.Submission submitted = islandRuleTextEngine.submit(
+                new IslandRuleTextEngine.Request(data.key, notificationToken, notificationGeneration,
+                        snapshot, snapshot, snapshot.generation, data.packageName, data.islandParam,
+                        () -> isIslandRuleRequestCurrent(state), command -> mainHandler.post(command),
+                        result -> finishIslandRuleText(state, owner, result)));
+        if (submitted != IslandRuleTextEngine.Submission.ACCEPTED
+                && submitted != IslandRuleTextEngine.Submission.DEDUPLICATED) {
+            debug("rule body request=" + submitted + " mode=" + (os4 ? "OS4" : "OS3")
+                    + " key=" + data.key + " snapshot=" + snapshot.generation);
+        }
+    }
+
+    private long nextRuleGeneration(String key, Object token, String digest,
+            IslandRuleSetLoader.Snapshot snapshot) {
+        synchronized (islandRuleRequests) {
+            RuleRequestState prior = islandRuleRequests.get(key);
+            if (prior != null && prior.identityToken == token && prior.payloadDigest.equals(digest)
+                    && prior.snapshot == snapshot && !prior.os4) return prior.notificationGeneration;
+            return ruleRequestGeneration.incrementAndGet();
+        }
+    }
+
+    private boolean isIslandRuleRequestCurrent(RuleRequestState state) {
+        synchronized (islandRuleRequests) {
+            if (islandRuleRequests.get(state.key) != state) return false;
+        }
+        // OS3 的 owner 是 FocusedNotifBean，ROM 的隐私过滤器只接受活动 NotificationEntry。
+        Object entry = state.os4 ? state.owner : entryForKey(state.key);
+        if (!fullIslandRulesEnabled() || islandRuleSnapshots == null || islandRuleSnapshots.current() != state.snapshot) return false;
+        if (notificationEntrySbn(entry) != state.sbn || !entryAllowed(entry)) {
+            if (!state.os4) debugOS3RuleSkip(state.key, state.snapshotGeneration,
+                    entry == null ? "entry-missing" : notificationEntrySbn(entry) != state.sbn ? "sbn-changed" : "entry-blocked");
+            return false;
+        }
+        if (!state.os4 && (state.beanSource == null || getField(state.owner, "sbn") != state.beanSource)) {
+            debugOS3RuleSkip(state.key, state.snapshotGeneration, "bean-source-changed");
+            return false;
+        }
+        if (state.os4) {
+            return os4Controller != null && os4Controller.ruleCandidateSequence(
+                    state.key, state.owner, state.payloadDigest) == state.notificationGeneration;
+        }
+        return true;
+    }
+
+    private void finishIslandRuleText(RuleRequestState state, Object owner, IslandRuleTextEngine.Result result) {
+        if (result == null) return;
+        if (result.outcome != IslandRuleTextEngine.Outcome.SUCCESS || TextUtils.isEmpty(result.customText)) {
+            debug("rule body outcome=" + result.reason + " key=" + state.key
+                    + " snapshot=" + state.snapshotGeneration + " winner=" + safeRuleId(result.winningRuleId));
+            return;
+        }
+        if (!isIslandRuleRequestCurrent(state)) return;
+        if (state.os4) {
+            long expectedSequence = state.notificationGeneration;
+            String currentDigest = state.payloadDigest;
+            boolean applied = os4Controller != null && os4Controller.applyRuleText(state.key, owner,
+                    expectedSequence, currentDigest, state.snapshotGeneration, result.customText);
+            if (applied) debugRuleMatch(state, result);
+            return;
+        }
+        FocusData current = inspectBean(owner);
+        if (current == null || current.sbn != state.sbn || !state.key.equals(current.key)
+                || !state.packageName.equals(current.packageName)
+                || !state.payloadDigest.equals(islandPayloadDigest(current.islandParam))
+                || !shouldConvert(current)) {
+            debugOS3RuleSkip(state.key, state.snapshotGeneration, "notification-changed");
+            return;
+        }
+        // ROM 的 setData 会浅拷贝 Bean，也可在异步回调前重写 content。
+        // 结果属于已核验的通知代次；仅发布给对应的焦点消费者，回调不改旧 Bean。
+        // 当前提示视图在读取时再次核对其 mData 对应的活动通知和显示门禁。
+        synchronized (islandRuleTextCache) {
+            islandRuleTextCache.put(state.key, new RuleTextCacheEntry(state.sbn, state.payloadDigest,
+                    state.snapshot, result.customText));
+            while (islandRuleTextCache.size() > 128) {
+                Iterator<String> it = islandRuleTextCache.keySet().iterator();
+                if (!it.hasNext()) break;
+                String oldest = it.next();
+                if (!state.key.equals(oldest)) it.remove();
+                else if (it.hasNext()) { it.next(); it.remove(); }
+                else break;
+            }
+        }
+        refreshConvertedPromptTexts();
+        debugRuleMatch(state, result);
+    }
+
+    private void debugRuleMatch(RuleRequestState state, IslandRuleTextEngine.Result result) {
+        debug("rule body outcome=MATCHED mode=" + (state.os4 ? "OS4" : "OS3")
+                + " key=" + state.key + " snapshot=" + state.snapshotGeneration
+                + " winner=" + safeRuleId(result.winningRuleId)
+                + " events=" + result.ruleEvents.size() + " inputFindings=" + result.inputFindings.size()
+                + " droppedEvents=" + result.droppedRuleEvents);
+        for (IslandRuleSelection.Event event : result.ruleEvents) {
+            debug("rule body event key=" + state.key + " rule=" + safeRuleId(event.ruleId)
+                    + " code=" + event.code + " path=" + event.path);
+        }
+        for (IslandRuleContextAdapter.Finding finding : result.inputFindings) {
+            debug("rule body input key=" + state.key + " code=" + finding.code + " path=" + finding.path);
+        }
+    }
+
+    private static String safeRuleId(String id) {
+        return id == null ? "none" : id.replaceAll("[^A-Za-z0-9._-]", "_");
     }
 
     /**
@@ -6643,7 +7008,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             if (whitelisted != null && !TextUtils.isEmpty(whitelisted.text)) {
                 log("OS4 whitelist parse wins over native content key=" + key
                         + " source=" + whitelisted.source + " text=" + preview(whitelisted.text));
-                return new HyperOS4FocusController.DisplayItem(entry, key, data.packageName,
+                return bindOS4RuleCandidate(new HyperOS4FocusController.DisplayItem(entry, key, data.packageName,
                         whitelisted.text, "whitelistParsed:" + whitelisted.source, null, null,
                         contentIntent, focusIcon == null ? null : focusIcon.icon,
                         focusIconDark == null ? null : focusIconDark.icon,
@@ -6652,7 +7017,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                         focusIcon != null && focusIcon.islandIcon,
                         focusIconDark != null && focusIconDark.islandIcon,
                         OS4FocusPriorityPolicy.PRIORITY_ISLAND_WHITELIST,
-                        constructedDevice ? FocusKind.DEVICE : FocusKind.NORMAL);
+                        constructedDevice ? FocusKind.DEVICE : FocusKind.NORMAL), entry, data);
             }
             return new HyperOS4FocusController.DisplayItem(entry, key, data.packageName,
                     cleanText(data.ticker), "nativeFocus", data.barRv, data.barNightRv,
@@ -6672,7 +7037,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
             data.isOriginalFocus = false;
         }
         if (!shouldConvert(data)) return null;
-        IslandText islandText = extractIslandContent(data);
+        IslandText islandText = displayIslandContent(data);
         if (islandText == null || TextUtils.isEmpty(islandText.text)) return null;
         int priority;
         String source;
@@ -6693,7 +7058,7 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         log("OS4 island focus icon key=" + key + " light="
                 + (focusIcon == null ? "none" : focusIcon.source) + " dark="
                 + (focusIconDark == null ? "none" : focusIconDark.source));
-        return new HyperOS4FocusController.DisplayItem(entry, key, data.packageName,
+        return bindOS4RuleCandidate(new HyperOS4FocusController.DisplayItem(entry, key, data.packageName,
                 islandText.text, source, null, null, contentIntent,
                 focusIcon == null ? null : focusIcon.icon,
                 focusIconDark == null ? null : focusIconDark.icon,
@@ -6701,16 +7066,46 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
                 focusIconDark != null && focusIconDark.tint,
                 focusIcon != null && focusIcon.islandIcon,
                 focusIconDark != null && focusIconDark.islandIcon, priority,
-                constructedDevice ? FocusKind.DEVICE : FocusKind.NORMAL);
+                constructedDevice ? FocusKind.DEVICE : FocusKind.NORMAL), entry, data);
+    }
+
+    private HyperOS4FocusController.DisplayItem bindOS4RuleCandidate(
+            HyperOS4FocusController.DisplayItem item, Object entry, FocusData data) {
+        if (!fullIslandRulesEnabled() || item == null || data == null || data.sbn == null || !shouldConvert(data)) return item;
+        item.rulePayloadDigest = islandPayloadDigest(data.islandParam);
+        mainHandler.post(() -> scheduleIslandRuleText(entry, data, true, item.rulePayloadDigest));
+        return item;
     }
 
     private FocusData inspectBean(Object bean) {
         if (bean == null) return null;
         try {
-            FocusData data = inspectExpanded(getField(bean, "sbn"));
+            Object expanded = getField(bean, "sbn");
+            FocusData data = inspectExpanded(expanded);
             if (data == null) data = new FocusData();
+            synchronized (originalBeanStates) {
+                OriginalBeanState saved = originalBeanStates.get(bean);
+                if (saved == null && expanded != null) {
+                    WeakReference<Object> reference = promptCopyWriters.get(bean);
+                    Object writer = reference == null ? null : reference.get();
+                    if (writer != null && getField(writer, "sbn") == expanded) saved = originalBeanStates.get(writer);
+                }
+                // 模块写过的 Focus 标记不能在迟到回调或下一次绘制中反过来阻止自身转换。
+                if (saved != null && !saved.nativeIconOnly && saved.expanded == expanded) {
+                    data.isOriginalFocus = saved.originalFocus || data.hasExplicitFocusData;
+                }
+            }
             data.key = stringValue(getField(bean, "notifKey"));
             if (TextUtils.isEmpty(data.packageName)) data.packageName = packageFromKey(data.key);
+            // FocusedNotifBean 可以持有包装对象。只认活动 Entry 对应的原通知引用，避免同 key 更新串代。
+            if (data.notification != null && !TextUtils.isEmpty(data.key)) {
+                Object live = notificationEntrySbn(entryForKey(data.key));
+                if (live instanceof StatusBarNotification && live != data.sbn) {
+                    StatusBarNotification current = (StatusBarNotification) live;
+                    if (data.key.equals(current.getKey()) && current.getPackageName().equals(data.packageName)
+                            && current.getNotification() == data.notification) data.sbn = current;
+                }
+            }
             data.content = stringValue(getField(bean, "content"));
             data.contentRv = asRemoteViews(getField(bean, "contentRemoteViews"));
             data.contentNightRv = asRemoteViews(getField(bean, "contentNightRemoteViews"));
@@ -7021,6 +7416,63 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
         }
     }
 
+    static final class RuleTextCacheEntry {
+        final Object identityToken;
+        final String payloadDigest;
+        final IslandRuleSetLoader.Snapshot snapshot;
+        final String text;
+
+        RuleTextCacheEntry(Object identityToken, String payloadDigest,
+                IslandRuleSetLoader.Snapshot snapshot, String text) {
+            this.identityToken = identityToken;
+            this.payloadDigest = payloadDigest;
+            this.snapshot = snapshot;
+            this.text = text;
+        }
+
+        boolean matches(Object boundSbn, Object liveSbn, IslandRuleSetLoader.Snapshot current, String digest) {
+            return boundSbn == identityToken && liveSbn == identityToken && snapshot == current
+                    && payloadDigest.equals(digest);
+        }
+    }
+
+    private static final class RuleRequestState {
+        final String key;
+        final Object owner;
+        final Object identityToken;
+        final long notificationGeneration;
+        final StatusBarNotification sbn;
+        final Object beanSource;
+        final String packageName;
+        final String payloadDigest;
+        final IslandRuleSetLoader.Snapshot snapshot;
+        final long snapshotGeneration;
+        final boolean os4;
+
+        RuleRequestState(String key, Object owner, Object identityToken, long notificationGeneration,
+                StatusBarNotification sbn, String packageName, String payloadDigest,
+                IslandRuleSetLoader.Snapshot snapshot, boolean os4) {
+            this.key = key;
+            this.owner = owner;
+            this.identityToken = identityToken;
+            this.notificationGeneration = notificationGeneration;
+            this.beanSource = os4 ? null : getField(owner, "sbn");
+            this.sbn = sbn;
+            this.packageName = packageName;
+            this.payloadDigest = payloadDigest;
+            this.snapshot = snapshot;
+            this.snapshotGeneration = snapshot.generation;
+            this.os4 = os4;
+        }
+
+        boolean sameAs(RuleRequestState other) {
+            return other != null && owner == other.owner && beanSource == other.beanSource && identityToken == other.identityToken
+                    && notificationGeneration == other.notificationGeneration && os4 == other.os4
+                    && snapshot == other.snapshot && key.equals(other.key)
+                    && payloadDigest.equals(other.payloadDigest);
+        }
+    }
+
     private static final class IslandText {
         final String text;
         final String source;
@@ -7032,15 +7484,23 @@ public final class HyperOS3FocusRestoreHook implements IXposedHookLoadPackage {
     }
 
     /** 缓存已写入提示视图的原始文本、实际显示的字符序列及当时的彩色字体状态。 */
-    private static final class AppliedIslandText {
+    static final class AppliedIslandText {
         final String raw;
         final CharSequence rendered;
         final boolean rich;
+        private final boolean fromRule;
 
-        AppliedIslandText(String raw, CharSequence rendered, boolean rich) {
+        AppliedIslandText(String raw, CharSequence rendered, boolean rich, boolean fromRule) {
             this.raw = raw;
             this.rendered = rendered;
             this.rich = rich;
+            this.fromRule = fromRule;
+        }
+
+        boolean canReuse(String beanContent, String currentRuleText) {
+            // ROM 的视图副本可以保留旧 content；规则到达、撤回及切模式都按当前来源重新绑定。
+            return currentRuleText != null ? fromRule && raw.equals(currentRuleText)
+                    : !fromRule && raw.equals(beanContent);
         }
     }
 
