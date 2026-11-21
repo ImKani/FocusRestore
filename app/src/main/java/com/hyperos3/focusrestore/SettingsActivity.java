@@ -1885,10 +1885,7 @@ public final class SettingsActivity extends Activity {
         Button startCapture = actionButton("开启最近记录", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
         TextView captureStatus = text("", 13, COLOR_TEXT_SECONDARY);
         Button recentCapture = actionButton("从最近记录新增或更新规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        Button samples = actionButton("选择要导出的样本", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        Button exportSample = actionButton("导出所选脱敏 JSON", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
         Button endCapture = actionButton("结束并清空最近记录", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        Button cancelCaptureExport = actionButton("取消导出", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
         for (View control : new View[] {startCapture, captureStatus, recentCapture, endCapture}) {
             rulePanel.addView(control, matchWrap(dp(8)));
         }
@@ -1904,18 +1901,11 @@ public final class SettingsActivity extends Activity {
             migration.addView(control, matchWrap(dp(8)));
         }
         addCollapsibleSection(root, "规则迁移", migration);
-        LinearLayout diagnostics = panel();
-        diagnostics.addView(text("用于排查超级岛字段结构，导出的诊断样本不能导入为规则。",
-                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
-        for (View control : new View[] {samples, exportSample, cancelCaptureExport}) {
-            diagnostics.addView(control, matchWrap(dp(8)));
-        }
-        addCollapsibleSection(root, "字段结构诊断", diagnostics);
         rulePackUi.bind(importPack, exportPack, cancelPack, packStatus);
         ruleImportUi.bind(ruleStatus, projection, manager, () -> {
             if (!islandCaptureUi.openRecent()) showFeedback("请先开启最近记录并等待捕获通知。");
         });
-        islandCaptureUi.bind(startCapture, samples, exportSample, endCapture, cancelCaptureExport, captureStatus, recentCapture);
+        islandCaptureUi.bind(startCapture, endCapture, captureStatus, recentCapture);
 
         root.addView(sectionHeader("链接"), matchWrap(dp(8)));
         LinearLayout links = panel();
@@ -1962,10 +1952,6 @@ public final class SettingsActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, result);
         if (requestCode == IslandRulePackUi.REQUEST_IMPORT || requestCode == IslandRulePackUi.REQUEST_EXPORT) {
             rulePackUi.onDocumentResult(requestCode, resultCode, result);
-            return;
-        }
-        if (requestCode == IslandCaptureUi.REQUEST) {
-            islandCaptureUi.onDocumentResult(resultCode, result);
             return;
         }
         if (requestCode != REQUEST_IMPORT_SETTINGS && requestCode != REQUEST_EXPORT_SETTINGS) return;

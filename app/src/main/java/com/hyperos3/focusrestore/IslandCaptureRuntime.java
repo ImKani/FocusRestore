@@ -3,11 +3,8 @@
  */
 package com.hyperos3.focusrestore;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -18,7 +15,6 @@ import java.util.function.Supplier;
 
 /** 唯一会话所有者。Android 对象在同步读取结束前释放，不进入任何队列。 */
 final class IslandCaptureRuntime {
-    static final int CHUNK_BYTES = 16 * 1024;
     static final int MAX_PACKAGE_LENGTH = 255;
     static final int MAX_KEY_LENGTH = 4096;
     static final class Grant {
@@ -27,14 +23,6 @@ final class IslandCaptureRuntime {
         Grant(long generation, int user) {
             this.generation = generation;
             this.user = user;
-        }
-    }
-    static final class Sample {
-        final long sequence;
-        final long capturedAt;
-        Sample(long sequence, long capturedAt) {
-            this.sequence = sequence;
-            this.capturedAt = capturedAt;
         }
     }
     enum Availability {
@@ -48,35 +36,17 @@ final class IslandCaptureRuntime {
         final long epoch;
         final long generation;
         final String target;
-        final List<Sample> samples;
-        Status(boolean ready, long epoch, long generation, String target, List<Sample> samples) {
+        Status(boolean ready, long epoch, long generation, String target) {
             this(0, ready ? Availability.READY : Availability.CONNECTION_UNAVAILABLE,
-                    epoch, generation, target, samples);
+                    epoch, generation, target);
         }
-        Status(int mode, Availability availability, long epoch, long generation, String target, List<Sample> samples) {
+        Status(int mode, Availability availability, long epoch, long generation, String target) {
             this.mode = mode;
             this.availability = availability;
             this.ready = availability == Availability.READY;
             this.epoch = epoch;
             this.generation = generation;
             this.target = target;
-            this.samples = Collections.unmodifiableList(samples);
-        }
-    }
-    static final class Export {
-        final long generation;
-        final long sample;
-        final long ticket;
-        private final byte[] data;
-        Export(long generation, long sample, long ticket, byte[] data) {
-            this.generation = generation;
-            this.sample = sample;
-            this.ticket = ticket;
-            this.data = data;
-        }
-        int size() { return data.length; }
-        byte[] chunk(int offset) {
-            return Arrays.copyOfRange(data, offset, Math.min(size(), offset + CHUNK_BYTES));
         }
     }
 
@@ -130,9 +100,6 @@ final class IslandCaptureRuntime {
     }
     private volatile Grant grant;
     private long generation;
-    private long nextTicket;
-    private boolean preparing;
-    private Export export;
 
     private final ToIntFunction<String> packageUid;
     private long retainedBytes;
@@ -165,7 +132,6 @@ final class IslandCaptureRuntime {
     synchronized void end() {
         generation++;
         grant = null;
-        export = null;
         previewConnection = null;
         invalidatePreviews();
         session.invalidateSession();
@@ -219,7 +185,6 @@ final class IslandCaptureRuntime {
         previewEpoch++;
         previews.clear();
         retainedBytes = 0;
-        export = null;
         clearPreviewTicket();
     }
 
@@ -265,7 +230,6 @@ final class IslandCaptureRuntime {
                 IslandCapturePreview removed = previews.removeFirst();
                 retainedBytes -= removed.retainedBytes;
                 if (previewTicket != null && previewTicket.record == removed) clearPreviewTicket();
-                if (export != null && export.sample == removed.summary.handle) export = null;
             }
             retainedBytes += candidate.retainedBytes;
             previews.addLast(candidate);
@@ -328,7 +292,7 @@ final class IslandCaptureRuntime {
         if (!previewAllowed(connection, expected)) return 0;
         for (IslandCapturePreview record : previews) {
             if (record.summary.handle != handle || record.summary.fieldCount == 0) continue;
-            // PREVIEW 使用独立负编号，旧 EXPORT 始终只签发正编号。
+            // 预览使用独立负编号，与规则保存票据的正编号区分。
             clearPreviewTicket();
             previewTicket = new PreviewTicket(--nextPreviewTicket, connection, record,
                     elapsedMillis.getAsLong() + PREVIEW_TTL_MS);
@@ -366,81 +330,7 @@ final class IslandCaptureRuntime {
 
     synchronized Status status() {
         boolean ready = canUse();
-        Grant active = grant;
-        List<Sample> samples = new ArrayList<>();
-        if (ready && active != null && current(active.generation)) {
-            Iterator<IslandCapturePreview> recent = previews.descendingIterator();
-            while (recent.hasNext()) {
-                IslandCaptureRecord record = recent.next().exportSource;
-                if (record != null) samples.add(new Sample(record.sequence, record.capturedAt));
-            }
-        }
-        return new Status(ready, generation, grant == null ? 0 : grant.generation, null, samples);
-    }
-
-    private synchronized boolean current(long expected) {
-        return previewAllowed(previewConnection, expected);
-    }
-
-    private IslandCaptureRecord exportSource(long sample) {
-        for (IslandCapturePreview record : previews) {
-            if (record.summary.handle == sample) return record.exportSource;
-        }
-        return null;
-    }
-
-    Export prepare(long expected, long sample) throws IOException {
-        IslandCaptureRecord selected = null;
-        synchronized (this) {
-            if (preparing || !current(expected)) throw new IOException("CAPTURE_EXPORT_UNAVAILABLE");
-            selected = exportSource(sample);
-            if (selected == null) throw new IOException("CAPTURE_SAMPLE_UNAVAILABLE");
-            export = null;
-            preparing = true;
-        }
-        try {
-            IslandExportGenerator generator = new IslandExportGenerator();
-            IslandExportGenerator.ExportPlan plan = generator.begin(new IslandExportRequest(
-                    Collections.singletonList(selected), null, Collections.singleton(selected.packageName)), state(expected));
-            IslandExportGenerator.Step step = generator.renderNextSample(plan, state(expected));
-            IslandExportDocument result = generator.finish(step.plan, state(expected));
-            if (!result.complete || result.json == null) throw new IOException("CAPTURE_REDACTION_UNAVAILABLE");
-            byte[] bytes = result.json.getBytes(StandardCharsets.UTF_8);
-            synchronized (this) {
-                if (!current(expected) || selected != exportSource(sample)
-                        || bytes.length == 0 || bytes.length > IslandExportGenerator.MAX_JSON_BYTES) {
-                    throw new IOException("CAPTURE_EXPORT_INVALIDATED");
-                }
-                export = new Export(expected, sample, ++nextTicket, bytes);
-                return export;
-            }
-        } catch (IslandExportGenerator.Rejected failure) {
-            throw new IOException("CAPTURE_EXPORT_INVALIDATED");
-        } finally {
-            synchronized (this) { preparing = false; }
-        }
-    }
-
-    private IslandExportState state(long expected) {
-        boolean valid = current(expected);
-        return new IslandExportState(valid ? IslandExportState.LockState.UNLOCKED : IslandExportState.LockState.UNKNOWN,
-                valid ? IslandExportState.ExportAuthorization.AUTHORIZED : IslandExportState.ExportAuthorization.DENIED,
-                IslandExportState.FullConfirmation.NOT_CONFIRMED, expected);
-    }
-
-    synchronized Export authorizedExport(long expected, long sample, long ticket) {
-        if (!current(expected) || export == null || export.sample != sample || export.ticket != ticket) return null;
-        return export;
-    }
-
-    synchronized byte[] chunk(long expected, long sample, long ticket, int offset) {
-        Export selected = authorizedExport(expected, sample, ticket);
-        if (selected == null || offset < 0 || offset >= selected.size() || offset % CHUNK_BYTES != 0) return null;
-        return selected.chunk(offset);
-    }
-
-    synchronized void release(long expected, long ticket) {
-        if (export != null && export.generation == expected && export.ticket == ticket) export = null;
+        return new Status(ready, generation, grant == null ? 0 : grant.generation, null);
     }
 
     boolean awaitIdle(long timeout, java.util.concurrent.TimeUnit unit) throws InterruptedException {

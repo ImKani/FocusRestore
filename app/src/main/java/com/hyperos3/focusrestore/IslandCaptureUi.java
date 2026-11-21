@@ -3,98 +3,50 @@
  */
 package com.hyperos3.focusrestore;
 
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.Dialog;
 import android.content.Context;
-import android.content.Intent;
-import android.net.Uri;
-import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.ParcelFileDescriptor;
-import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 
 import java.io.IOException;
-import java.io.OutputStream;
-import java.text.DateFormat;
-import java.util.Date;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** 设置页只持有会话和样本编号。唯一文件输出为 SAF 所选文档。 */
+/** 设置页只持有捕获会话和最近记录入口；不再从设置页写出任何文件。 */
 final class IslandCaptureUi {
-    static final int REQUEST = 4104;
     private static final long REFRESH_MS = 1_500;
-    private static final long WRITE_TIMEOUT_MS = 60_000;
-    private final SettingsActivity activity;
     private final Context app;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService commands = Executors.newSingleThreadExecutor();
-    private final ExecutorService documents = Executors.newSingleThreadExecutor();
-    private final ExecutorService cancellations = Executors.newSingleThreadExecutor();
     private final Runnable poll = this::refresh;
     private Button startButton;
-    private Button sampleButton;
-    private Button exportButton;
     private Button endButton;
-    private Button cancelButton;
     private TextView statusView;
     private Button recentButton;
-    private Dialog dialog;
     private final IslandCaptureEditorUi recent;
     private boolean resumed;
     private boolean destroyed;
     private boolean busy;
-    private boolean writerRunning;
     private String message = "捕获默认关闭。";
     private IBinder connection;
     private IslandCaptureRuntime.Status status;
     private int previewCount = -1;
-    private long selectedSample;
-    private Selection picker;
-    private WriteOperation writing;
-    private static final class Selection {
-        final IBinder bridge;
-        final long generation;
-        final long sample;
-        Selection(IBinder bridge, long generation, long sample) {
-            this.bridge = bridge;
-            this.generation = generation;
-            this.sample = sample;
-        }
-    }
-
-    private static final class WriteOperation {
-        final CancellationSignal signal = new CancellationSignal();
-        volatile boolean cancelled;
-        volatile ParcelFileDescriptor descriptor;
-        Runnable timeout;
-    }
 
     IslandCaptureUi(SettingsActivity activity, IslandRuleImportUi ruleImport) {
-        this.activity = activity;
         app = activity.getApplicationContext();
         recent = new IslandCaptureEditorUi(activity, text -> { message = text; render(); }, ruleImport);
     }
 
-    void bind(Button start, Button samples, Button export, Button end, Button cancel, TextView view, Button recentButton) {
+    void bind(Button start, Button end, TextView view, Button recentButton) {
         startButton = start;
-        sampleButton = samples;
-        exportButton = export;
         endButton = end;
-        cancelButton = cancel;
         statusView = view;
         this.recentButton = recentButton;
         recentButton.setOnClickListener(v -> openRecent());
         start.setOnClickListener(v -> start());
-        samples.setOnClickListener(v -> chooseSample());
-        export.setOnClickListener(v -> chooseDocument());
         end.setOnClickListener(v -> end());
-        cancel.setOnClickListener(v -> cancelWrite("导出已取消，文件可能不完整。"));
         render();
         refresh();
     }
@@ -109,9 +61,7 @@ final class IslandCaptureUi {
         previewCount = -1;
         recent.close();
         main.removeCallbacks(poll);
-        if (dialog != null) dialog.dismiss();
-        dialog = null;
-        startButton = sampleButton = exportButton = endButton = cancelButton = recentButton = null;
+        startButton = endButton = recentButton = null;
         statusView = null;
     }
 
@@ -126,12 +76,8 @@ final class IslandCaptureUi {
     void destroy() {
         destroyed = true;
         unbind();
-        picker = null;
-        cancelWrite("导出已中断，文件可能不完整。");
         recent.destroy();
         commands.shutdownNow();
-        documents.shutdown();
-        cancellations.shutdown();
     }
 
     private void refresh() {
@@ -155,7 +101,7 @@ final class IslandCaptureUi {
             int currentPreviewCount = -1;
             if (previewRegistration != null && live != null && live.ready && live.generation > 0) {
                 try { currentPreviewCount = IslandCaptureIpc.previewList(bridge, live.generation).size(); }
-                catch (IOException unavailable) { /* 预览门禁独立于旧样本和导出。 */ }
+                catch (IOException unavailable) { /* 预览门禁独立于最近记录状态。 */ }
             }
             int resultPreviewCount = currentPreviewCount;
             main.post(() -> {
@@ -188,15 +134,6 @@ final class IslandCaptureUi {
         boolean invalidated = live == null || bridge != connection || previousGeneration != live.generation
                 || !live.ready || live.generation <= 0;
         if (invalidated) recent.close();
-        if (live == null || bridge != connection || previousGeneration != live.generation) selectedSample = 0;
-        if (live != null && selectedSample != 0) {
-            boolean present = false;
-            for (IslandCaptureRuntime.Sample sample : live.samples) if (sample.sequence == selectedSample) present = true;
-            if (!present) selectedSample = 0;
-        }
-        if (writing != null && (live == null || bridge != connection || previousGeneration != live.generation)) {
-            cancelWrite("捕获授权已失效，文件可能不完整。");
-        }
         connection = bridge;
         status = live;
     }
@@ -214,7 +151,6 @@ final class IslandCaptureUi {
         IBinder bridge = connection;
         long generation = status.generation;
         recent.close();
-        if (writing != null) cancelWrite("捕获已结束，文件可能不完整。");
         mutate(bridge, () -> {
             IslandCaptureIpc.end(bridge, generation);
             return "捕获已结束，本次样本已清除。";
@@ -245,147 +181,18 @@ final class IslandCaptureUi {
         });
     }
 
-    private void chooseSample() {
-        if (!active() || status.samples.isEmpty()) return;
-        IslandCaptureRuntime.Status observed = status;
-        IBinder bridge = connection;
-        String[] rows = new String[observed.samples.size()];
-        DateFormat format = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM);
-        int checked = -1;
-        for (int i = 0; i < rows.length; i++) {
-            IslandCaptureRuntime.Sample sample = observed.samples.get(i);
-            rows[i] = "样本 " + sample.sequence + " · " + format.format(new Date(sample.capturedAt));
-            if (selectedSample == sample.sequence) checked = i;
-        }
-        dialog = new AlertDialog.Builder(activity).setTitle("选择捕获样本")
-                .setSingleChoiceItems(rows, checked, (d, which) -> {
-                    long sequence = observed.samples.get(which).sequence;
-                    if (active() && connection == bridge && status.generation == observed.generation) {
-                        for (IslandCaptureRuntime.Sample sample : status.samples) {
-                            if (sample.sequence == sequence) selectedSample = sequence;
-                        }
-                    }
-                    d.dismiss();
-                    render();
-                }).setNegativeButton("取消", null).show();
-    }
-
-    private void chooseDocument() {
-        if (!active() || selectedSample <= 0 || picker != null || writerRunning) return;
-        picker = new Selection(connection, status.generation, selectedSample);
-        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-                .setType("application/json").putExtra(Intent.EXTRA_TITLE, "FocusRestore-island-sample.json");
-        try { activity.startActivityForResult(intent, REQUEST); }
-        catch (RuntimeException failure) {
-            picker = null;
-            message = "系统文件选择器不可用。";
-        }
-        render();
-    }
-
-    void onDocumentResult(int resultCode, Intent result) {
-        Selection selection = picker;
-        picker = null;
-        if (destroyed) return;
-        Uri uri = result == null ? null : result.getData();
-        if (selection == null || resultCode != Activity.RESULT_OK || uri == null || !"content".equals(uri.getScheme())) {
-            message = resultCode == Activity.RESULT_OK ? "保存选择已失效，文件可能为空。" : "已取消导出。";
-            render();
-            return;
-        }
-        WriteOperation operation = new WriteOperation();
-        writing = operation;
-        writerRunning = true;
-        message = "正在写入脱敏 JSON…";
-        operation.timeout = () -> {
-            if (writing == operation) cancelWrite("写入超时，文件可能不完整。");
-        };
-        main.postDelayed(operation.timeout, WRITE_TIMEOUT_MS);
-        documents.execute(() -> writeDocument(operation, selection, uri));
-        render();
-    }
-
-    private void writeDocument(WriteOperation operation, Selection selection, Uri uri) {
-        IslandCaptureIpc.Ticket ticket = null;
-        boolean saved = false;
-        try {
-            if (operation.cancelled) throw new IOException("CAPTURE_WRITE_CANCELLED");
-            ticket = IslandCaptureIpc.prepare(selection.bridge, selection.generation, selection.sample);
-            IslandCaptureIpc.Ticket fixed = ticket;
-            IslandCaptureDocumentWriter.Source source = new IslandCaptureDocumentWriter.Source() {
-                @Override public boolean authorized() throws IOException { return IslandCaptureIpc.check(selection.bridge, fixed); }
-                @Override public byte[] read(int offset) throws IOException { return IslandCaptureIpc.chunk(selection.bridge, fixed, offset); }
-            };
-            IslandCaptureDocumentWriter.require(source, () -> operation.cancelled);
-            ParcelFileDescriptor descriptor = app.getContentResolver().openFileDescriptor(uri, "wt", operation.signal);
-            if (descriptor == null) throw new IOException("CAPTURE_DOCUMENT_UNAVAILABLE");
-            operation.descriptor = descriptor;
-            try (OutputStream output = new ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
-                IslandCaptureDocumentWriter.write(output, fixed.size, source, () -> operation.cancelled);
-            } finally { operation.descriptor = null; }
-            IslandCaptureDocumentWriter.require(source, () -> operation.cancelled);
-            saved = true;
-        } catch (IOException | RuntimeException failure) {
-            // 文档提供方可能已创建或写入部分文件，保留用户选择的文档并明确报告。
-        } finally {
-            if (ticket != null) {
-                try { IslandCaptureIpc.release(selection.bridge, ticket); }
-                catch (IOException failure) { /* 失效连接已无法读取这份票据。 */ }
-            }
-            boolean success = saved;
-            main.post(() -> {
-                main.removeCallbacks(operation.timeout);
-                writerRunning = false;
-                if (destroyed) return;
-                if (writing == operation) {
-                    writing = null;
-                    message = success ? "脱敏 JSON 已保存，可对照规则规范编写后导入。"
-                            : "导出未完成，授权可能已失效或文档不可写，文件可能不完整。";
-                }
-                render();
-            });
-        }
-    }
-
-    private void cancelWrite(String feedback) {
-        WriteOperation operation = writing;
-        if (operation == null) return;
-        writing = null;
-        operation.cancelled = true;
-        main.removeCallbacks(operation.timeout);
-        // 关闭已打开的 FD，唤醒阻塞写入。取消标志也覆盖 FD 尚未返回的情况。
-        cancellations.execute(() -> {
-            try {
-                operation.signal.cancel();
-            } finally {
-                ParcelFileDescriptor descriptor = operation.descriptor;
-                if (descriptor != null) {
-                    try { descriptor.close(); }
-                    catch (IOException failure) { /* 写入线程仍会报告取消。 */ }
-                }
-            }
-        });
-        message = feedback;
-        render();
-    }
-
     private boolean active() { return status != null && status.generation > 0; }
     private void render() {
         if (statusView == null) return;
         boolean active = active();
         boolean ready = status != null && status.ready;
-        boolean exporting = picker != null || writerRunning;
-        startButton.setEnabled(ready && !active && !exporting);
-        sampleButton.setText(selectedSample == 0 ? "选择样本" : "已选样本 " + selectedSample);
-        sampleButton.setEnabled(active && !status.samples.isEmpty() && !exporting);
-        exportButton.setEnabled(active && selectedSample != 0 && !exporting);
+        startButton.setEnabled(ready && !active);
         endButton.setEnabled(active);
         recentButton.setEnabled(resumed && ready && active && previewCount > 0);
-        cancelButton.setVisibility(writing == null ? View.GONE : View.VISIBLE);
         String preview = previewCount < 0 ? "" : " · " + previewCount + " 条最近记录";
         String mode = status != null && status.mode != 0 ? "OS" + status.mode + " " : "";
         startButton.setText("开启 " + mode + "样本捕获");
-        statusView.setText(mode + (active ? "捕获中 · " + status.samples.size() + " 个样本" + preview
+        statusView.setText(mode + (active ? "捕获中" + preview
                 : captureStatusText(status)) + "\n" + message);
     }
 

@@ -5,7 +5,6 @@ package com.hyperos3.focusrestore;
 
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -63,23 +62,16 @@ public class IslandCapturePreviewTest {
         long first = f.list().get(29).handle;
         long ticket = f.open(first);
         assertNotNull(f.page(first, ticket, 0));
-        IslandCaptureRuntime.Export firstExport = f.runtime.prepare(f.generation, first);
-        assertNotNull(f.runtime.chunk(f.generation, first, firstExport.ticket, 0));
         f.capture(RAW);
-        assertNull(f.runtime.chunk(f.generation, first, firstExport.ticket, 0));
         assertEquals(30, f.list().size());
         assertEquals(first + 30, f.list().get(0).handle);
         assertEquals(first + 1, f.list().get(29).handle);
         assertNull(f.page(first, ticket, 0));
         assertEquals(0, f.open(first));
         for (int i = 31; i < 70; i++) f.capture(RAW);
-        List<IslandCaptureRuntime.Sample> exportable = f.runtime.status().samples;
-        assertEquals(30, exportable.size());
-        assertEquals(first + 69, exportable.get(0).sequence);
-        assertEquals(first + 40, exportable.get(29).sequence);
-        assertThrows(java.io.IOException.class, () -> f.runtime.prepare(f.generation, first));
         assertEquals(30, f.list().size());
         assertEquals(first + 69, f.list().get(0).handle);
+        assertEquals(first + 40, f.list().get(29).handle);
         f.runtime.end();
         long fresh = f.start();
         assertEquals(Collections.emptyList(), f.runtime.previewList(f.connection, fresh));
@@ -114,7 +106,6 @@ public class IslandCapturePreviewTest {
         }
         assertEquals(IslandCaptureInputAdapter.Uneditable.INVALID, f.list().get(3).uneditable);
         assertEquals(IslandCaptureInputAdapter.Uneditable.NO_FIELDS, f.list().get(0).uneditable);
-        assertEquals(4, f.runtime.status().samples.size());
     }
 
     @Test public void admissionRequiresSameLiveObjectAndGenerationInEitherOrder() {
@@ -140,7 +131,6 @@ public class IslandCapturePreviewTest {
         assertTrue(f.runtime.awaitIdle(5, TimeUnit.SECONDS));
         long first = f.list().get(0).handle;
         long preview = f.open(first);
-        IslandCaptureRuntime.Export export = f.runtime.prepare(f.generation, first);
         for (int i = 0; i < 29; i++) {
             assertTrue(f.runtime.offer(f.runtime.current(), PKG, USER, UID, KEY, () -> input));
             assertTrue(f.runtime.awaitIdle(5, TimeUnit.SECONDS));
@@ -148,7 +138,6 @@ public class IslandCapturePreviewTest {
         assertTrue(f.list().size() < 30);
         assertEquals(first + 29, f.list().get(0).handle);
         assertNull(f.page(first, preview, 0));
-        assertNull(f.runtime.chunk(f.generation, first, export.ticket, 0));
     }
 
     @Test public void sessionCallbackReceivesNeitherFailuresNorPlaceholders() throws Exception {
@@ -231,23 +220,16 @@ public class IslandCapturePreviewTest {
         assertEquals("sample text", page.fields.get(0).text);
     }
 
-    @Test public void previewTicketAndRedactedExportAreSeparate() throws Exception {
+    @Test public void previewTicketIsClosedIndependentlyOfRecord() throws Exception {
         Fixture f = new Fixture();
         f.capture(RAW);
         long handle = f.list().get(0).handle;
         long preview = f.open(handle);
         assertTrue(preview < 0);
-        IslandCaptureRuntime.Export export = f.runtime.prepare(f.generation, handle);
-        assertTrue(export.ticket > 0);
-        assertNull(f.runtime.chunk(f.generation, handle, preview, 0));
-        assertNull(f.page(handle, export.ticket, 0));
-        String redacted = new String(export.chunk(0), StandardCharsets.UTF_8);
-        assertFalse(redacted.contains("sample text"));
-        assertFalse(redacted.contains("ordinary text"));
-        assertFalse(redacted.contains(KEY));
+        assertNotNull(f.page(handle, preview, 0));
         assertTrue(f.runtime.closePreview(f.connection, f.generation, handle, preview));
         assertNull(f.page(handle, preview, 0));
-        assertNotNull(f.runtime.chunk(f.generation, handle, export.ticket, 0));
+        assertTrue(f.open(handle) < 0);
     }
 
     @Test public void lockScreenOffAndUnknownGateRevokeWithoutResurrection() throws Exception {
@@ -279,7 +261,6 @@ public class IslandCapturePreviewTest {
             assertNull(f.runtime.previewPage(other, f.generation, handle, ticket, 0));
             assertNull(f.page(handle, ticket, 0));
             assertNull(f.list());
-            assertTrue(f.runtime.status().samples.isEmpty());
             assertNull(f.runtime.current());
             f.access.set(former);
             assertEquals(0, f.open(handle));

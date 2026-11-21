@@ -7,7 +7,7 @@
 
 运行登记见 [IslandRulePaths.java](../app/src/main/java/com/hyperos3/focusrestore/IslandRulePaths.java)。106 条规范路径、14 组；不开放 `paramIsland` 别名，`W_ALIAS_PATH` 仅预留、不触发。`miui.focus.paramtextInfo` 是完整键名，不按点拆分。`legacy` 从原始根读取，其余组遵循已选容器；本登记不增加容器搜索行为。
 
-分级按字段语义：`structural` / `STRUCTURAL` 指 progress 进度数值、step 步骤编号等非自由文本语义；`freeText` / `FREE_TEXT` 指标题、正文、标签等自由文本及无法判定项；`unsafe` / `UNSAFE` 指禁止能力、对象或超范围读取，拒绝运行读取。枚举仅记录政策元数据：捕获导出默认保留 structural，freeText 强制占位；运行期 structural 与 freeText 均不脱敏，unsafe 拒绝。C1 不实现捕获、导出占位或运行处理。
+分级按字段语义：`structural` / `STRUCTURAL` 指 progress 进度数值、step 步骤编号等非自由文本语义；`freeText` / `FREE_TEXT` 指标题、正文、标签等自由文本及无法判定项；`unsafe` / `UNSAFE` 指禁止能力、对象或超范围读取，拒绝运行读取。枚举仅记录字段语义：最近记录编辑示例优先使用 freeText，缺少时回退 structural；运行期 structural 与 freeText 均不脱敏，unsafe 拒绝。0.55.0 已移除捕获导出，分级不再承担导出占位。
 
 统计：**structural=11，freeText=95，unsafe=0**。允许名单只接受本登记实例且级别不是 unsafe；未登记项（包括别名、对象父节点、图标、计时器、动作、文件、URL 路径）一律不获读取权限。
 

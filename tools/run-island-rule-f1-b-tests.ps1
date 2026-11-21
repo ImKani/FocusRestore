@@ -30,9 +30,9 @@ $config = Join-Path $repository 'app\build\generated\source\buildConfig\debug\co
 foreach ($required in @($sdk,$resources,$config)) {
     if (!(Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing existing compiler input $required" }
 }
-$classes = @('IslandRuleRepositoryTest','IslandRuleBatchTest','IslandRuleAccessTest','IslandRuleProjectionTest','IslandRulePublisherTest','IslandRuleSetLoaderTest','IslandRuleCodecTest','IslandRuleSelectorTest','IslandNotificationTypeTest','IslandRuleExtractorTest','IslandRulePostProcessorTest','IslandRuleExecutorTest','IslandRuleTextEngineTest','IslandRuleDiagnosticHistoryTest','IslandC2BoundaryTest','IslandC2IntegrationTest','HookRegistrationTest','InitialHookModeTest')
+$classes = @('IslandRuleRepositoryTest','IslandRuleBatchTest','IslandRuleAccessTest','IslandRuleProjectionTest','IslandRulePublisherTest','IslandRuleSetLoaderTest','IslandRuleCodecTest','IslandRuleSelectorTest','IslandNotificationTypeTest','IslandRuleExtractorTest','IslandRulePostProcessorTest','IslandRuleExecutorTest','IslandRuleTextEngineTest','IslandRuleDiagnosticHistoryTest','HookRegistrationTest','InitialHookModeTest')
 if ($Capture -or $Preview -or $Editor) {
-    $classes += @('IslandCaptureRuntimeTest','IslandCaptureDocumentWriterTest','IslandCaptureSessionTest','IslandExportGeneratorTest','IslandExportBoundaryTest','IslandD2AdapterTest','IslandD2IntegrationTest','RomFocusVisibilityTest')
+    $classes += @('IslandCaptureRuntimeTest','IslandCaptureSessionTest','IslandD2AdapterTest','RomFocusVisibilityTest')
 }
 if ($Preview -or $Editor) { $classes += 'IslandCapturePreviewTest' }
 if ($Editor) { $classes += @('IslandCaptureEditorTest','IslandRulePostSaveTest','OS3IslandPromptRuleTest','WeakIdentityMapTest','IslandRuleManagerListTest','IslandSavedRuleFieldsTest') }
@@ -46,8 +46,17 @@ if (!$CompileOnly) {
 }
 $argFile = Join-Path $destination 'sources.txt'
 [IO.File]::WriteAllLines($argFile, [string[]]($sources | ForEach-Object { '"' + ($_ -replace '\\','/') + '"' }), [Text.UTF8Encoding]::new($false))
-& "$jdk\bin\javac.exe" '-J-Dfile.encoding=UTF-8' --release 8 -encoding UTF-8 -cp "$json;$sdk;$xposed;$resources;$junit;$hamcrest" -d $destination "@$argFile"
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# Windows PowerShell 5.1 会把 javac 的弃用提示当作错误流；成功时只留档，失败时回显。
+$javacLog = Join-Path $destination 'javac.log'
+$previousErrorAction = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+& "$jdk\bin\javac.exe" '-J-Dfile.encoding=UTF-8' -Xlint:-options --release 8 -encoding UTF-8 -cp "$json;$sdk;$xposed;$resources;$junit;$hamcrest" -d $destination "@$argFile" 2> $javacLog
+$javacExit = $LASTEXITCODE
+$ErrorActionPreference = $previousErrorAction
+if ($javacExit -ne 0) {
+    if (Test-Path -LiteralPath $javacLog) { Get-Content -LiteralPath $javacLog -Encoding UTF8 }
+    exit $javacExit
+}
 if ($CompileOnly) { exit 0 }
 Push-Location $repository
 try {

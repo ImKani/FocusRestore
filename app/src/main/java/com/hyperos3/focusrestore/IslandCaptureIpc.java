@@ -12,24 +12,20 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/** 固定版本的本地 Binder 合同。脱敏导出和受限预览使用各自的操作及票据。 */
+/** 固定版本的本地 Binder 合同。最近记录与规则保存使用各自的操作及票据。 */
 final class IslandCaptureIpc {
     static final String DESCRIPTOR = "com.hyperos3.focusrestore.capture.v1";
     static final int STATUS = IBinder.FIRST_CALL_TRANSACTION;
     static final int START = STATUS + 1;
     static final int END = STATUS + 2;
-    static final int PREPARE = STATUS + 3;
-    static final int CHUNK = STATUS + 4;
-    static final int CHECK = STATUS + 5;
-    static final int RELEASE = STATUS + 6;
-    static final int PREVIEW_LIST = STATUS + 7;
-    static final int OPEN_PREVIEW = STATUS + 8;
-    static final int READ_PREVIEW_PAGE = STATUS + 9;
-    static final int CLOSE_PREVIEW = STATUS + 10;
-    static final int VISIBLE_SNIPPETS = STATUS + 11;
-    static final int CHECK_PREVIEW = STATUS + 12;
-    static final int ISSUE_SAVE = STATUS + 13;
-    static final int CONSUME_SAVE = STATUS + 14;
+    static final int PREVIEW_LIST = STATUS + 3;
+    static final int OPEN_PREVIEW = STATUS + 4;
+    static final int READ_PREVIEW_PAGE = STATUS + 5;
+    static final int CLOSE_PREVIEW = STATUS + 6;
+    static final int VISIBLE_SNIPPETS = STATUS + 7;
+    static final int CHECK_PREVIEW = STATUS + 8;
+    static final int ISSUE_SAVE = STATUS + 9;
+    static final int CONSUME_SAVE = STATUS + 10;
     static final int MAX_SNIPPET_REPLY_BYTES = 2048;
 
     static List<String> visibleSnippets(IslandCaptureProvider.BridgeRegistration registration, long generation,
@@ -267,24 +263,6 @@ final class IslandCaptureIpc {
         callPreview(ticket.registration, CLOSE_PREVIEW, ticket::write, p -> null);
     }
 
-    static final class Ticket {
-        final long generation;
-        final long sample;
-        final long id;
-        final int size;
-        Ticket(long generation, long sample, long id, int size) {
-            this.generation = generation;
-            this.sample = sample;
-            this.id = id;
-            this.size = size;
-        }
-        void write(Parcel out) {
-            out.writeLong(generation);
-            out.writeLong(sample);
-            out.writeLong(id);
-        }
-    }
-
     interface Write { void accept(Parcel parcel); }
     interface Read<T> { T read(Parcel parcel) throws IOException; }
 
@@ -311,15 +289,12 @@ final class IslandCaptureIpc {
             long epoch = p.readLong();
             long generation = p.readLong();
             String target = p.readString();
-            int count = p.readInt();
-            if (epoch < 0 || count < 0 || count > IslandCapturePreview.MAX_RECORDS || generation < 0
-                    || (generation == 0 && (count != 0 || target != null))
+            if (epoch < 0 || generation < 0
+                    || (generation == 0 && target != null)
                     || (generation != 0 && (generation != epoch || !ready || target != null))) {
                 throw new IOException("CAPTURE_STATUS_INVALID");
             }
-            List<IslandCaptureRuntime.Sample> samples = new ArrayList<>(count);
-            for (int i = 0; i < count; i++) samples.add(new IslandCaptureRuntime.Sample(p.readLong(), p.readLong()));
-            if (p.dataAvail() == 0) return new IslandCaptureRuntime.Status(ready, epoch, generation, target, samples);
+            if (p.dataAvail() == 0) return new IslandCaptureRuntime.Status(ready, epoch, generation, target);
             if (p.dataAvail() != 2 * Integer.BYTES) throw new IOException("CAPTURE_STATUS_INVALID");
             int mode = p.readInt();
             int reason = p.readInt();
@@ -328,7 +303,7 @@ final class IslandCaptureIpc {
                     || (values[reason] == IslandCaptureRuntime.Availability.READY) != ready) {
                 throw new IOException("CAPTURE_STATUS_INVALID");
             }
-            return new IslandCaptureRuntime.Status(mode, values[reason], epoch, generation, target, samples);
+            return new IslandCaptureRuntime.Status(mode, values[reason], epoch, generation, target);
         });
     }
 
@@ -338,34 +313,5 @@ final class IslandCaptureIpc {
 
     static void end(IBinder bridge, long generation) throws IOException {
         call(bridge, END, p -> p.writeLong(generation), p -> null);
-    }
-
-    static Ticket prepare(IBinder bridge, long generation, long sample) throws IOException {
-        return call(bridge, PREPARE, p -> { p.writeLong(generation); p.writeLong(sample); }, p -> {
-            long id = p.readLong();
-            int size = p.readInt();
-            if (id <= 0 || size <= 0 || size > IslandExportGenerator.MAX_JSON_BYTES) {
-                throw new IOException("CAPTURE_TICKET_INVALID");
-            }
-            return new Ticket(generation, sample, id, size);
-        });
-    }
-
-    static boolean check(IBinder bridge, Ticket ticket) throws IOException {
-        return call(bridge, CHECK, ticket::write, p -> p.readInt() == 1);
-    }
-
-    static byte[] chunk(IBinder bridge, Ticket ticket, int offset) throws IOException {
-        return call(bridge, CHUNK, p -> { ticket.write(p); p.writeInt(offset); }, p -> {
-            byte[] bytes = p.createByteArray();
-            if (bytes == null || bytes.length != Math.min(IslandCaptureRuntime.CHUNK_BYTES, ticket.size - offset)) {
-                throw new IOException("CAPTURE_CHUNK_INVALID");
-            }
-            return bytes;
-        });
-    }
-
-    static void release(IBinder bridge, Ticket ticket) throws IOException {
-        call(bridge, RELEASE, ticket::write, p -> null);
     }
 }

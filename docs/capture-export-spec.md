@@ -1,9 +1,17 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 <!-- Copyright (C) ImKani. Project: FocusRestore. Source: https://github.com/ImKani/FocusRestore -->
 
-# 原始焦点内容捕获与导出规范 / Focus capture and export specification
+# 原始焦点内容捕获规范（原导出合同已移除） / Focus capture specification (export contract removed)
 
 **项目 / Project:** FocusRestore · ImKani · <https://github.com/ImKani/FocusRestore> · GNU General Public License v3.0 only (`GPL-3.0-only`).
+
+## 0.55.0 变更 / Change in 0.55.0
+
+2026-11-21 起，设置页「字段结构诊断」的样本选择、脱敏 JSON 导出、完整内容导出、Markdown 摘要、导出票据与 SAF 写入已移除。最近记录、字段编辑预览、规则本地示例和 `.frpk` 规则包导入导出保留。
+
+下文 §3–§13 记录早期导出设计与阶段合同；其中“默认导出”“完整导出”“导出票据”“Markdown 摘要”“导出中重锁”等段落仅作历史设计记录，不再对应当前实现。当前行为以“当前实现”、§1 与 §15 为准。
+
+The sample picker, redacted/full JSON export, Markdown summary, export tickets and SAF document writes were removed in 0.55.0. Recent records, the field editor preview, rule samples and `.frpk` rule pack import/export remain. Export sections below are historical design records only.
 
 **当前实现 / Current session**
 
@@ -11,9 +19,9 @@
 
 ROM 接口依据为作者提供的只读 APK 样本。OS3 `com.android.systemui` 16.03.251211.r／202501210（样本 `6d9nlm26`）经 `NotifCollection.dispatchEvents()` 派发 `onEntryAdded(NotificationEntry)` 和 `onEntryUpdated(NotificationEntry, UpdateSource)`，`getEntry(String)` 返回当前活动条目。OS4 17.03.260226.r／202602260（样本 `d63pb6r9`，APK SHA-256 `c003074232b1088f92dc4e8e4b159ff9bd9cdc57ae41fb69b195668ddfce5e54`）通过 `NotifPipeline.addCollectionListener` 注册，`getAllNotifs()` 返回主线程实时活动集合。接口属小米 SystemUI 及 Android 上游，ROM 私有实现的具体权利归属与许可未确认。FocusRestore 独立实现监听、身份及会话检查。不同 ROM 的回调可用性和 30 条会话行为以实机验收为准。
 
-最近记录按新到旧展示，最多 30 条，总负载上限 2 MiB。按条数或字节预算淘汰最老记录时，同一记录的预览、保存和脱敏导出票据一并失效。普通配置备份不包含记录。列表返回包名、时间、字段数和固定原因，可见行另取最多 96 个 UTF-16 单元的文本。缺岛参数、参数格式错误、无法读取、超限或没有可编辑登记字段时可查看对应原因。只对有字段的记录签发编辑预览，对仍在列表中且保留合规脱敏导出来源的记录签发导出票据。
+最近记录按新到旧展示，最多 30 条，总负载上限 2 MiB。按条数或字节预算淘汰最老记录时，同一记录的预览与保存票据一并失效。普通配置备份不包含记录。列表返回包名、时间、字段数和固定原因，可见行另取最多 96 个 UTF-16 单元的文本。缺岛参数、参数格式错误、无法读取、超限或没有可编辑登记字段时可查看对应原因。只对有字段的记录签发编辑预览。
 
-The unlocked foreground main user explicitly starts an in-memory session. New or updated Focus notifications across apps share the latest 30 records within a 2 MiB budget. Visible rows can request bounded snippets. Rows without eligible fields show a reason. Removing a row revokes all its tickets. Redacted export reads eligible records from that same history.
+The unlocked foreground main user explicitly starts an in-memory session. New or updated Focus notifications across apps share the latest 30 records within a 2 MiB budget. Visible rows can request bounded snippets. Rows without eligible fields show a reason. Removing a row revokes its preview and save tickets.
 
 ## 历史设计合同 / Historical design contract
 
@@ -22,9 +30,9 @@ The unlocked foreground main user explicitly starts an in-memory session. New or
 ## 1. 冻结范围 / Frozen scope
 
 - 捕获默认关闭；用户显式开启，并指定应用白名单；只做有界本地保存。 / Capture is off by default, explicitly enabled by the user, restricted to an application allowlist, and stored locally with bounds.
-- 锁屏暂停正文捕获，只允许元数据占位；锁屏期间不能选择完整内容导出。队列与历史的具体处置见 §7 的 draft/open 项。 / Body capture is suspended while locked; only metadata placeholders are allowed. Full-content export cannot be selected while locked. Queue/history handling remains draft/open in §7.
-- 默认导出脱敏内容；完整内容导出需单独二次确认。 / Export is redacted by default. Full-content export requires a separate second confirmation.
-- 捕获读写与导出需要独立、严格 UID/用户授权，不沿用普通配置查询的身份不明放行策略。 / Capture write/read and export require independent, strict UID/user authorization and must not inherit inconclusive-identity allowances from ordinary settings queries.
+- 锁屏暂停正文捕获，只允许元数据占位；锁屏、熄屏、用户或 profile 变化、会话失效会清除本次记录。队列与历史的具体处置见 §7 的 draft/open 项。 / Body capture is suspended while locked; only metadata placeholders are allowed. Lock, screen-off, user/profile changes or session invalidation clear the current records. Queue/history handling remains draft/open in §7.
+- 捕获内容只用于最近记录、编辑预览和规则本地示例，不写入用户选择的文档，也不自动上传；`.frpk` 规则包导出是独立入口。 / Captured content is used only for recent records, editor preview and local rule samples. It is not written to a user-selected document or uploaded automatically; `.frpk` export is a separate entry point.
+- 捕获读写需要独立、严格 UID/用户授权，不沿用普通配置查询的身份不明放行策略。 / Capture read/write requires independent, strict UID/user authorization and must not inherit inconclusive-identity allowances from ordinary settings queries.
 - 规则包单独导入导出，普通设置备份不存规则或捕获内容，不复活历史 `island_custom_rules`。 / Rule packages are imported/exported separately. Ordinary settings backup contains neither rules nor capture content and does not reactivate historical `island_custom_rules`.
 - 自定义规则只在共享全文正文路径形成可选外层，命中后返回；不命中、失败或空输出回到原有按当前模式运行的 `parseCompact()`→`parse()` 路径。不改内置实现、外围 `shouldConvert`、原生焦点、隐私、存活、图标、计时器或展开卡片。 / Custom rules are an optional outer layer for shared full-text body extraction. A match returns its result; an unmatched, failed, or empty result returns to the existing mode-dependent `parseCompact()`→`parse()` fallback. The built-in implementation and surrounding conversion, native-priority, privacy, liveness, icon, timer, and expanded-card behavior remain intact.
 - 校验命名固定：**L1 格式层 / Format、L2 适配层 / Compatibility、L3 安全层 / Safety + R 运行期 / Runtime**。force 只跳 L2，L1/L3/R 永不跳。首版 match 只允许 `equals`、`contains`、`startsWith`；regex 预留但禁用。 / Validation uses the fixed names **L1 Format, L2 Compatibility, L3 Safety + R Runtime**. Force skips L2 only. L1/L3/R are never skipped. Initial match operators are limited to `equals`, `contains`, and `startsWith`; regex is reserved and disabled.
@@ -392,11 +400,11 @@ enum IdentityAuthorization { CONFIRMED, UNVERIFIED, DENIED }
 
 ## 14. 当前交付状态（D1，2026-11-18） / Current delivery status
 
-§13 末段保留当次文档草案更新时的状态。此后 C2-3 纯内存捕获、C2-4 分步纯导出及 C2-5 整合测试分别交付，过程保存在作者的阶段报告中。Android 接入的现行边界见本文开头。
-Section 13 retains its historical drafting status. The C2-3 memory capture, C2-4 stepped export and C2-5 integration tests were delivered in later stages. See the opening section for the current Android integration.
+§13 末段保留当次文档草案更新时的状态。此后 C2-3 纯内存捕获、C2-4 分步纯导出及 C2-5 整合测试分别交付，过程保存在作者的阶段报告中。0.55.0（2026-11-21）移除了字段结构诊断与 C2-4 导出入口；§13 的导出合同、导出票据、Markdown 摘要和完整内容二次确认不再有实现。当前仅保留捕获记录、最近记录编辑预览、规则示例与 `.frpk` 迁移。Android 接入的现行边界见本文开头。
+Section 13 retains its historical drafting status. The C2-3 memory capture, C2-4 stepped export and C2-5 integration tests were delivered in later stages. Version 0.55.0 (2026-11-21) removed the field-structure diagnostics and the C2-4 export entry; the export contract, tickets, Markdown summary and full-content confirmation in Section 13 no longer have an implementation. Only capture records, recent-record editor previews, rule samples and `.frpk` migration remain. See the opening section for the current Android integration.
 
-D1 补选条前原始数据适配、协议操作语义检查及无正文诊断，捕获记录的 11 个字段和导出格式沿用原定义。D2 捕获适配当时仍在设计中，`comparison` 当时统一为 `not-observed`，阶段记录为 216 项纯 JVM 测试。
-D1 leaves the eleven capture fields and export format unchanged. D2 capture adaptation is only a proposal in the D1 report. Comparison remains not-observed, and the JVM checks do not establish Android or ROM acceptance.
+D1 补选条前原始数据适配、协议操作语义检查及无正文诊断，捕获记录的 11 个字段沿用原定义；当时的导出格式已随 0.55.0 移除。D2 捕获适配当时仍在设计中，`comparison` 当时统一为 `not-observed`，阶段记录为 216 项纯 JVM 测试。
+D1 leaves the eleven capture fields unchanged; its export format was removed in 0.55.0. D2 capture adaptation is only a proposal in the D1 report. Comparison remains not-observed, and the JVM checks do not establish Android or ROM acceptance.
 
 ## 15. 类型签名与预览分页 / Type signatures and preview pages
 

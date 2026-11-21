@@ -10,7 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** JSON 语法/有界编码器；导出和 D1 通知适配复用语法层，不施加规则字段白名单。 */
+/** JSON 语法/有界编码器；捕获投影与规则解析复用语法层，不施加规则字段白名单。 */
 final class IslandExportJson {
     static final class Invalid extends RuntimeException { private static final long serialVersionUID = 1L; }
     static final class Capacity extends RuntimeException { private static final long serialVersionUID = 1L; }

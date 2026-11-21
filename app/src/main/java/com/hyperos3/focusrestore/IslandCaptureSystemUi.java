@@ -346,7 +346,7 @@ final class IslandCaptureSystemUi {
                 else if (code >= IslandCaptureIpc.PREVIEW_LIST) servePreview(code, in, out);
                 else serve(code, in, out);
                 return true;
-            } catch (IOException | PackageManager.NameNotFoundException failure) {
+            } catch (IOException failure) {
                 throw new IllegalStateException("CAPTURE_OPERATION_UNAVAILABLE");
             } finally {
                 Binder.restoreCallingIdentity(identity);
@@ -483,7 +483,7 @@ final class IslandCaptureSystemUi {
             throw new IOException("CAPTURE_PREVIEW_UNAVAILABLE");
         }
 
-        private void serve(int code, Parcel in, Parcel out) throws IOException, PackageManager.NameNotFoundException {
+        private void serve(int code, Parcel in, Parcel out) throws IOException {
             switch (code) {
                 case IslandCaptureIpc.STATUS: {
                     IslandCaptureRuntime.Status status = runtime.status();
@@ -492,11 +492,6 @@ final class IslandCaptureSystemUi {
                     out.writeLong(status.epoch);
                     out.writeLong(status.generation);
                     out.writeString(status.target);
-                    out.writeInt(status.samples.size());
-                    for (IslandCaptureRuntime.Sample sample : status.samples) {
-                        out.writeLong(sample.sequence);
-                        out.writeLong(sample.capturedAt);
-                    }
                     out.writeInt(mode);
                     IslandCaptureRuntime.Availability reason = availability();
                     out.writeInt((status.ready ? IslandCaptureRuntime.Availability.READY
@@ -521,33 +516,8 @@ final class IslandCaptureSystemUi {
                     runtime.end(in.readLong());
                     out.writeNoException();
                     return;
-                case IslandCaptureIpc.PREPARE: {
-                    IslandCaptureRuntime.Export export = runtime.prepare(in.readLong(), in.readLong());
-                    out.writeNoException();
-                    out.writeLong(export.ticket);
-                    out.writeInt(export.size());
-                    return;
-                }
-                default: {
-                    long generation = in.readLong();
-                    long sample = in.readLong();
-                    long ticket = in.readLong();
-                    if (code == IslandCaptureIpc.RELEASE) {
-                        runtime.release(generation, ticket);
-                        out.writeNoException();
-                        return;
-                    }
-                    if (code == IslandCaptureIpc.CHECK) {
-                        out.writeNoException();
-                        out.writeInt(runtime.authorizedExport(generation, sample, ticket) == null ? 0 : 1);
-                        return;
-                    }
-                    int offset = in.readInt();
-                    byte[] chunk = runtime.chunk(generation, sample, ticket, offset);
-                    if (chunk == null) throw new IOException("CAPTURE_CHUNK_INVALID");
-                    out.writeNoException();
-                    out.writeByteArray(chunk);
-                }
+                default:
+                    throw new IOException("CAPTURE_OPERATION_UNAVAILABLE");
             }
         }
     }

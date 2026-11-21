@@ -5,13 +5,10 @@ package com.hyperos3.focusrestore;
 
 import org.junit.Test;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -66,13 +63,13 @@ public class IslandCaptureRuntimeTest {
         assertEquals(IslandCaptureInputAdapter.Uneditable.NO_PARAMETER, recent.uneditable);
         assertEquals(Arrays.asList("焦点内容 30"), runtime.visibleSnippets(connection, grant.generation, new long[]{recent.handle}));
         assertEquals(0, runtime.openPreview(connection, grant.generation, recent.handle));
-        assertThrows(IOException.class, () -> runtime.prepare(grant.generation, recent.handle));
-        assertEquals(15, runtime.status().samples.size());
     }
 
-    @Test public void endAndLockRejectLateCaptureExportAndStart() throws Exception {
+    @Test public void endAndLockRejectLateCaptureAndStart() throws Exception {
         IslandCaptureRuntime.Grant first = start();
-        IslandCaptureRuntime.Export export = capture(first);
+        assertTrue(runtime.offer(first, TARGET, USER, UID, KEY, () -> input(new AtomicInteger())));
+        assertTrue(runtime.awaitIdle(5, TimeUnit.SECONDS));
+        assertEquals(1, runtime.previewList(connection, first.generation).size());
         assertTrue(runtime.end(first.generation));
         long pendingStart = runtime.status().epoch;
         eligible.set(false);
@@ -84,8 +81,7 @@ public class IslandCaptureRuntimeTest {
         AtomicInteger reads = new AtomicInteger();
         assertFalse(runtime.offer(first, TARGET, USER, UID, KEY, () -> input(reads)));
         assertFalse(runtime.end(first.generation));
-        assertNull(runtime.chunk(first.generation, export.sample, export.ticket, 0));
-        assertTrue(runtime.status().samples.isEmpty());
+        assertNull(runtime.previewList(connection, first.generation));
         assertEquals(0, reads.get());
         eligible.set(false); // 生命周期回调延迟时，实时门禁仍拒绝。
         assertFalse(runtime.offer(next, TARGET, USER, UID, KEY, () -> input(reads)));
@@ -100,46 +96,7 @@ public class IslandCaptureRuntimeTest {
             return input(new AtomicInteger());
         }));
         assertTrue(runtime.awaitIdle(5, TimeUnit.SECONDS));
-        assertTrue(runtime.status().samples.isEmpty());
-    }
-
-    @Test public void redactedExportPreservesKnownMatchingAndPathsWithoutFreeValues() throws Exception {
-        IslandCaptureRuntime.Grant grant = start();
-        IslandCaptureRuntime.Export export = capture(grant);
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        IslandCaptureDocumentWriter.write(output, export.size(), new IslandCaptureDocumentWriter.Source() {
-            @Override public boolean authorized() {
-                return runtime.authorizedExport(grant.generation, export.sample, export.ticket) != null;
-            }
-            @Override public byte[] read(int offset) {
-                return runtime.chunk(grant.generation, export.sample, export.ticket, offset);
-            }
-        }, () -> false);
-        String json = new String(output.toByteArray(), StandardCharsets.UTF_8);
-        IslandExportJson.parse(json);
-        for (String secret : Arrays.asList(KEY, "private-body", "private-ticker", "private-title",
-                "private-business", "private-dynamic-key", "private-nested-value", "735945")) {
-            assertFalse(secret, json.contains(secret));
-        }
-        for (String retained : Arrays.asList(TARGET, "miui.focus.param.custom", "protocolVersion", "foodDelivery",
-                "businessRedacted", "baseInfo", "stepInfo", "progressInfo", "31", "replayableOriginal")) {
-            assertTrue(retained, json.contains(retained));
-        }
-        runtime.release(grant.generation, export.ticket);
-        assertNull(runtime.chunk(grant.generation, export.sample, export.ticket, 0));
-    }
-
-    @Test public void ticketCannotBeUsedWithWrongSelectionOrAfterRevocation() throws Exception {
-        IslandCaptureRuntime.Grant grant = start();
-        IslandCaptureRuntime.Export export = capture(grant);
-        assertNull(runtime.chunk(grant.generation, export.sample + 1, export.ticket, 0));
-        assertNull(runtime.chunk(grant.generation, export.sample, export.ticket + 1, 0));
-        assertNull(runtime.chunk(grant.generation, export.sample, export.ticket, 1));
-        eligible.set(false);
-        assertNull(runtime.authorizedExport(grant.generation, export.sample, export.ticket));
-        eligible.set(true);
-        assertThrows(IOException.class, () -> runtime.prepare(grant.generation, export.sample));
-        assertTrue(runtime.status().samples.isEmpty());
+        assertNull(runtime.previewList(connection, grant.generation));
     }
 
     @Test public void authorizedOrdinaryNotificationReadsOnlyIslandParameterKeys() throws Exception {
@@ -157,10 +114,10 @@ public class IslandCaptureRuntimeTest {
             assertEquals(Arrays.asList(FocusParamKeys.PRIMARY, FocusParamKeys.CUSTOM), reads);
         }
         assertTrue(runtime.awaitIdle(5, TimeUnit.SECONDS));
-        assertTrue(runtime.status().samples.isEmpty());
+        assertTrue(runtime.previewList(connection, grant.generation).isEmpty());
     }
 
-    @Test public void liveCustomOnlyNotificationWithoutOrdinaryBodyCanBeExported() throws Exception {
+    @Test public void liveCustomOnlyNotificationWithoutOrdinaryBodyKeepsPreviewSourceKey() throws Exception {
         IslandCaptureRuntime.Grant grant = start();
         List<String> reads = new ArrayList<>();
         assertTrue(runtime.offer(grant, TARGET, USER, UID, KEY,
@@ -172,15 +129,19 @@ public class IslandCaptureRuntimeTest {
         assertEquals(1, java.util.Collections.frequency(reads, FocusParamKeys.PRIMARY));
         assertEquals(1, java.util.Collections.frequency(reads, FocusParamKeys.CUSTOM));
         assertTrue(runtime.awaitIdle(5, TimeUnit.SECONDS));
-        assertEquals(1, runtime.status().samples.size());
-        IslandCaptureRuntime.Export export = runtime.prepare(grant.generation, runtime.status().samples.get(0).sequence);
-        String json = new String(export.chunk(0), StandardCharsets.UTF_8);
-        Map<?, ?> document = (Map<?, ?>) IslandExportJson.parse(json);
-        Map<?, ?> sample = (Map<?, ?>) ((List<?>) document.get("samples")).get(0);
-        Map<?, ?> rawParam = (Map<?, ?>) sample.get("rawParamJSON");
-        assertEquals(FocusParamKeys.CUSTOM, rawParam.get("sourceKey"));
-        assertTrue(((Map<?, ?>) IslandExportJson.parse((String) rawParam.get("value"))).containsKey("baseInfo"));
-        assertFalse(json.contains("private-title"));
+        List<IslandCapturePreview.Summary> rows = runtime.previewList(connection, grant.generation);
+        assertEquals(1, rows.size());
+        assertEquals(FocusParamKeys.CUSTOM, rows.get(0).sourceKey);
+        long ticket = runtime.openPreview(connection, grant.generation, rows.get(0).handle);
+        assertTrue(ticket < 0);
+        IslandCapturePreview.Page page = runtime.previewPage(connection, grant.generation, rows.get(0).handle, ticket, 0);
+        assertNotNull(page);
+        IslandCapturePreview.Field title = null;
+        for (IslandCapturePreview.Field field : page.fields) {
+            if ("/baseInfo/title".equals(field.path.path)) title = field;
+        }
+        assertNotNull(title);
+        assertEquals("private-title", title.text);
     }
 
     @Test public void liveParameterSelectionPrefersPrimaryAndFallsBackFromBlank() throws Exception {
@@ -253,11 +214,11 @@ public class IslandCaptureRuntimeTest {
                 }));
         assertEquals(3, reads.get());
         assertTrue(runtime.awaitIdle(5, TimeUnit.SECONDS));
-        assertTrue(runtime.status().samples.isEmpty());
+        assertNull(runtime.previewList(connection, grant.generation));
         assertNull(runtime.current());
     }
 
-    @Test public void os3ActiveEntryUsesExistingPreviewEditorAndRedactedExport() throws Exception {
+    @Test public void os3ActiveEntryUsesExistingPreviewEditor() throws Exception {
         Object connection = new Object();
         Object entry = new Object();
         Object sbn = new Object();
@@ -288,15 +249,8 @@ public class IslandCaptureRuntimeTest {
         assertTrue(editor.editor.toggle(IslandRulePaths.find("/baseInfo/title")));
         assertEquals("private-title", editor.editor.preview());
         assertFalse(new String(editor.editor.candidate(TARGET, 0).bytes(), StandardCharsets.UTF_8).contains("private-title"));
-        long sequence = capture.status().samples.get(0).sequence;
-        IslandCaptureRuntime.Export export = capture.prepare(grant.generation, sequence);
-        String json = new String(export.chunk(0), StandardCharsets.UTF_8);
-        assertTrue(json.contains(FocusParamKeys.CUSTOM));
-        assertFalse(json.contains("private-title"));
-        assertFalse(json.contains("private-body"));
         eligible.set(false);
         assertNull(capture.previewPage(connection, grant.generation, handle, ticket, 0));
-        assertNull(capture.chunk(grant.generation, sequence, export.ticket, 0));
         editor.revoke();
         assertFalse(editor.acceptPage(0, page));
         assertEquals("", editor.editor.preview());
@@ -314,13 +268,6 @@ public class IslandCaptureRuntimeTest {
         IslandCaptureRuntime.Grant grant = runtime.start(runtime.status().epoch, USER);
         assertNotNull(grant);
         return grant;
-    }
-
-    private IslandCaptureRuntime.Export capture(IslandCaptureRuntime.Grant grant) throws Exception {
-        assertTrue(runtime.offer(grant, TARGET, USER, UID, KEY, () -> input(new AtomicInteger())));
-        assertTrue(runtime.awaitIdle(5, TimeUnit.SECONDS));
-        assertEquals(1, runtime.status().samples.size());
-        return runtime.prepare(grant.generation, runtime.status().samples.get(0).sequence);
     }
 
     private static IslandCaptureInputAdapter.Input input(AtomicInteger reads) {

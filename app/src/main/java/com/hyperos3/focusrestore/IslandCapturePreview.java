@@ -93,7 +93,6 @@ final class IslandCapturePreview {
     private final List<Field> fields;
     final IslandNotificationType notificationType;
 
-    final IslandCaptureRecord exportSource;
     final long retainedBytes;
     private final String snippet;
 
@@ -105,7 +104,6 @@ final class IslandCapturePreview {
         this.fields = fields;
         String projected = displayText.isEmpty() ? IslandCaptureEditor.snippet(fields) : displayText;
         snippet = projected.isEmpty() ? shortText(record.bodyText) : projected;
-        exportSource = isSourceKey(record.sourceKey) ? record : null;
         long bytes = record.bodyBytes + 2L * snippet.length() + typeWireBytes(notificationType);
         for (Field field : fields) bytes += field.wireBytes;
         retainedBytes = bytes;
