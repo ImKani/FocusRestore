@@ -61,11 +61,11 @@ import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ListPopupWindow;
 import android.widget.ListView;
 import android.widget.BaseAdapter;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
-import android.widget.PopupMenu;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -3723,7 +3723,7 @@ public final class SettingsActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 21) button.setStateListAnimator(null);
     }
 
-    /** 单选设置项：普通按钮，外观沿用原单选项的整行样式，点击打开系统 PopupMenu。 */
+    /** 单选设置项：普通按钮，外观沿用原单选项的整行样式，点击打开系统列表弹层。 */
     private final class ChoiceButton extends Button {
         private final String label;
         private final String[] options;
@@ -3733,7 +3733,7 @@ public final class SettingsActivity extends Activity {
         private final Path indicatorPath = new Path();
         private int selectedPosition;
         private IntConsumer onSelected;
-        private PopupMenu popup;
+        private ListPopupWindow popup;
 
         ChoiceButton(String label, String[] options, int initialPosition, IntConsumer onSelected) {
             super(SettingsActivity.this);
@@ -3818,30 +3818,65 @@ public final class SettingsActivity extends Activity {
         private void showOptions() {
             if (!isEnabled() || onSelected == null || !isAttachedToWindow()) return;
             dismissPopup();
-            PopupMenu menu = new PopupMenu(SettingsActivity.this, this);
+            ListPopupWindow menu = new ListPopupWindow(SettingsActivity.this);
             popup = menu;
-            for (int index = 0; index < options.length; index++) {
-                menu.getMenu().add(0, index, index, options[index]);
-            }
-            menu.setOnMenuItemClickListener(item -> {
-                if (popup != menu || !isEnabled() || onSelected == null) return false;
-                int position = item.getItemId();
+            menu.setAdapter(new BaseAdapter() {
+                @Override public int getCount() { return options.length; }
+                @Override public String getItem(int position) { return options[position]; }
+                @Override public long getItemId(int position) { return position; }
+                @Override public View getView(int position, View recycled, ViewGroup parent) {
+                    TextView item = recycled instanceof TextView ? (TextView) recycled
+                            : new TextView(SettingsActivity.this);
+                    item.setText(options[position]);
+                    item.setTextColor(position == selectedPosition ? COLOR_PRIMARY : COLOR_TEXT_PRIMARY);
+                    item.setGravity(Gravity.CENTER);
+                    item.setPadding(dp(16), dp(8), dp(16), dp(8));
+                    item.setMinHeight(dp(48));
+                    item.setTypeface(null, position == selectedPosition ? Typeface.BOLD : Typeface.NORMAL);
+                    return item;
+                }
+            });
+            Paint paint = new Paint(getPaint());
+            paint.setTypeface(Typeface.defaultFromStyle(Typeface.BOLD));
+            float widest = 0;
+            for (String option : options) widest = Math.max(widest, paint.measureText(option));
+            int width = Math.min(Math.max(1, getResources().getDisplayMetrics().widthPixels - dp(32)),
+                    Math.max(dp(48), (int) Math.ceil(widest) + dp(32)));
+            int height = Math.min(dp(48) * options.length + dp(8),
+                    getResources().getDisplayMetrics().heightPixels / 2);
+            menu.setAnchorView(this);
+            menu.setModal(true);
+            menu.setDropDownGravity(Gravity.END);
+            menu.setVerticalOffset(dp(4));
+            menu.setWidth(width);
+            menu.setHeight(height);
+            menu.setBackgroundDrawable(roundedBg(COLOR_SURFACE_HIGH, 12));
+            menu.setOnItemClickListener((parent, view, position, id) -> {
+                if (popup != menu || !isEnabled() || onSelected == null) return;
                 boolean changed = position != selectedPosition;
                 IntConsumer listener = onSelected;
                 setSelectedPosition(position);
+                menu.dismiss();
                 if (changed) listener.accept(position);
-                return true;
             });
-            menu.setOnDismissListener(dismissed -> { if (popup == dismissed) popup = null; });
+            menu.setOnDismissListener(() -> { if (popup == menu) popup = null; });
             try {
                 menu.show();
+                ListView list = menu.getListView();
+                if (list != null) {
+                    list.setPadding(0, dp(4), 0, dp(4));
+                    list.setDivider(null);
+                    list.setDividerHeight(0);
+                    list.setOverScrollMode(View.OVER_SCROLL_NEVER);
+                }
             } catch (RuntimeException unavailable) {
                 popup = null;
+                menu.dismiss();
             }
         }
 
         private void dismissPopup() {
-            PopupMenu menu = popup;
+            ListPopupWindow menu = popup;
             popup = null;
             if (menu != null) menu.dismiss();
         }
