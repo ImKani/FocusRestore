@@ -540,7 +540,7 @@ Unknown versions are rejected; migration is explicit at import, rollback retains
 
 ### 12.3 F3-C 规则包与设置入口 / Rule packs in Settings
 
-- 「关于 → 自定义规则 → 规则迁移」使用系统文档选择器读取 FRPK v2 规则包。可移植规则及编辑示例各自受字节限额约束，示例最多 2 MiB。整包通过格式和摘要校验后，预览分别列出可新增、重复和失败条目。重复条目对照本地与导入的显示字段及顺序，由用户逐条确认，默认保留本地规则。/ The FRPK v2 import preview lists additions, duplicates and failures. The user may opt into each replacement after comparing the displayed fields and their order.
+- 「高级 → 自定义规则 → 规则迁移」使用系统文档选择器读取 FRPK v2 规则包。可移植规则及编辑示例各自受字节限额约束，示例最多 2 MiB。整包通过格式和摘要校验后，预览分别列出可新增、重复和失败条目。重复条目对照本地与导入的显示字段及顺序，由用户逐条确认，默认保留本地规则。/ The FRPK v2 import preview lists additions, duplicates and failures. The user may opt into each replacement after comparing the displayed fields and their order.
 - 按应用包名、协议／业务／场景标识及完整有值登记路径集合判重。规则示例、路径原始顺序和显示顺序不参与判重。缺少通知类型时，只有规范化规则配置相同、同样缺少类型的条目才视为重复。一包内重复类型只取首条通过校验的条目。本地有多个同类型候选时，该导入条标记失败。/ The key consists of the package and notification type. Untyped entries require exact canonical rule equivalence. Ambiguous local matches and later duplicate pack rows are reported individually.
 - 确认后自动加入预览中的有效新增条目，并以导入文件的规则内容、启停、优先级和示例覆盖选中重复条目。保留本地稳定 ID 和声明位置，既有优先级排序仍会应用导入的优先级。同一次操作重新核对仓库修订、环境和容量，再原子提交。未选重复项和本地独有项保留。结果列出新增、替换、跳过和失败。/ Accepted changes publish atomically after rechecking the revision, environment and capacity. A replacement uses the imported content and metadata while retaining the local ID and declaration position.
 - 规则与示例使用同一 App 清单事务，示例为单独校验摘要的私有文件。严格只读批次及共享 UID 投影均省略示例。导出固定一个仓库修订，默认清除示例文字，保留字段类型与路径。用户可取消勾选脱敏，原样导出。遇到不可移植规则或损坏示例时，整包校验失败。 / App-private samples share the atomic rule commit. Export removes sample values by default and offers explicit opt-in to retain them. Both SystemUI paths omit samples entirely.

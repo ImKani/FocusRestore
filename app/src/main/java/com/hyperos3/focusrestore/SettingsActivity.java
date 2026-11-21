@@ -42,6 +42,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import java.io.Closeable;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -156,11 +157,13 @@ public final class SettingsActivity extends Activity {
     private Runnable backupTimeout;
     private boolean backupBusy;
     private boolean backupImporting;
+    private boolean archiveImporting;
     private boolean backupUiResumed;
     private boolean rebuildingPage;
     private int backupRequestCode;
     private long importSaveGeneration = -1L;
     private FocusRestoreSettings importCandidate;
+    private byte[] importRules;
     private Dialog importDialog;
     private Button importSettingsButton;
     private Button exportSettingsButton;
@@ -304,6 +307,8 @@ public final class SettingsActivity extends Activity {
     private ChoiceButton mediaFocusClickField;
     private ChoiceButton mediaFocusCastPickerField;
     private ChoiceButton bannerBackgroundField;
+    private LinearLayout ruleSectionPanel;
+    private TextView ruleSectionSummary;
     private Switch hideTimeNormalSwitch;
     private Switch hideTimeMediaSwitch;
     private Switch hideTimeDeviceSwitch;
@@ -462,6 +467,8 @@ public final class SettingsActivity extends Activity {
         if (importDialog != null) importDialog.dismiss();
         importDialog = null;
         importCandidate = null;
+        importRules = null;
+        archiveImporting = false;
         if (activeDialog != null) activeDialog.dismiss();
         if (settingsSearchDialog != null) settingsSearchDialog.dismiss();
         clearPageControls();
@@ -1076,6 +1083,8 @@ public final class SettingsActivity extends Activity {
         mediaFocusClickField = null;
         mediaFocusCastPickerField = null;
         bannerBackgroundField = null;
+        ruleSectionPanel = null;
+        ruleSectionSummary = null;
         hideTimeNormalSwitch = null;
         hideTimeMediaSwitch = null;
         hideTimeDeviceSwitch = null;
@@ -1555,6 +1564,7 @@ public final class SettingsActivity extends Activity {
         buildPrimarySettingsSections(root);
         buildIconAndDividerSection(root);
         buildContentSection(root);
+        buildRuleSection(root);
         buildInteractionSection(root);
         buildMediaSection(root);
         buildStatusBarSection(root);
@@ -1632,6 +1642,48 @@ public final class SettingsActivity extends Activity {
         contentPanel.addView(sideSeparatorInput, matchWrap(dp(4)));
         addSettingSummary(contentPanel, "用于超级岛左、右区域文字之间的拼接，允许留空。");
         addCollapsibleSection(root, "内容解析与拼接", contentPanel);
+    }
+
+    private void buildRuleSection(LinearLayout root) {
+        LinearLayout rulePanel = panel();
+        ruleSectionSummary = text("以下入口仅在开启主页“转换超级岛内容为焦点通知”后可用。",
+                14, COLOR_TEXT_SECONDARY);
+        rulePanel.addView(ruleSectionSummary, matchWrap(dp(8)));
+        Button manager = actionButton("查看和编辑已保存规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        TextView ruleStatus = text("", 13, COLOR_TEXT_SECONDARY);
+        Button projection = actionButton("允许 SystemUI 读取应用范围和所选字段路径", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        rulePanel.addView(manager, matchWrap(dp(8)));
+        rulePanel.addView(ruleStatus, matchWrap(dp(8)));
+        rulePanel.addView(projection, matchWrap(dp(8)));
+        Button startCapture = actionButton("开启最近记录", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        TextView captureStatus = text("", 13, COLOR_TEXT_SECONDARY);
+        Button recentCapture = actionButton("从最近记录新增或更新规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button endCapture = actionButton("结束并清空最近记录", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        for (View control : new View[] {startCapture, captureStatus, recentCapture, endCapture}) {
+            rulePanel.addView(control, matchWrap(dp(8)));
+        }
+        addSettingDivider(rulePanel);
+        addSettingSubheading(rulePanel, "规则包迁移");
+        rulePanel.addView(text("导入会先预览新增规则，同类型规则可逐条选择替换。导出默认清除示例文字。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        Button importPack = actionButton("导入规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button exportPack = actionButton("导出规则包", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        TextView packStatus = text("", 13, COLOR_TEXT_SECONDARY);
+        Button cancelPack = actionButton("取消规则包操作", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        for (View control : new View[] {importPack, exportPack, packStatus, cancelPack}) {
+            rulePanel.addView(control, matchWrap(dp(8)));
+        }
+        addCollapsibleSection(root, "自定义规则", rulePanel);
+        rulePackUi.bind(importPack, exportPack, cancelPack, packStatus);
+        ruleImportUi.bind(ruleStatus, projection, manager, () -> {
+            if (!islandCaptureUi.openRecent()) showFeedback("请先开启最近记录并等待捕获通知。");
+        });
+        islandCaptureUi.bind(startCapture, endCapture, captureStatus, recentCapture);
+        ruleSectionPanel = rulePanel;
+        searchTargets.put("rules", manager);
+        searchTargets.put("ruleCapture", startCapture);
+        searchTargets.put("ruleImport", importPack);
+        searchTargets.put("ruleExport", exportPack);
     }
 
     private void buildInteractionSection(LinearLayout root) {
@@ -1849,12 +1901,12 @@ public final class SettingsActivity extends Activity {
 
         root.addView(sectionHeader("配置文件"), matchWrap(dp(8)));
         LinearLayout backupPanel = panel();
-        backupPanel.addView(text("导出用户设置为 JSON；导入前会确认覆盖，未包含的设置恢复默认值。",
+        backupPanel.addView(text("导出全部用户设置和自定义规则为 ZIP（含规则示例文本）；导入会替换全部设置和规则，不做预览。",
                 14, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
-        exportSettingsButton = actionButton("导出配置文件", COLOR_PRIMARY, Color.WHITE);
+        exportSettingsButton = actionButton("导出配置压缩包", COLOR_PRIMARY, Color.WHITE);
         exportSettingsButton.setOnClickListener(v -> chooseBackupDocument(false));
         backupPanel.addView(exportSettingsButton, matchWrap(dp(8)));
-        importSettingsButton = actionButton("导入配置文件", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        importSettingsButton = actionButton("导入配置压缩包", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
         importSettingsButton.setOnClickListener(v -> chooseBackupDocument(true));
         backupPanel.addView(importSettingsButton, matchWrap(dp(8)));
         backupStatus = text(backupStatusText, 13, COLOR_TEXT_SECONDARY);
@@ -1868,39 +1920,6 @@ public final class SettingsActivity extends Activity {
         backupPanel.addView(cancelBackupButton, matchWrap(0));
         root.addView(backupPanel, matchWrap(dp(12)));
         updateBackupControls();
-
-        root.addView(sectionHeader("自定义规则"), matchWrap(dp(8)));
-        LinearLayout rulePanel = panel();
-        Button manager = actionButton("查看和编辑已保存规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        TextView ruleStatus = text("", 13, COLOR_TEXT_SECONDARY);
-        Button projection = actionButton("允许 SystemUI 读取应用范围和所选字段路径", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        rulePanel.addView(manager, matchWrap(dp(8)));
-        rulePanel.addView(ruleStatus, matchWrap(dp(8)));
-        rulePanel.addView(projection, matchWrap(dp(8)));
-        Button startCapture = actionButton("开启最近记录", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        TextView captureStatus = text("", 13, COLOR_TEXT_SECONDARY);
-        Button recentCapture = actionButton("从最近记录新增或更新规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        Button endCapture = actionButton("结束并清空最近记录", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        for (View control : new View[] {startCapture, captureStatus, recentCapture, endCapture}) {
-            rulePanel.addView(control, matchWrap(dp(8)));
-        }
-        root.addView(rulePanel, matchWrap(dp(12)));
-        LinearLayout migration = panel();
-        Button importPack = actionButton("导入规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        Button exportPack = actionButton("导出规则包", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        TextView packStatus = text("", 13, COLOR_TEXT_SECONDARY);
-        Button cancelPack = actionButton("取消规则包操作", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        migration.addView(text("导入会先预览新增规则，同类型规则可逐条选择替换。导出默认清除示例文字。",
-                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
-        for (View control : new View[] {importPack, exportPack, packStatus, cancelPack}) {
-            migration.addView(control, matchWrap(dp(8)));
-        }
-        addCollapsibleSection(root, "规则迁移", migration);
-        rulePackUi.bind(importPack, exportPack, cancelPack, packStatus);
-        ruleImportUi.bind(ruleStatus, projection, manager, () -> {
-            if (!islandCaptureUi.openRecent()) showFeedback("请先开启最近记录并等待捕获通知。");
-        });
-        islandCaptureUi.bind(startCapture, endCapture, captureStatus, recentCapture);
 
         root.addView(sectionHeader("链接"), matchWrap(dp(8)));
         LinearLayout links = panel();
@@ -1923,16 +1942,16 @@ public final class SettingsActivity extends Activity {
         backupBusy = true;
         backupImporting = importing;
         backupRequestCode = importing ? REQUEST_IMPORT_SETTINGS : REQUEST_EXPORT_SETTINGS;
-        backupStatusText = importing ? "请选择要导入的配置文件。" : "请选择配置文件保存位置。";
+        backupStatusText = importing ? "请选择要导入的备份压缩包。" : "请选择备份压缩包保存位置。";
         updateBackupControls();
         Intent intent = new Intent(importing ? Intent.ACTION_OPEN_DOCUMENT : Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         if (importing) {
-            // 文档提供方可能把 JSON 标为文本或二进制；格式由完整校验决定，不依赖 MIME。
+            // 文档提供方可能把 ZIP 标为压缩包或二进制；格式由完整校验决定，不依赖 MIME。
             intent.setType("*/*");
         } else {
-            intent.setType("application/json");
-            intent.putExtra(Intent.EXTRA_TITLE, SettingsBackupCodec.defaultFileName(System.currentTimeMillis()));
+            intent.setType("application/zip");
+            intent.putExtra(Intent.EXTRA_TITLE, SettingsArchiveCodec.defaultFileName(System.currentTimeMillis()));
         }
         try {
             startActivityForResult(intent, backupRequestCode);
@@ -1973,32 +1992,36 @@ public final class SettingsActivity extends Activity {
         final boolean importing = backupImporting;
         final CancellationSignal cancellation = new CancellationSignal();
         backupCancellation = cancellation;
-        backupStatusText = importing ? "正在读取并校验配置文件…" : "正在导出配置文件…";
+        backupStatusText = importing ? "正在读取并校验备份压缩包…" : "正在导出备份压缩包…";
         updateBackupControls();
         backupTimeout = () -> {
             if (!backupIsCurrent(operation)) return;
             cancelBackupIo();
-            finishBackup(importing ? "读取配置超时，当前设置未修改。" : "导出配置超时，文件可能不完整。", true);
+            finishBackup(importing ? "读取备份超时，当前设置和规则未修改。" : "导出备份超时，文件可能不完整。", true);
         };
         backupHandler.postDelayed(backupTimeout, BACKUP_IO_TIMEOUT_MS);
         ContentResolver resolver = getApplicationContext().getContentResolver();
         backupFuture = backupExecutor.submit(() -> {
             try {
                 if (importing) {
-                    FocusRestoreSettings imported = readBackupDocument(resolver, uri, cancellation, operation);
+                    SettingsArchiveCodec.Decoded decoded = readBackupDocument(resolver, uri, cancellation, operation);
                     runOnUiThread(() -> {
                         if (!backupIsCurrent(operation)) return;
                         clearBackupTimeout();
-                        importCandidate = imported;
-                        backupStatusText = "配置校验通过，等待确认覆盖。";
+                        importCandidate = decoded.settings;
+                        importRules = decoded.rules;
+                        backupStatusText = decoded.rules != null
+                                ? "配置与规则校验通过，等待确认替换。"
+                                : "配置校验通过，等待确认覆盖。";
                         updateBackupControls();
                         if (backupUiResumed) confirmSettingsImport();
                     });
                 } else {
-                    byte[] encoded = SettingsBackupCodec.encode(exported);
+                    byte[] rules = exportRulePackForBackup();
+                    byte[] encoded = SettingsArchiveCodec.encode(exported, rules);
                     writeBackupDocument(resolver, uri, cancellation, operation, encoded);
                     runOnUiThread(() -> {
-                        if (backupIsCurrent(operation)) finishBackup("配置文件已导出。", true);
+                        if (backupIsCurrent(operation)) finishBackup("备份压缩包已导出。", true);
                     });
                 }
             } catch (IOException | RuntimeException failure) {
@@ -2008,21 +2031,21 @@ public final class SettingsActivity extends Activity {
                         ? failure.getMessage() : "无法访问文档或读写失败";
                 runOnUiThread(() -> {
                     if (!backupIsCurrent(operation)) return;
-                    finishBackup(importing ? "导入失败：" + reason + "。当前设置未修改。"
+                    finishBackup(importing ? "导入失败：" + reason + "。当前设置和规则未修改。"
                             : "导出失败：" + reason + "，文件可能不完整。", true);
                 });
             }
         });
     }
 
-    private FocusRestoreSettings readBackupDocument(ContentResolver resolver, Uri uri,
+    private SettingsArchiveCodec.Decoded readBackupDocument(ContentResolver resolver, Uri uri,
             CancellationSignal cancellation, long operation) throws IOException {
         ParcelFileDescriptor descriptor = resolver.openFileDescriptor(uri, "r", cancellation);
         if (descriptor == null) throw new IOException("document provider returned no read descriptor");
         InputStream input = new ParcelFileDescriptor.AutoCloseInputStream(descriptor);
         try (InputStream owned = input) {
             registerBackupStream(input, operation);
-            return SettingsBackupCodec.read(input);
+            return SettingsArchiveCodec.decode(input);
         } finally {
             releaseBackupStream(input);
         }
@@ -2108,9 +2131,10 @@ public final class SettingsActivity extends Activity {
         final long confirmedGeneration = settingsGeneration;
         final long confirmedPersistedGeneration = persistedGeneration();
         final FocusRestoreSettings imported = importCandidate;
+        final byte[] rules = importRules;
         final Dialog dialog = new Dialog(this);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setContentView(createImportConfirmDialogView(dialog, imported,
+        dialog.setContentView(createImportConfirmDialogView(dialog, imported, rules != null,
                 confirmedGeneration, confirmedPersistedGeneration));
         importDialog = dialog;
         dialog.setOnDismissListener(ignored -> {
@@ -2132,8 +2156,8 @@ public final class SettingsActivity extends Activity {
     }
 
     private View createImportConfirmDialogView(final Dialog dialog,
-            final FocusRestoreSettings imported, final long confirmedGeneration,
-            final long confirmedPersistedGeneration) {
+            final FocusRestoreSettings imported, final boolean includesRules,
+            final long confirmedGeneration, final long confirmedPersistedGeneration) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
@@ -2141,10 +2165,12 @@ public final class SettingsActivity extends Activity {
         // 与应用名单按钮保持相同的右/下留白，避免文字按钮的透明内边距显得偏左。
         root.setPadding(dp(20), dp(18), dp(16), dp(16));
 
-        TextView title = text("覆盖当前配置？", 18, COLOR_TEXT_PRIMARY);
+        TextView title = text(includesRules ? "替换全部设置和规则？" : "覆盖当前配置？", 18, COLOR_TEXT_PRIMARY);
         title.setTypeface(title.getTypeface(), Typeface.BOLD);
         root.addView(title, matchWrap(dp(8)));
-        TextView message = text("此文件将替换全部当前用户设置，未包含的设置恢复默认值。导入后请重启系统界面生效。",
+        TextView message = text(includesRules
+                ? "此压缩包将替换全部当前设置和自定义规则，无法撤销；不做规则预览。导入后请重启系统界面生效。"
+                : "此文件将替换全部当前用户设置，未包含的设置恢复默认值。导入后请重启系统界面生效。",
                 14, COLOR_TEXT_SECONDARY);
         message.setLineSpacing(0f, 1.15f);
         root.addView(message, matchWrap(dp(12)));
@@ -2154,35 +2180,30 @@ public final class SettingsActivity extends Activity {
         Button cancel = actionButton("取消", Color.TRANSPARENT, COLOR_TEXT_SECONDARY);
         cancel.setOnClickListener(v -> {
             importCandidate = null;
+            importRules = null;
             dialog.dismiss();
             finishBackup("导入已取消，当前设置未修改。", false);
         });
         actions.addView(cancel, new LinearLayout.LayoutParams(-2, dp(40)));
-        Button confirm = actionButton("确认覆盖", COLOR_PRIMARY, Color.WHITE);
-        confirm.setOnClickListener(v -> {
+        Button confirm = actionButton(includesRules ? "确认替换" : "确认覆盖", COLOR_PRIMARY, Color.WHITE);        confirm.setOnClickListener(v -> {
             if (destroyed || imported != importCandidate) return;
             if (confirmedGeneration != settingsGeneration
                     || confirmedPersistedGeneration != persistedGeneration()) {
                 importCandidate = null;
+                importRules = null;
                 dialog.dismiss();
                 finishBackup("确认期间设置已改变，请重新导入并确认覆盖。", true);
                 return;
             }
+            final byte[] archiveRules = importRules;
             importCandidate = null;
+            importRules = null;
             dialog.dismiss();
-            // 不调用旧输入捕获；先解除页面监听，再赋导入快照和分配新的保存代次。
-            clearPageControls();
-            // 复用界面既有优先级；保存和待显示快照必须是同一份归一结果。
-            FocusRestoreSettings normalizedImport = imported.independentFocusBanner
-                    ? FocusRestoreSettings.edit(imported).allowFocusClick(false)
-                            .notificationRowClickFallback(false).build()
-                    : imported;
-            applySettingsSnapshot(normalizedImport);
-            importSaveGeneration = queueSettingsSave(normalizedImport);
-            backupStatusText = "正在保存导入配置…";
-            showPage(2);
-            for (ImageButton button : navButtons) button.setEnabled(false);
-            updateBackupControls();
+            if (includesRules && archiveRules != null) {
+                startArchiveImport(imported, archiveRules, confirmedGeneration, confirmedPersistedGeneration);
+            } else {
+                applyImportedSettings(imported, 2);
+            }
         });
         LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(-2, dp(40));
         confirmParams.leftMargin = dp(8);
@@ -2191,14 +2212,125 @@ public final class SettingsActivity extends Activity {
         return root;
     }
 
+    private void applyImportedSettings(FocusRestoreSettings imported, int page) {
+        archiveImporting = false;
+        // 不调用旧输入捕获；先解除页面监听，再赋导入快照和分配新的保存代次。
+        clearPageControls();
+        // 复用界面既有优先级；保存和待显示快照必须是同一份归一结果。
+        FocusRestoreSettings normalizedImport = imported.independentFocusBanner
+                ? FocusRestoreSettings.edit(imported).allowFocusClick(false)
+                        .notificationRowClickFallback(false).build()
+                : imported;
+        applySettingsSnapshot(normalizedImport);
+        importSaveGeneration = queueSettingsSave(normalizedImport);
+        backupStatusText = "正在保存导入配置…";
+        showPage(page);
+        for (ImageButton button : navButtons) button.setEnabled(false);
+        updateBackupControls();
+    }
+
+    private void startArchiveImport(FocusRestoreSettings imported, byte[] rules,
+            long confirmedGeneration, long confirmedPersistedGeneration) {
+        final long operation = ++backupOperation;
+        archiveImporting = true;
+        backupStatusText = "正在替换全部规则…";
+        updateBackupControls();
+        backupFuture = backupExecutor.submit(() -> {
+            try {
+                long revision = replaceAllRules(rules);
+                runOnUiThread(() -> {
+                    if (destroyed || operation != backupOperation) return;
+                    if (confirmedGeneration != settingsGeneration
+                            || confirmedPersistedGeneration != persistedGeneration()) {
+                        finishBackup("替换规则期间设置已改变，设置未应用；规则已替换。", true);
+                        return;
+                    }
+                    applyImportedSettings(imported, 1);
+                    // 导入会改写规则修订；回到高级页后按同一确认入口请求 SystemUI 读取授权。
+                    if (pendingIslandCompat) ruleImportUi.afterCommit(revision, false);
+                });
+            } catch (IOException | RuntimeException failure) {
+                android.util.Log.e(TAG, "archive rule replacement failed", failure);
+                String reason = failure instanceof SettingsBackupCodec.InvalidBackupException
+                        ? failure.getMessage() : IslandRulePackSaf.failure(failure);
+                runOnUiThread(() -> {
+                    if (destroyed || operation != backupOperation) return;
+                    finishBackup("导入规则失败：" + reason + "。当前设置未修改。", true);
+                });
+            }
+        });
+    }
+
+    private long replaceAllRules(byte[] pack) throws IOException {
+        IslandRuleRepository repository = IslandRuleImportUi.repository(getApplicationContext());
+        IslandRuleImportValidator.Environment environment = IslandRuleImportUi.environment(getApplicationContext());
+        IslandRuleRepository.PackExport previous = null;
+        try {
+            previous = repository.exportPackSnapshot(true);
+        } catch (IslandRuleRepository.Failure failure) {
+            // 尚无规则修订时可正常导入；不能把“没有旧规则”当成导出失败。
+            if (failure.code != IslandRuleRepository.Code.UNINITIALIZED) throw failure;
+        }
+        deleteAllRules(repository);
+        try {
+            try (IslandRuleRepository.PendingBatch batch =
+                         repository.prepareBatch(new ByteArrayInputStream(pack), environment)) {
+                IslandRuleRepository.BatchResult result =
+                        repository.commitBatch(batch, Collections.emptySet(), environment);
+                for (IslandRuleRepository.BatchResultRow row : result.rows) {
+                    if (row.status == IslandRuleRepository.BatchResultStatus.FAILED) {
+                        throw new IOException("规则行失败：" + (row.failureCode == null ? "未知" : row.failureCode));
+                    }
+                }
+                return result.revision;
+            }
+        } catch (IOException | RuntimeException failure) {
+            try {
+                deleteAllRules(repository);
+                if (previous != null) {
+                    try (IslandRuleRepository.PendingBatch rollback =
+                                 repository.prepareBatch(new ByteArrayInputStream(previous.bytes), environment)) {
+                        repository.commitBatch(rollback, Collections.emptySet(), environment);
+                    }
+                }
+            } catch (IOException | RuntimeException rollbackFailure) {
+                failure.addSuppressed(rollbackFailure);
+            }
+            throw failure;
+        }
+    }
+
+    private byte[] exportRulePackForBackup() throws IOException {
+        IslandRuleRepository repository = IslandRuleImportUi.repository(getApplicationContext());
+        try {
+            return repository.exportPackSnapshot(true).bytes;
+        } catch (IslandRuleRepository.Failure failure) {
+            if (failure.code != IslandRuleRepository.Code.UNINITIALIZED) throw failure;
+            // 没有规则时仍导出合法空包，备份才能完整表达“清空规则”。
+            return IslandRulePack.encode(Collections.emptyList(), true);
+        }
+    }
+
+    private static void deleteAllRules(IslandRuleRepository repository) throws IOException {
+        long revision;
+        Set<String> ids = new HashSet<>();
+        try (IslandRuleRepository.ReadView view = repository.openRead()) {
+            revision = view.revision;
+            for (IslandRuleRepository.Entry entry : view.entries) ids.add(entry.id);
+        }
+        if (!ids.isEmpty()) repository.deleteAll(revision, ids);
+    }
+
     private void finishBackup(String message, boolean feedback) {
         ++backupOperation;
         clearBackupTimeout();
         backupBusy = false;
         backupRequestCode = 0;
+        archiveImporting = false;
         backupCancellation = null;
         backupFuture = null;
         importCandidate = null;
+        importRules = null;
         backupStatusText = message;
         if (navButtons != null) for (ImageButton button : navButtons) button.setEnabled(true);
         updateBackupControls();
@@ -2210,8 +2342,8 @@ public final class SettingsActivity extends Activity {
         if (exportSettingsButton != null) exportSettingsButton.setEnabled(!backupBusy);
         if (backupStatus != null) backupStatus.setText(backupStatusText);
         if (cancelBackupButton != null) cancelBackupButton.setVisibility(
-                backupBusy && backupRequestCode == 0 && importCandidate == null && importSaveGeneration < 0L
-                        ? View.VISIBLE : View.GONE);
+                backupBusy && !archiveImporting && backupRequestCode == 0 && importCandidate == null
+                        && importSaveGeneration < 0L ? View.VISIBLE : View.GONE);
     }
 
     Button actionButton(String label, int background, int foreground) {
@@ -2917,6 +3049,13 @@ public final class SettingsActivity extends Activity {
         boolean modeEnabled = pendingIslandCompat;
         setControlEnabled(islandTextModeField,
                 modeEnabled);
+        if (ruleSectionPanel != null) {
+            ruleSectionPanel.setAlpha(modeEnabled ? 1f : 0.42f);
+            setChildrenEnabled(ruleSectionPanel, modeEnabled);
+            if (ruleSectionSummary != null) ruleSectionSummary.setText(modeEnabled
+                    ? "以下入口用于管理当前超级岛转换的自定义规则。"
+                    : "需先开启主页“转换超级岛内容为焦点通知”才能使用规则与最近记录。");
+        }
         setModeSpecificSwitchEnabled(islandRichTextSwitch, modeEnabled);
         if (contentModeSummary != null) contentModeSummary.setText(modeEnabled
                 ? "全文本优先显示规则选中的字段。没有有效结果时使用内置全文。左右拼接只取两侧并去重。"

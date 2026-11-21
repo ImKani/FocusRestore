@@ -312,7 +312,7 @@ public class SettingsActivityStateTest {
         String dialog = source.substring(start, end);
         assertTrue(dialog.contains("roundedBg(COLOR_SURFACE_HIGH, 12)"));
         assertTrue(dialog.contains("actionButton(\"取消\", Color.TRANSPARENT, COLOR_TEXT_SECONDARY)"));
-        assertTrue(dialog.contains("actionButton(\"确认覆盖\", COLOR_PRIMARY, Color.WHITE)"));
+        assertTrue(dialog.contains("actionButton(includesRules ? \"确认替换\" : \"确认覆盖\", COLOR_PRIMARY, Color.WHITE)"));
     }
 
     private static Set<String> keys(Pattern pattern, String source) {

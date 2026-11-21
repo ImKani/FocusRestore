@@ -67,6 +67,10 @@ final class SettingsSearchIndex {
         add(entries, "dividerEnd", "分隔线后间距（焦点侧）", 1, "图标与分隔线", "右间距 焦点距离 负间距");
         add(entries, "dividerWidth", "分隔线粗细", 1, "图标与分隔线", "线宽 厚度");
         add(entries, "contentMode", "焦点内容模式", 1, "内容解析与拼接", "解析 全文本 药丸 左右拼接");
+        add(entries, "rules", "自定义规则", 1, "自定义规则", "规则管理 编辑规则 规则迁移 导入规则 导出规则包 最近记录 捕获");
+        add(entries, "ruleImport", "导入规则", 1, "自定义规则", "规则包 FRPK 迁移 合并");
+        add(entries, "ruleExport", "导出规则包", 1, "自定义规则", "规则包 FRPK 迁移 保存");
+        add(entries, "ruleCapture", "最近记录", 1, "自定义规则", "捕获 样本 新建规则");
         add(entries, "richText", "渲染彩色字体（<font color>）", 1, "内容解析与拼接", "颜色 富文本 HTML");
         add(entries, "generalSeparator", "普通内容连接符", 1, "内容解析与拼接", "分隔符 分隔字 符号");
         add(entries, "sideSeparator", "左右区域连接符", 1, "内容解析与拼接", "分隔符 分隔字 符号");
@@ -95,8 +99,8 @@ final class SettingsSearchIndex {
         add(entries, "delay", "滚动启动延迟", 1, "滚动与兼容", "文字 跑马灯 等待 秒");
         add(entries, "retry", "兼容重试模式", 1, "滚动与兼容", "滚动刷新异常");
         add(entries, "elementAnimation", "拦截应用退出/点击时的元素动画（OS3）", 1, "滚动与兼容", "OS3 HyperOS3 转场 图标残留");
-        add(entries, "export", "导出配置文件", 2, "配置文件", "备份 保存 JSON");
-        add(entries, "import", "导入配置文件", 2, "配置文件", "备份 恢复 JSON");
+        add(entries, "export", "导出配置压缩包", 2, "配置文件", "备份 保存 ZIP JSON 规则");
+        add(entries, "import", "导入配置压缩包", 2, "配置文件", "备份 恢复 ZIP 规则");
         entries.add(new Entry("debugProperty", "覆盖 feature.island.debug", 1, "内部兼容开关", "Debug 超级岛 属性", true));
         entries.add(new Entry("debugFeature", "禁用 FEATURE_DYNAMIC_ISLAND", 1, "内部兼容开关", "Debug 超级岛 特性缓存", true));
         ENTRIES = Collections.unmodifiableList(entries);
