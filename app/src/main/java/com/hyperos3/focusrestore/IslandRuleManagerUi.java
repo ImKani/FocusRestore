@@ -29,7 +29,6 @@ import java.util.concurrent.ExecutorService;
 
 import android.content.res.ColorStateList;
 import android.graphics.Color;
-import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -45,7 +44,7 @@ import android.view.WindowManager;
 import android.widget.BaseAdapter;
 import android.widget.ImageView;
 import android.widget.ListView;
-import android.widget.PopupWindow;
+import android.widget.PopupMenu;
 import android.widget.TextView;
 import java.text.Collator;
 import java.util.Comparator;
@@ -273,7 +272,7 @@ final class IslandRuleManagerUi {
         List<Row> visible = Collections.emptyList();
         StatusFilter filter = StatusFilter.ALL;
         DisplayOrder sort = DisplayOrder.SAVED;
-        PopupWindow popup;
+        PopupMenu popup;
         final Button filterButton = ui.tonal("", this::filterMenu);
         final Button sortButton = ui.tonal("", this::sortMenu);
         final Button selectAll = ui.tonal(R.drawable.ic_rule_select_all, "全选结果", this::selectAll);
@@ -419,75 +418,28 @@ final class IslandRuleManagerUi {
         }
 
         void filterMenu() {
-            showMenu(filterButton, StatusFilter.values(), item -> item.label, filter.ordinal(), item -> filter = item);
+            showMenu(filterButton, StatusFilter.values(), item -> item.label, item -> filter = item);
         }
 
         void sortMenu() {
-            showMenu(sortButton, DisplayOrder.values(), item -> item.label, sort.ordinal(), item -> sort = item);
+            showMenu(sortButton, DisplayOrder.values(), item -> item.label, item -> sort = item);
         }
 
         <T> void showMenu(Button anchor, T[] values, java.util.function.Function<T, String> label,
-                int selected, java.util.function.Consumer<T> apply) {
-            if (window != page || !anchor.isAttachedToWindow() || !anchor.isEnabled()) return;
+                java.util.function.Consumer<T> apply) {
+            if (window != page) return;
             if (popup != null) popup.dismiss();
-            String[] labels = new String[values.length];
-            for (int index = 0; index < values.length; index++) labels[index] = label.apply(values[index]);
-            ListView list = new ListView(activity);
-            list.setBackground(activity.roundedBg(activity.COLOR_SURFACE_HIGH, 12));
-            list.setClipToOutline(true);
-            list.setDivider(null);
-            list.setPadding(0, activity.dp(4), 0, activity.dp(4));
-            list.setAdapter(new BaseAdapter() {
-                @Override public int getCount() { return labels.length; }
-                @Override public String getItem(int position) { return labels[position]; }
-                @Override public long getItemId(int position) { return position; }
-                @Override public View getView(int position, View recycled, ViewGroup parent) {
-                    TextView item = recycled instanceof TextView ? (TextView) recycled : new TextView(activity);
-                    item.setText(labels[position]);
-                    item.setTextColor(position == selected ? activity.COLOR_PRIMARY : activity.COLOR_TEXT_PRIMARY);
-                    item.setGravity(Gravity.CENTER);
-                    item.setPadding(activity.dp(16), activity.dp(8), activity.dp(16), activity.dp(8));
-                    item.setMinHeight(activity.dp(48));
-                    item.setTypeface(null, position == selected ? Typeface.BOLD : Typeface.NORMAL);
-                    return item;
-                }
-            });
-            Paint paint = new Paint(anchor.getPaint());
-            paint.setTypeface(Typeface.defaultFromStyle(Typeface.BOLD));
-            float widest = 0;
-            for (String item : labels) widest = Math.max(widest, paint.measureText(item));
-            int width = Math.min(Math.max(1, activity.getResources().getDisplayMetrics().widthPixels - activity.dp(32)),
-                    Math.max(activity.dp(48), (int) Math.ceil(widest) + activity.dp(32)));
-            int height = Math.min(activity.dp(48) * labels.length + activity.dp(8),
-                    activity.getResources().getDisplayMetrics().heightPixels / 2);
-            PopupWindow menu = new PopupWindow(list, width, height, true);
-            menu.setBackgroundDrawable(activity.roundedBg(activity.COLOR_SURFACE_HIGH, 12));
-            menu.setElevation(activity.dp(8));
-            menu.setOutsideTouchable(true);
-            menu.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
+            PopupMenu menu = new PopupMenu(activity, anchor);
             popup = menu;
-            list.setOnItemClickListener((parent, view, position, id) -> {
-                if (popup != menu || window != page || !anchor.isAttachedToWindow() || !anchor.isEnabled()) return;
-                boolean changed = position != selected;
-                menu.dismiss();
-                if (changed) {
-                    apply.accept(values[position]);
-                    refresh(true);
-                }
+            for (int index = 0; index < values.length; index++) menu.getMenu().add(0, index, index, label.apply(values[index]));
+            menu.setOnMenuItemClickListener(item -> {
+                if (window != page) return false;
+                apply.accept(values[item.getItemId()]);
+                refresh(true);
+                return true;
             });
-            menu.setOnDismissListener(() -> {
-                list.setOnItemClickListener(null);
-                list.setAdapter(null);
-                menu.setOnDismissListener(null);
-                if (popup == menu) popup = null;
-            });
-            try {
-                menu.showAsDropDown(anchor, 0, activity.dp(4), Gravity.END);
-            } catch (RuntimeException unavailable) {
-                popup = null;
-                list.setAdapter(null);
-                menu.dismiss();
-            }
+            menu.setOnDismissListener(dismissed -> { if (popup == dismissed) popup = null; });
+            menu.show();
         }
 
         void apply(BatchAction action) {
