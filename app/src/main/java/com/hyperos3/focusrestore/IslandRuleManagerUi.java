@@ -43,8 +43,8 @@ import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.widget.BaseAdapter;
 import android.widget.ImageView;
+import android.widget.ListPopupWindow;
 import android.widget.ListView;
-import android.widget.PopupMenu;
 import android.widget.TextView;
 import java.text.Collator;
 import java.util.Comparator;
@@ -272,7 +272,7 @@ final class IslandRuleManagerUi {
         List<Row> visible = Collections.emptyList();
         StatusFilter filter = StatusFilter.ALL;
         DisplayOrder sort = DisplayOrder.SAVED;
-        PopupMenu popup;
+        ListPopupWindow popup;
         final Button filterButton = ui.tonal("", this::filterMenu);
         final Button sortButton = ui.tonal("", this::sortMenu);
         final Button selectAll = ui.tonal(R.drawable.ic_rule_select_all, "全选结果", this::selectAll);
@@ -418,28 +418,40 @@ final class IslandRuleManagerUi {
         }
 
         void filterMenu() {
-            showMenu(filterButton, StatusFilter.values(), item -> item.label, item -> filter = item);
+            showMenu(filterButton, StatusFilter.values(), item -> item.label, filter.ordinal(), item -> filter = item);
         }
 
         void sortMenu() {
-            showMenu(sortButton, DisplayOrder.values(), item -> item.label, item -> sort = item);
+            showMenu(sortButton, DisplayOrder.values(), item -> item.label, sort.ordinal(), item -> sort = item);
         }
 
         <T> void showMenu(Button anchor, T[] values, java.util.function.Function<T, String> label,
-                java.util.function.Consumer<T> apply) {
-            if (window != page) return;
+                int selected, java.util.function.Consumer<T> apply) {
+            if (window != page || !anchor.isAttachedToWindow() || !anchor.isEnabled()) return;
             if (popup != null) popup.dismiss();
-            PopupMenu menu = new PopupMenu(activity, anchor);
-            popup = menu;
-            for (int index = 0; index < values.length; index++) menu.getMenu().add(0, index, index, label.apply(values[index]));
-            menu.setOnMenuItemClickListener(item -> {
-                if (window != page) return false;
-                apply.accept(values[item.getItemId()]);
+            String[] labels = new String[values.length];
+            for (int index = 0; index < values.length; index++) labels[index] = label.apply(values[index]);
+            ListPopupWindow menu = activity.createChoicePopup(anchor, labels, selected, position -> {
+                if (window != page || popup == null || !anchor.isEnabled()) return;
+                apply.accept(values[position]);
+                dismissPopup();
                 refresh(true);
-                return true;
             });
-            menu.setOnDismissListener(dismissed -> { if (popup == dismissed) popup = null; });
-            menu.show();
+            popup = menu;
+            menu.setOnDismissListener(() -> { if (popup == menu) popup = null; });
+            try {
+                menu.show();
+                activity.afterShowChoicePopup(menu);
+            } catch (RuntimeException unavailable) {
+                popup = null;
+                menu.dismiss();
+            }
+        }
+
+        private void dismissPopup() {
+            ListPopupWindow menu = popup;
+            popup = null;
+            if (menu != null) menu.dismiss();
         }
 
         void apply(BatchAction action) {

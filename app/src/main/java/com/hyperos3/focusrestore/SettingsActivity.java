@@ -3818,57 +3818,19 @@ public final class SettingsActivity extends Activity {
         private void showOptions() {
             if (!isEnabled() || onSelected == null || !isAttachedToWindow()) return;
             dismissPopup();
-            ListPopupWindow menu = new ListPopupWindow(SettingsActivity.this);
-            popup = menu;
-            menu.setAdapter(new BaseAdapter() {
-                @Override public int getCount() { return options.length; }
-                @Override public String getItem(int position) { return options[position]; }
-                @Override public long getItemId(int position) { return position; }
-                @Override public View getView(int position, View recycled, ViewGroup parent) {
-                    TextView item = recycled instanceof TextView ? (TextView) recycled
-                            : new TextView(SettingsActivity.this);
-                    item.setText(options[position]);
-                    item.setTextColor(position == selectedPosition ? COLOR_PRIMARY : COLOR_TEXT_PRIMARY);
-                    item.setGravity(Gravity.CENTER);
-                    item.setPadding(dp(16), dp(8), dp(16), dp(8));
-                    item.setMinHeight(dp(48));
-                    item.setTypeface(null, position == selectedPosition ? Typeface.BOLD : Typeface.NORMAL);
-                    return item;
-                }
-            });
-            Paint paint = new Paint(getPaint());
-            paint.setTypeface(Typeface.defaultFromStyle(Typeface.BOLD));
-            float widest = 0;
-            for (String option : options) widest = Math.max(widest, paint.measureText(option));
-            int width = Math.min(Math.max(1, getResources().getDisplayMetrics().widthPixels - dp(32)),
-                    Math.max(dp(48), (int) Math.ceil(widest) + dp(32)));
-            int height = Math.min(dp(48) * options.length + dp(8),
-                    getResources().getDisplayMetrics().heightPixels / 2);
-            menu.setAnchorView(this);
-            menu.setModal(true);
-            menu.setDropDownGravity(Gravity.END);
-            menu.setVerticalOffset(dp(4));
-            menu.setWidth(width);
-            menu.setHeight(height);
-            menu.setBackgroundDrawable(roundedBg(COLOR_SURFACE_HIGH, 12));
-            menu.setOnItemClickListener((parent, view, position, id) -> {
-                if (popup != menu || !isEnabled() || onSelected == null) return;
+            ListPopupWindow menu = createChoicePopup(this, options, selectedPosition, position -> {
+                if (popup == null || !isEnabled() || onSelected == null) return;
                 boolean changed = position != selectedPosition;
                 IntConsumer listener = onSelected;
                 setSelectedPosition(position);
-                menu.dismiss();
+                dismissPopup();
                 if (changed) listener.accept(position);
             });
+            popup = menu;
             menu.setOnDismissListener(() -> { if (popup == menu) popup = null; });
             try {
                 menu.show();
-                ListView list = menu.getListView();
-                if (list != null) {
-                    list.setPadding(0, dp(4), 0, dp(4));
-                    list.setDivider(null);
-                    list.setDividerHeight(0);
-                    list.setOverScrollMode(View.OVER_SCROLL_NEVER);
-                }
+                afterShowChoicePopup(menu);
             } catch (RuntimeException unavailable) {
                 popup = null;
                 menu.dismiss();
@@ -3896,6 +3858,54 @@ public final class SettingsActivity extends Activity {
             dismissPopup();
             super.onDetachedFromWindow();
         }
+    }
+
+    ListPopupWindow createChoicePopup(View anchor, String[] options, int selected, IntConsumer onSelected) {
+        ListPopupWindow menu = new ListPopupWindow(this);
+        menu.setAdapter(new BaseAdapter() {
+            @Override public int getCount() { return options.length; }
+            @Override public String getItem(int position) { return options[position]; }
+            @Override public long getItemId(int position) { return position; }
+            @Override public View getView(int position, View recycled, ViewGroup parent) {
+                TextView item = recycled instanceof TextView ? (TextView) recycled : new TextView(SettingsActivity.this);
+                item.setText(options[position]);
+                item.setTextColor(position == selected ? COLOR_PRIMARY : COLOR_TEXT_PRIMARY);
+                item.setGravity(Gravity.CENTER);
+                item.setPadding(dp(16), dp(8), dp(16), dp(8));
+                item.setMinHeight(dp(48));
+                item.setTypeface(null, position == selected ? Typeface.BOLD : Typeface.NORMAL);
+                return item;
+            }
+        });
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setTextSize(14f * getResources().getDisplayMetrics().scaledDensity);
+        paint.setTypeface(Typeface.defaultFromStyle(Typeface.BOLD));
+        float widest = 0;
+        for (String option : options) widest = Math.max(widest, paint.measureText(option));
+        int width = Math.min(Math.max(1, getResources().getDisplayMetrics().widthPixels - dp(32)),
+                Math.max(dp(48), (int) Math.ceil(widest) + dp(32)));
+        int height = Math.min(dp(48) * options.length + dp(8),
+                getResources().getDisplayMetrics().heightPixels / 2);
+        menu.setAnchorView(anchor);
+        menu.setModal(true);
+        menu.setDropDownGravity(Gravity.END);
+        menu.setVerticalOffset(dp(4));
+        menu.setWidth(width);
+        menu.setHeight(height);
+        menu.setBackgroundDrawable(roundedBg(COLOR_SURFACE_HIGH, 12));
+        // 与 PopupMenu 类似的淡入和轻微缩放，替代默认的下拉展开位移。
+        menu.setAnimationStyle(R.style.FocusRestorePopupAnimation);
+        menu.setOnItemClickListener((parent, view, position, id) -> onSelected.accept(position));
+        return menu;
+    }
+
+    void afterShowChoicePopup(ListPopupWindow menu) {
+        ListView list = menu.getListView();
+        if (list == null) return;
+        list.setPadding(0, dp(4), 0, dp(4));
+        list.setDivider(null);
+        list.setDividerHeight(0);
+        list.setOverScrollMode(View.OVER_SCROLL_NEVER);
     }
 
     private ChoiceButton choiceButton(String label, String[] options, int selected, IntConsumer onSelected) {

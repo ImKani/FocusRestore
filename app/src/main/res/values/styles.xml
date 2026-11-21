@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="FocusRestorePopupAnimation">
+        <item name="android:windowEnterAnimation">@anim/focusrestore_popup_in</item>
+        <item name="android:windowExitAnimation">@anim/focusrestore_popup_out</item>
+    </style>
+</resources>
