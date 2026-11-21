@@ -3,14 +3,25 @@
  SPDX-License-Identifier: GPL-3.0-only
  Copyright (C) ImKani. Project: FocusRestore
  Source: https://github.com/ImKani/FocusRestore
- 图形来源：作者提供的 SVG 路径；原始图标集与许可未确认。
+ 图形来源：本项目按几何形状独立绘制，未复制第三方图标资源。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="1024"
-    android:viewportHeight="1024">
+    android:viewportWidth="24"
+    android:viewportHeight="24">
     <path
-        android:fillColor="#FF000000"
-        android:pathData="M512 853.333333c-187.733333 0-341.333333-153.6-341.333333-341.333333s153.6-341.333333 341.333333-341.333333 341.333333 153.6 341.333333 341.333333-153.6 341.333333-341.333333 341.333333z m0-85.333333c140.8 0 256-115.2 256-256s-115.2-256-256-256-256 115.2-256 256 115.2 256 256 256zM401.066667 341.333333l273.066666 273.066667-59.733333 59.733333L341.333333 401.066667 401.066667 341.333333z" />
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M6.7 6.7l10.6 10.6" />
 </vector>

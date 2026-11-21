@@ -1,6 +1,6 @@
 # FocusRestore 设置说明
 
-本文对应 **0.55.6（versionCode 371）**，按当前设置页说明用途、默认值和联动条件。升级保留的配置或导入的备份可能与默认值不同。
+本文对应 **0.55.7（versionCode 372）**，按当前设置页说明用途、默认值和联动条件。升级保留的配置或导入的备份可能与默认值不同。
 
 作者及维护者：**ImKani**。项目：[FocusRestore](https://github.com/ImKani/FocusRestore)，许可证：[GPL-3.0-only](../LICENSE)。
 
