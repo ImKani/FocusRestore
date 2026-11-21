@@ -4,17 +4,23 @@
 package com.hyperos3.focusrestore;
 
 import android.app.Activity;
-import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
+import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
@@ -61,7 +67,7 @@ final class IslandRulePackUi {
     private Task current;
     private long pageGeneration;
     private IslandRulePackReviewUi review;
-    private AlertDialog exportDialog;
+    private Dialog exportDialog;
     private Prepared pending;
     private IslandRuleRepository.PackExport outgoing;
 
@@ -221,22 +227,65 @@ final class IslandRulePackUi {
 
     private void chooseExportMode() {
         if (!canStart() || exportDialog != null) return;
+        final Dialog dialog = new Dialog(activity);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        LinearLayout root = new LinearLayout(activity);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackground(activity.roundedBg(activity.COLOR_SURFACE_HIGH, 12));
+        root.setPadding(activity.dp(20), activity.dp(18), activity.dp(16), activity.dp(16));
+
+        TextView title = activity.text("导出规则包", 18, activity.COLOR_TEXT_PRIMARY);
+        title.setTypeface(title.getTypeface(), Typeface.BOLD);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(-1, -2);
+        titleParams.bottomMargin = activity.dp(8);
+        root.addView(title, titleParams);
+
+        TextView message = activity.text(
+                "清除示例文字后，导入者可查看字段路径和顺序。取消勾选会将通知中的示例值写入文件，可能包含私人信息。",
+                14, activity.COLOR_TEXT_SECONDARY);
+        message.setLineSpacing(0f, 1.15f);
+        LinearLayout.LayoutParams messageParams = new LinearLayout.LayoutParams(-1, -2);
+        messageParams.bottomMargin = activity.dp(12);
+        root.addView(message, messageParams);
+
         CheckBox clearValues = new CheckBox(activity);
         clearValues.setText("清除示例文字（脱敏）");
+        clearValues.setTextSize(14);
+        clearValues.setTextColor(activity.COLOR_TEXT_PRIMARY);
         clearValues.setChecked(true);
-        LinearLayout content = new LinearLayout(activity);
-        int horizontal = Math.round(24 * activity.getResources().getDisplayMetrics().density);
-        content.setPadding(horizontal, 0, horizontal, 0);
-        content.addView(clearValues);
-        exportDialog = new AlertDialog.Builder(activity)
-                .setTitle("导出规则包")
-                .setMessage("清除示例文字后，导入者可查看字段路径和顺序。取消勾选会将通知中的示例值写入文件，可能包含私人信息。")
-                .setView(content)
-                .setNegativeButton("取消", null)
-                .setPositiveButton("继续", (ignored, which) -> prepareExport(!clearValues.isChecked()))
-                .create();
-        exportDialog.setOnDismissListener(ignored -> exportDialog = null);
-        exportDialog.show();
+        LinearLayout.LayoutParams checkParams = new LinearLayout.LayoutParams(-1, -2);
+        checkParams.bottomMargin = activity.dp(12);
+        root.addView(clearValues, checkParams);
+
+        LinearLayout actions = new LinearLayout(activity);
+        actions.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        Button cancel = activity.actionButton("取消", Color.TRANSPARENT, activity.COLOR_TEXT_SECONDARY);
+        cancel.setOnClickListener(view -> dialog.dismiss());
+        actions.addView(cancel, new LinearLayout.LayoutParams(-2, activity.dp(40)));
+        Button confirm = activity.actionButton("继续", activity.COLOR_PRIMARY, Color.WHITE);
+        LinearLayout.LayoutParams confirmParams = new LinearLayout.LayoutParams(-2, activity.dp(40));
+        confirmParams.leftMargin = activity.dp(8);
+        actions.addView(confirm, confirmParams);
+        root.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+
+        dialog.setContentView(root);
+        Window window = dialog.getWindow();
+        if (window != null) window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        exportDialog = dialog;
+        dialog.setOnDismissListener(ignored -> exportDialog = null);
+        confirm.setOnClickListener(view -> {
+            boolean includeSampleValues = !clearValues.isChecked();
+            dialog.dismiss();
+            prepareExport(includeSampleValues);
+        });
+        dialog.show();
+        window = dialog.getWindow();
+        if (window != null) {
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            android.util.DisplayMetrics metrics = activity.getResources().getDisplayMetrics();
+            window.setLayout(Math.max(1, Math.min(activity.dp(560), metrics.widthPixels - activity.dp(24))),
+                    WindowManager.LayoutParams.WRAP_CONTENT);
+        }
     }
 
     private void prepareExport(boolean includeSampleValues) {
