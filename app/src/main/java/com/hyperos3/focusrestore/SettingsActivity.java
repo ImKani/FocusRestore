@@ -25,7 +25,10 @@ import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.Drawable;
@@ -70,6 +73,8 @@ import android.widget.Toast;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.InputFilter;
+import android.text.TextPaint;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 
 import java.util.function.IntConsumer;
@@ -3718,10 +3723,14 @@ public final class SettingsActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 21) button.setStateListAnimator(null);
     }
 
-    /** 单选设置项：普通按钮显示“标签 · 当前值”，点击打开系统 PopupMenu。 */
+    /** 单选设置项：普通按钮，外观沿用原单选项的整行样式，点击打开系统 PopupMenu。 */
     private final class ChoiceButton extends Button {
         private final String label;
         private final String[] options;
+        private final TextPaint labelPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+        private final TextPaint valuePaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint indicatorPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path indicatorPath = new Path();
         private int selectedPosition;
         private IntConsumer onSelected;
         private PopupMenu popup;
@@ -3732,16 +3741,21 @@ public final class SettingsActivity extends Activity {
             this.label = label;
             this.options = options.clone();
             this.onSelected = onSelected;
-            setAllCaps(false);
-            setTextSize(14);
-            setTypeface(getTypeface(), Typeface.BOLD);
-            setTextColor(COLOR_TEXT_PRIMARY);
+            labelPaint.setColor(COLOR_TEXT_PRIMARY);
+            labelPaint.setTextSize(sp(15));
+            valuePaint.setColor(COLOR_TEXT_SECONDARY);
+            valuePaint.setTextSize(sp(14));
+            indicatorPaint.setColor(COLOR_TEXT_SECONDARY);
             setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
-            setMinHeight(dp(40));
-            setMinimumHeight(dp(40));
-            setPadding(dp(14), 0, dp(14), 0);
+            setPadding(dp(12), dp(8), dp(12), dp(8));
+            float textHeight = Math.max(labelPaint.descent() - labelPaint.ascent(),
+                    valuePaint.descent() - valuePaint.ascent());
+            int minHeight = Math.max(dp(52), (int) Math.ceil(textHeight) + getPaddingTop() + getPaddingBottom());
+            setMinHeight(minHeight);
+            setMinimumHeight(minHeight);
             setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
             setSaveEnabled(false);
+            setFocusable(true);
             flattenButton(this);
             setSelectedPosition(initialPosition);
             setOnClickListener(view -> showOptions());
@@ -3750,9 +3764,55 @@ public final class SettingsActivity extends Activity {
         void setSelectedPosition(int position) {
             if (position < 0 || position >= options.length) position = 0;
             selectedPosition = position;
-            String text = label + " · " + options[position];
-            setText(text);
-            setContentDescription(text);
+            setContentDescription(label + "，" + options[position]);
+            invalidate();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            float centerY = getHeight() / 2f;
+            float labelBaseline = centerY - (labelPaint.ascent() + labelPaint.descent()) / 2f;
+            float valueBaseline = centerY - (valuePaint.ascent() + valuePaint.descent()) / 2f;
+            boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+            float indicatorWidth = dp(12);
+            float gap = dp(6);
+            float startX = getPaddingLeft();
+            float endX = getWidth() - getPaddingRight();
+            drawIndicator(canvas, rtl ? startX : endX - indicatorWidth, centerY, indicatorWidth);
+            float textStart = rtl ? startX + indicatorWidth + gap : startX;
+            float textEnd = rtl ? endX : endX - indicatorWidth - gap;
+            float available = Math.max(0, textEnd - textStart);
+            // 沿用原单选项的左右分栏：标签在起始侧，当前值靠近指示器；空间不足时各自省略。
+            CharSequence value = TextUtils.ellipsize(options[selectedPosition], valuePaint,
+                    available * 0.6f, TextUtils.TruncateAt.END);
+            float valueWidth = valuePaint.measureText(value.toString());
+            float labelMax = Math.max(0, available - valueWidth - gap);
+            CharSequence title = TextUtils.ellipsize(label, labelPaint, labelMax, TextUtils.TruncateAt.END);
+            float titleWidth = labelPaint.measureText(title.toString());
+            canvas.drawText(title.toString(), rtl ? textEnd - titleWidth : textStart,
+                    labelBaseline, labelPaint);
+            canvas.drawText(value.toString(), rtl ? textStart : textEnd - valueWidth,
+                    valueBaseline, valuePaint);
+        }
+
+        private void drawIndicator(Canvas canvas, float left, float centerY, float width) {
+            float centerX = left + width / 2f;
+            float half = dp(4);
+            float gap = dp(2);
+            float triangle = dp(4);
+            indicatorPath.rewind();
+            indicatorPath.moveTo(centerX, centerY - gap - triangle);
+            indicatorPath.lineTo(centerX - half, centerY - gap);
+            indicatorPath.lineTo(centerX + half, centerY - gap);
+            indicatorPath.close();
+            indicatorPath.moveTo(centerX - half, centerY + gap);
+            indicatorPath.lineTo(centerX + half, centerY + gap);
+            indicatorPath.lineTo(centerX, centerY + gap + triangle);
+            indicatorPath.close();
+            canvas.drawPath(indicatorPath, indicatorPaint);
+        }
+
+        private float sp(int value) {
+            return value * getResources().getDisplayMetrics().scaledDensity;
         }
 
         private void showOptions() {
