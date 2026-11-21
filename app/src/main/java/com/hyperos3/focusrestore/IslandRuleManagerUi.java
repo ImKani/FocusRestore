@@ -273,11 +273,11 @@ final class IslandRuleManagerUi {
         StatusFilter filter = StatusFilter.ALL;
         DisplayOrder sort = DisplayOrder.SAVED;
         ListPopupWindow popup;
-        final Button filterButton = ui.tonal("", this::filterMenu);
-        final Button sortButton = ui.tonal("", this::sortMenu);
+        final Button filterButton = ui.tonal(R.drawable.ic_rule_filter, filter.label, this::filterMenu);
+        final Button sortButton = ui.tonal(R.drawable.ic_rule_sort, sort.label, this::sortMenu);
         final Button selectAll = ui.tonal(R.drawable.ic_rule_select_all, "全选结果", this::selectAll);
-        final Button enable = ui.tonal("启用", () -> apply(BatchAction.ENABLE));
-        final Button disable = ui.tonal("停用", () -> apply(BatchAction.DISABLE));
+        final Button enable = ui.tonal(R.drawable.ic_rule_enable, "启用", () -> apply(BatchAction.ENABLE));
+        final Button disable = ui.tonal(R.drawable.ic_rule_disable, "停用", () -> apply(BatchAction.DISABLE));
         final Button delete = ui.danger(R.drawable.ic_rule_delete, "删除", () -> apply(BatchAction.DELETE));
         final BaseAdapter adapter = new BaseAdapter() {
             @Override public int getCount() { return visible.size(); }
@@ -367,9 +367,9 @@ final class IslandRuleManagerUi {
             } else if (firstVisible > 0 && !visible.isEmpty()) {
                 items.setSelectionFromTop(Math.min(firstVisible, visible.size() - 1), firstTop);
             }
-            filterButton.setText("筛选 · " + filter.label);
+            filterButton.setText(filter.label);
             filterButton.setContentDescription("状态筛选 · " + filter.label);
-            sortButton.setText("排序 · " + sort.label);
+            sortButton.setText(sort.label);
             sortButton.setContentDescription("列表排序 · " + sort.label + "。规则优先级保持原样。");
             refreshSelection();
         }
