@@ -205,7 +205,10 @@ public class SettingsActivityStateTest {
         assertTrue(!source.contains("bindValueReset("));
         assertTrue(!source.contains("valueResetTaps"));
         assertTrue(!source.contains("getDoubleTapTimeout()"));
-        assertTrue(source.contains("private void clearPageControls() {\n        defaultActionRefreshers.clear();"));
+        int cleanupStart = source.indexOf("private void clearPageControls() {");
+        int cleanupEnd = source.indexOf("pageListenerCleanup.clear();", cleanupStart);
+        assertTrue(cleanupStart >= 0 && cleanupEnd > cleanupStart);
+        assertTrue(source.substring(cleanupStart, cleanupEnd).contains("defaultActionRefreshers.clear();"));
         assertTrue(source.contains("focusMaxDisplayValue = null;"));
         String[] fields = {"pendingWidthDp", "pendingWidthLandscapeDp", "pendingTouchWidthDp",
                 "pendingTouchWidthLandscapeDp", "pendingLongPressSeconds", "pendingDelayMs",
@@ -242,6 +245,32 @@ public class SettingsActivityStateTest {
         assertTrue(source.contains("setChildrenEnabled(touchWidthOptionsPanel, pendingCustomTouchWidth)"));
         assertTrue(source.contains("setChildrenEnabled(landscapeWidthValueRow, enabled)"));
         assertTrue(!source.contains("ic_reset"));
+    }
+
+    @Test
+    public void pagePositionIsRestoredBeforeDrawingAndSavedAcrossRecreation() throws Exception {
+        String source = readSettingsActivitySource();
+        int show = source.indexOf("private void showPage(int page, SettingsSearchIndex.Entry destination)");
+        int clear = source.indexOf("private void clearPageControls()", show);
+        assertTrue(show >= 0 && clear > show);
+        String navigation = source.substring(show, clear);
+        assertTrue(navigation.indexOf("scroll.setVisibility(View.INVISIBLE)") < navigation.indexOf("pageContainer.addView(scroll"));
+        assertTrue(navigation.contains("observer.addOnGlobalLayoutListener(this)"));
+        assertTrue(navigation.contains("return revealWhenReady(++frames >= MAX_FRAMES);"));
+        assertTrue(navigation.contains("MAX_FRAMES = 3"));
+        assertTrue(navigation.contains("if (!deadline && maxY < savedY) return false;"));
+        int reveal = navigation.indexOf("scroll.setVisibility(View.VISIBLE)");
+        assertTrue(reveal > navigation.indexOf("located = positionSearchTarget(scroll, target)"));
+        assertTrue(reveal > navigation.indexOf("scroll.scrollTo(0, Math.min(savedY, maxY))"));
+        assertTrue(navigation.contains("pageFirstDraw == this && pageScroll == scroll && currentPage == page"));
+        assertTrue(navigation.contains("pageScroll != null && pageFirstDraw == null && pageScroll.isLaidOut()"));
+        assertTrue(navigation.contains("observer.removeOnGlobalLayoutListener(this)"));
+        assertTrue(navigation.contains("observer.removeOnPreDrawListener(this)"));
+        assertTrue(navigation.contains("onViewDetachedFromWindow(View view) { close(); }"));
+        assertTrue(source.substring(clear).contains("if (pageFirstDraw != null) pageFirstDraw.close();"));
+        assertTrue(source.contains("showPage(entry.page, entry);"));
+        assertTrue(source.contains("outState.putIntArray(\"ui.scrollPositions\", scrollPositions.clone());"));
+        assertTrue(source.contains("state.getIntArray(\"ui.scrollPositions\")"));
     }
 
     @Test

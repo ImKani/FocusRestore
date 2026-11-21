@@ -89,9 +89,7 @@ final class IslandCaptureUi {
         cancelButton = cancel;
         statusView = view;
         this.recentButton = recentButton;
-        recentButton.setOnClickListener(v -> {
-            if (active() && resumed && previewCount > 0) recent.open(connection, status.generation);
-        });
+        recentButton.setOnClickListener(v -> openRecent());
         start.setOnClickListener(v -> start());
         samples.setOnClickListener(v -> chooseSample());
         export.setOnClickListener(v -> chooseDocument());
@@ -99,6 +97,12 @@ final class IslandCaptureUi {
         cancel.setOnClickListener(v -> cancelWrite("导出已取消，文件可能不完整。"));
         render();
         refresh();
+    }
+
+    boolean openRecent() {
+        if (!resumed || recentButton == null || !active() || !status.ready || previewCount <= 0) return false;
+        recent.open(connection, status.generation);
+        return true;
     }
 
     void unbind() {

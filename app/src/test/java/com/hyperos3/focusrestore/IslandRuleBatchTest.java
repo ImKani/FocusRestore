@@ -31,6 +31,12 @@ public class IslandRuleBatchTest {
         }
     }
 
+    private long deleteOnlyRule(IslandRuleRepository repository) throws IOException {
+        try (IslandRuleRepository.ReadView view = repository.openRead()) {
+            return repository.delete(view.revision, view.entries.get(0).id);
+        }
+    }
+
     private static byte[] send(IslandRuleRepository.ReadView view) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         IslandRuleBatch.write(output, view);
@@ -51,8 +57,15 @@ public class IslandRuleBatchTest {
         assertEquals(0, repository.revision());
         assertEquals(IslandRuleRepository.Code.UNINITIALIZED,
                 assertThrows(IslandRuleRepository.Failure.class, () -> send(repository)).code);
-        assertEquals(1, commit(repository, "[]".getBytes(StandardCharsets.UTF_8), true));
-        assertTrue(read(send(repository(root)), 1).sources.isEmpty());
+        try (IslandRuleRepository.Pending invalid = repository.prepare(
+                new ByteArrayInputStream("[]".getBytes(StandardCharsets.UTF_8)), null, true, 0, ENV)) {
+            assertFalse(invalid.canApprove(false));
+            assertThrows(IslandRuleRepository.Failure.class, () -> repository.commit(invalid, false, ENV));
+        }
+        assertEquals(0, repository.revision());
+        assertEquals(1, commit(repository, rule(), true));
+        assertEquals(2, deleteOnlyRule(repository));
+        assertTrue(read(send(repository(root)), 2).sources.isEmpty());
         Files.write(root.resolve("manifest"), new byte[]{1});
         assertThrows(IOException.class, () -> repository(root));
         assertThrows(IOException.class, () -> send(repository));
@@ -63,13 +76,9 @@ public class IslandRuleBatchTest {
         IslandRuleRepository repository = repository(root);
         byte[] original = rule();
         assertEquals(1, commit(repository, original, true));
-        try (IslandRuleRepository.ReadView old = repository.openRead();
-                IslandRuleRepository.Pending empty = repository.prepare(
-                        new ByteArrayInputStream(" [ \n ] ".getBytes(StandardCharsets.UTF_8)), null, true, 0, ENV)) {
-            assertTrue(empty.empty);
+        try (IslandRuleRepository.ReadView old = repository.openRead()) {
             assertEquals(1, repository.revision());
-            assertThrows(IslandRuleRepository.Failure.class, () -> repository.commit(empty, true, ENV));
-            assertEquals(2, repository.commit(empty, false, ENV));
+            assertEquals(2, deleteOnlyRule(repository));
             assertArrayEquals(original, old.read(old.entries.get(0)));
             assertEquals(1, read(send(old), 1).sources.size());
             IslandRuleBatch batch = read(send(repository), 2);
@@ -81,11 +90,12 @@ public class IslandRuleBatchTest {
 
     @Test public void emptyBatchStillRequiresKnownSystemUiVersion() throws Exception {
         IslandRuleRepository repository = repository(root());
-        commit(repository, "[]".getBytes(StandardCharsets.UTF_8), true);
+        commit(repository, rule(), true);
+        deleteOnlyRule(repository);
         byte[] batch = send(repository);
         IslandRuleImportValidator.Environment unknown = new IslandRuleImportValidator.Environment(null, null);
         assertEquals("BATCH_SYSTEM_UI_VERSION_UNKNOWN", assertThrows(IOException.class,
-                () -> IslandRuleBatch.read(new ByteArrayInputStream(batch), 1, unknown)).getMessage());
+                () -> IslandRuleBatch.read(new ByteArrayInputStream(batch), 2, unknown)).getMessage());
     }
 
     @Test public void changedSystemUiVersionNeedsApprovalForCurrentBlockingFinding() throws Exception {

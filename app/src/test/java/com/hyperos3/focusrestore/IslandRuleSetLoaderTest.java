@@ -90,8 +90,8 @@ public class IslandRuleSetLoaderTest {
 
     @Test public void unknownVersionsNeverBecomeActiveIncludingDowngrade() throws Exception {
         String json = new String(valid(), StandardCharsets.UTF_8);
-        byte[] future = json.replace("\"ruleVersion\": 1", "\"ruleVersion\": 2").getBytes(StandardCharsets.UTF_8);
-        byte[] old = json.replace("\"ruleVersion\": 1", "\"ruleVersion\": 0").getBytes(StandardCharsets.UTF_8);
+        byte[] future = json.replace("\"ruleVersion\": 2", "\"ruleVersion\": 3").getBytes(StandardCharsets.UTF_8);
+        byte[] old = json.replace("\"ruleVersion\": 2", "\"ruleVersion\": 0").getBytes(StandardCharsets.UTF_8);
         assertFalse(Arrays.equals(valid(), future)); assertFalse(Arrays.equals(valid(), old));
         IslandRuleSetLoader.Snapshot result = loader.load(1L, Arrays.asList(
                 source("future", true, Integer.MAX_VALUE, future),
@@ -189,7 +189,7 @@ public class IslandRuleSetLoaderTest {
     }
 
     @Test public void jsonCannotOverrideExternalPriority() throws Exception {
-        String json = new String(valid(), StandardCharsets.UTF_8).replace("\"ruleVersion\": 1", "\"priority\":99,\"ruleVersion\": 1");
+        String json = new String(valid(), StandardCharsets.UTF_8).replace("\"ruleVersion\": 2", "\"priority\":99,\"ruleVersion\": 2");
         IslandRuleSetLoader.Snapshot result = loader.load(1L, Collections.singletonList(
                 source("jsonPriority", true, 0, json.getBytes(StandardCharsets.UTF_8))));
         assertTrue(result.ruleSet.entries.isEmpty());
@@ -279,7 +279,7 @@ public class IslandRuleSetLoaderTest {
     @Test public void rebuildingWithUnknownVersionDoesNotRetainPriorKnownRule() throws Exception {
         IslandRuleSetCache cache = new IslandRuleSetCache();
         assertTrue(cache.rebuild(Collections.singletonList(source("old", true, 0, valid()))));
-        byte[] unknown = new String(valid(), StandardCharsets.UTF_8).replace("\"ruleVersion\": 1", "\"ruleVersion\": 999").getBytes(StandardCharsets.UTF_8);
+        byte[] unknown = new String(valid(), StandardCharsets.UTF_8).replace("\"ruleVersion\": 2", "\"ruleVersion\": 999").getBytes(StandardCharsets.UTF_8);
         assertTrue(cache.rebuild(Collections.singletonList(source("future", true, 0, unknown))));
         assertTrue(cache.current().loaded); assertTrue(cache.current().orderedActiveEntries.isEmpty());
         decodeFailure(cache.current().failures.get(0), IslandRuleCodec.Code.L1_VERSION);

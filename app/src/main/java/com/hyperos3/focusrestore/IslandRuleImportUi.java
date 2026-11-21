@@ -3,18 +3,11 @@
  */
 package com.hyperos3.focusrestore;
 
-import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.net.Uri;
-import android.os.Bundle;
-import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.ParcelFileDescriptor;
 import android.os.UserManager;
 import android.system.ErrnoException;
 import android.system.Os;
@@ -25,36 +18,31 @@ import android.widget.TextView;
 
 import java.io.FileDescriptor;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
-/** 设置页独立的 SAF 导入会话。仓库在同一 App 进程内共用，页面退出不打断已确认提交。 */
+/** 设置页规则管理与读取授权。仓库在同一 App 进程内共用，页面退出不打断已确认提交。 */
 final class IslandRuleImportUi {
-    static final int REQUEST = 4103;
     private static final String TAG = "FocusRestoreRules";
-    private static final long TIMEOUT_MS = 60_000L;
     private static IslandRuleRepository store;
 
-    private final Activity activity;
+    private final SettingsActivity activity;
     private final Context app;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor(command -> {
-        Thread thread = new Thread(command, "FocusRestore-rule-import");
+        Thread thread = new Thread(command, "FocusRestore-rule-settings");
         thread.setDaemon(true);
         return thread;
     });
-    private Button importButton;
-    private Button cancelButton;
     private TextView statusView;
     private Button projectionButton;
-    private AlertDialog projectionDialog;
+    private IslandRuleEditorUi.Page projectionDialog;
     private long projectionPage;
     private boolean projectionBusy;
     private final IslandRuleManagerUi manager;
     private Button managerButton;
+    private Runnable createFromCapture;
     private long stateRequest;
     private enum Access { STANDARD, EMPTY, REQUIRED, APPROVED, RECOVER }
     private Access access = Access.STANDARD;
@@ -62,31 +50,21 @@ final class IslandRuleImportUi {
     private String status = "";
     private long savedRevision;
     private final Runnable refreshStatus = this::render;
-    private boolean choosing;
     private boolean resumed;
     private boolean destroyed;
-    private boolean committing;
-    private ReadOperation reading;
-    private IslandRuleRepository repository;
-    private IslandRuleRepository.Pending candidate;
-    private AlertDialog dialog;
-
-    IslandRuleImportUi(Activity activity) {
+    IslandRuleImportUi(SettingsActivity activity) {
         this.activity = activity;
         this.app = activity.getApplicationContext();
         manager = new IslandRuleManagerUi(activity, worker, this, this::setStatus);
     }
 
-    void bind(Button importer, Button cancel, TextView statusView, Button projection, Button manage) {
+    void bind(TextView statusView, Button projection, Button manage, Runnable createFromCapture) {
+        this.createFromCapture = createFromCapture;
         managerButton = manage;
         manager.setActive(resumed);
         managerButton.setOnClickListener(v -> openManager());
-        importButton = importer;
-        cancelButton = cancel;
         this.statusView = statusView;
         projectionButton = projection;
-        importButton.setOnClickListener(view -> choose());
-        cancelButton.setOnClickListener(view -> cancelRead("已取消规则导入。"));
         projectionButton.setOnClickListener(view -> viewProjection());
         refreshSavedRevision();
     }
@@ -96,43 +74,22 @@ final class IslandRuleImportUi {
         manager.setActive(false);
         if (managerButton != null) managerButton.setOnClickListener(null);
         managerButton = null;
+        createFromCapture = null;
         if (projectionButton != null) projectionButton.setOnClickListener(null);
         projectionButton = null;
-        importButton = null;
-        cancelButton = null;
         statusView = null;
-    }
-
-    void restore(Bundle state) {
-        if (state == null) return;
-        choosing = state.getBoolean("rules.choosing");
-        if (state.getBoolean("rules.committing")) {
-            status = "页面在保存期间重建，当前页面无法确认保存结果。";
-        } else if (state.getBoolean("rules.interrupted")) {
-            status = "页面已重建，请重新导入规则。";
-        } else if (choosing) {
-            status = "请选择规则 JSON 文件。";
-        }
-        render();
-    }
-
-    void save(Bundle state) {
-        state.putBoolean("rules.choosing", choosing);
-        state.putBoolean("rules.committing", committing);
-        state.putBoolean("rules.interrupted", reading != null || candidate != null);
     }
 
     void resume() {
         resumed = true;
         manager.setActive(managerButton != null);
-        showConfirmation();
         render();
         refreshSavedRevision();
     }
 
     private void openManager() {
         projectionPage++;
-        manager.open(approvedProjection == null ? null : this::viewProjection);
+        manager.open(approvedProjection == null ? null : this::viewProjection, createFromCapture);
     }
 
     void beginCaptureEditor() {
@@ -201,7 +158,7 @@ final class IslandRuleImportUi {
                 render();
                 // 只有这次保存发起的交接能弹窗。退后台、切页或已有其他操作时留给手动入口。
                 boolean currentPage = resumed && projectionButton != null && projectionPage == page
-                        && !projectionBusy && projectionDialog == null && !busy()
+                        && !projectionBusy && projectionDialog == null
                         && !activity.isFinishing() && !activity.isDestroyed();
                 Next next = afterSave(committed, saved, currentPage, proposal,
                         proposal != null && IslandRuleAppliedStatus.confirms(saved), fromManager);
@@ -220,10 +177,12 @@ final class IslandRuleImportUi {
 
     private void closeProjectionDialog() {
         projectionPage++;
-        if (projectionDialog == null) return;
-        projectionDialog.setOnDismissListener(null);
-        projectionDialog.dismiss();
+        IslandRuleEditorUi.Page page = projectionDialog;
         projectionDialog = null;
+        if (page == null) return;
+        page.dialog.setOnDismissListener(null);
+        page.release();
+        page.dialog.dismiss();
     }
 
     private void viewProjection() {
@@ -261,10 +220,14 @@ final class IslandRuleImportUi {
 
     private String projectionMessage(IslandRuleProjectionConsent.Preview preview) {
         if (preview.snapshot.rows.isEmpty()) return "当前没有需要授权的规则。";
-        StringBuilder message = new StringBuilder("允许 SystemUI 读取应用范围和所选字段路径，以及它们的排列顺序。此设备上与 SystemUI 共享系统身份的组件也可能读取这些配置。通知正文和样本不会传输。新增、编辑或启用规则后需要重新确认。停用或删除只收缩已批准的范围。\n");
+        StringBuilder message = new StringBuilder("允许 SystemUI 读取应用范围、通知类型的结构标识、所选字段路径及其排列顺序。此设备上与 SystemUI 共享系统身份的组件也可能读取这些配置。示例文字只在本地编辑和用户选择的规则包中使用。新增、编辑或启用后需要重新确认。停用或删除只收缩已批准的范围。\n");
         java.util.Map<String, String> names = new java.util.HashMap<>();
         for (IslandRuleProjection.Row row : preview.snapshot.rows) {
             message.append('\n').append(IslandRuleManagerUi.listName(app, names, row.packageName));
+            if (row.notificationType != null) {
+                message.append('\n').append(IslandRuleEditorUi.typeLabel(row.notificationType))
+                        .append(" · ").append(row.notificationType.paths.size()).append(" 个类型字段");
+            }
             for (String path : row.paths) message.append('\n').append(path);
             message.append('\n');
         }
@@ -272,27 +235,29 @@ final class IslandRuleImportUi {
     }
 
     private void showProjectionConfirmation(IslandRuleProjectionConsent.Preview preview, String message, boolean canRevoke) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(activity)
-                .setTitle("规则读取授权")
-                .setMessage(message)
-                .setNegativeButton("关闭", null);
-        if (canRevoke) {
-            builder.setNeutralButton("清除授权记录", (dialog, which) -> updateProjection(null));
-        } else if (preview != null && preview.approved) {
-            builder.setNeutralButton("撤销授权", (dialog, which) -> updateProjection(null));
+        if (!resumed || destroyed || projectionDialog != null || activity.isFinishing() || activity.isDestroyed()) return;
+        IslandRuleEditorUi ui = new IslandRuleEditorUi(activity);
+        IslandRuleEditorUi.Page page = ui.new Page("规则读取授权");
+        page.scrolling().addView(ui.primary(message, 14), ui.spaced(0));
+        page.action("关闭", false, this::closeProjectionDialog);
+        if (canRevoke || (preview != null && preview.approved)) {
+            page.action(canRevoke ? "清除授权记录" : "撤销授权", false,
+                    () -> updateProjection(page, null));
         } else if (preview != null && !preview.snapshot.rows.isEmpty()) {
-            builder.setPositiveButton("允许读取", (dialog, which) -> updateProjection(preview));
+            Button approve = page.action("允许读取", true, () -> updateProjection(page, preview));
+            approve.setFilterTouchesWhenObscured(true);
         }
-        projectionDialog = builder.create();
-        projectionDialog.setOnDismissListener(dialog -> projectionDialog = null);
-        projectionDialog.show();
-        Button approve = projectionDialog.getButton(AlertDialog.BUTTON_POSITIVE);
-        if (approve != null) approve.setFilterTouchesWhenObscured(true);
+        projectionDialog = page;
+        page.dialog.setOnDismissListener(dialog -> {
+            if (projectionDialog == page) closeProjectionDialog();
+        });
+        page.show();
     }
 
-    private void updateProjection(IslandRuleProjectionConsent.Preview preview) {
-        if (!resumed || destroyed || projectionBusy || projectionDialog == null || activity.isFinishing()) return;
+    private void updateProjection(IslandRuleEditorUi.Page page, IslandRuleProjectionConsent.Preview preview) {
+        if (!resumed || destroyed || projectionBusy || projectionDialog != page || activity.isFinishing()) return;
         projectionBusy = true;
+        closeProjectionDialog();
         render();
         worker.execute(() -> {
             String result;
@@ -324,219 +289,20 @@ final class IslandRuleImportUi {
 
     void destroy() {
         destroyed = true;
-        cancelRead(null);
-        if (dialog != null) {
-            dialog.setOnDismissListener(null);
-            dialog.dismiss();
-            dialog = null;
-        }
-        releaseCandidate();
         unbind();
         worker.shutdown();
     }
-
-    private void choose() {
-        if (destroyed || busy() || reading != null) return;
-        choosing = true;
-        status = "请选择规则 JSON 文件。";
-        render();
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("*/*");
-        try {
-            activity.startActivityForResult(intent, REQUEST);
-        } catch (RuntimeException failure) {
-            choosing = false;
-            setStatus("无法打开系统文件选择器。");
-        }
-    }
-
-    void onDocumentResult(int resultCode, Intent result) {
-        if (!choosing || destroyed) return;
-        choosing = false;
-        Uri uri = result == null ? null : result.getData();
-        if (resultCode != Activity.RESULT_OK || uri == null || !"content".equals(uri.getScheme())) {
-            setStatus(resultCode == Activity.RESULT_OK ? "文件选择器未返回可用的规则文件。" : "已取消规则文件选择。");
-            return;
-        }
-        ReadOperation operation = new ReadOperation();
-        reading = operation;
-        operation.timeout = () -> {
-            if (reading == operation) cancelRead("读取规则超时。");
-        };
-        handler.postDelayed(operation.timeout, TIMEOUT_MS);
-        setStatus("正在读取并校验规则…");
-        operation.future = worker.submit(() -> readRule(operation, uri));
-    }
-
-    private void readRule(ReadOperation operation, Uri uri) {
-        IslandRuleRepository.Pending pending = null;
-        try {
-            IslandRuleRepository owner = repository(app);
-            ParcelFileDescriptor file = app.getContentResolver().openFileDescriptor(uri, "r", operation.signal);
-            if (file == null) throw new IOException("NO_DOCUMENT_DESCRIPTOR");
-            try (InputStream input = new ParcelFileDescriptor.AutoCloseInputStream(file)) {
-                operation.attach(input);
-                pending = owner.prepare(input, null, true, 0, environment(app));
-            } finally {
-                operation.detach();
-            }
-            IslandRuleRepository.Pending prepared = pending;
-            handler.post(() -> receive(operation, owner, prepared));
-        } catch (IOException | RuntimeException failure) {
-            if (pending != null) close(pending);
-            handler.post(() -> {
-                if (reading != operation) return;
-                finishRead(operation);
-                setStatus(failureText(failure));
-            });
-        }
-    }
-
-    private void receive(ReadOperation operation, IslandRuleRepository owner, IslandRuleRepository.Pending prepared) {
-        if (reading != operation || destroyed) {
-            // 已关停页面的 IO 线程时，仍需释放在取消边界附近产生的暂存。
-            closeOffMain(prepared);
-            return;
-        }
-        finishRead(operation);
-        candidate = prepared;
-        repository = owner;
-        setStatus(prepared.empty || prepared.canApprove(true) ? "等待确认规则导入。" : "规则校验未通过。");
-        showConfirmation();
-    }
-
-    private void showConfirmation() {
-        if (!resumed || destroyed || activity.isFinishing() || candidate == null || dialog != null) return;
-        IslandRuleRepository.Pending prepared = candidate;
-        boolean acceptable = prepared.empty || prepared.canApprove(true);
-        boolean force = acceptable && !prepared.canApprove(false);
-        StringBuilder message = new StringBuilder();
-        if (prepared.empty) {
-            message.append("确认后将清空全部规则。");
-        }
-        if (prepared.entry != null) {
-            message.append("新增并启用规则 · ").append(IslandRuleManagerUi.appName(app, prepared.validation.rule.meta.packageName))
-                    .append("\n自定义规则可能在焦点通知中显示敏感信息。只导入你信任的规则。");
-        }
-        if (!prepared.empty) for (IslandRuleImportValidator.Finding finding : prepared.validation.findings) {
-            if (BuildConfig.DEBUG) Log.d(TAG, "DIAG import finding=" + finding.code + " path=" + finding.path);
-            if (finding.stage == IslandRuleImportValidator.Stage.L2) {
-                message.append(finding.blocking ? "\n系统界面版本与规则声明不符。" : "\n无法核实规则声明的系统界面版本。");
-            } else if (finding.blocking) message.append("\n规则格式、字段或匹配条件不受支持。");
-        }
-        AlertDialog.Builder builder = new AlertDialog.Builder(activity)
-                .setTitle(prepared.empty ? "确认清空规则集" : acceptable ? "确认导入自定义规则" : "规则被拒绝")
-                .setMessage(message);
-        if (acceptable) {
-            builder.setNegativeButton("取消", null);
-            builder.setPositiveButton(force ? "忽略版本差异并保存" : "确认保存", (ignored, which) -> saveConfirmed(prepared, force));
-        } else {
-            builder.setPositiveButton("关闭", null);
-        }
-        dialog = builder.create();
-        dialog.setOnDismissListener(ignored -> {
-            dialog = null;
-            if (candidate == prepared) {
-                releaseCandidate();
-                setStatus(acceptable ? "已取消规则导入。" : "规则校验未通过，未保存。");
-            }
-        });
-        dialog.show();
-    }
-
-    private void saveConfirmed(IslandRuleRepository.Pending prepared, boolean force) {
-        if (destroyed || activity.isFinishing() || candidate != prepared || !resumed) return;
-        IslandRuleRepository owner = repository;
-        candidate = null;
-        repository = null;
-        committing = true;
-        setStatus("正在保存规则…");
-        worker.execute(() -> {
-            String result;
-            long saved = 0;
-            boolean changed = false;
-            try {
-                requireUnlocked(app);
-                saved = owner.commit(prepared, force, environment(app));
-                changed = true;
-                result = prepared.empty ? "已保存空规则集。" : "规则保存成功。";
-            } catch (IOException | RuntimeException failure) {
-                result = failureText(failure);
-                if (failure instanceof IslandRuleRepository.Failure) {
-                    IslandRuleRepository.Code code = ((IslandRuleRepository.Failure) failure).code;
-                    changed = code == IslandRuleRepository.Code.DURABILITY_UNCERTAIN
-                            || code == IslandRuleRepository.Code.COMMITTED_CLEANUP_FAILED;
-                    if (code == IslandRuleRepository.Code.COMMITTED_CLEANUP_FAILED) saved = prepared.baselineRevision + 1;
-                }
-            } finally {
-                close(prepared);
-            }
-            if (changed) {
-                try { app.getContentResolver().notifyChange(IslandRuleProvider.HEAD, null, 0); }
-                catch (RuntimeException failure) { Log.w(TAG, "rule notify failed; reconciliation will retry"); }
-                IslandRuleProjectionProvider.notifyChanged(app.getContentResolver());
-            }
-            long confirmedSaved = saved;
-            boolean manifestChanged = changed;
-            String statusAfterSave = result;
-            handler.post(() -> {
-                if (destroyed) return;
-                committing = false;
-                if (manifestChanged) {
-                    savedRevision = confirmedSaved;
-                    refreshSavedRevision();
-                }
-                setStatus(statusAfterSave);
-            });
-        });
-    }
-
-    private void releaseCandidate() {
-        IslandRuleRepository.Pending prepared = candidate;
-        candidate = null;
-        repository = null;
-        if (prepared != null) closeOffMain(prepared);
-    }
-
-    private void closeOffMain(IslandRuleRepository.Pending prepared) {
-        if (!worker.isShutdown()) worker.execute(() -> close(prepared));
-        else startCloser(() -> close(prepared));
-    }
-
-    private static void close(IslandRuleRepository.Pending prepared) {
-        try { prepared.close(); }
-        catch (IOException | RuntimeException failure) { Log.w(TAG, "rule stage cleanup failed"); }
-    }
-
-    private void cancelRead(String reason) {
-        ReadOperation operation = reading;
-        if (operation == null) return;
-        finishRead(operation);
-        operation.cancel();
-        if (reason != null) setStatus(reason);
-    }
-
-    private void finishRead(ReadOperation operation) {
-        reading = null;
-        handler.removeCallbacks(operation.timeout);
-    }
-
-    private boolean busy() { return choosing || candidate != null || committing || reading != null; }
 
     private void setStatus(String message) { status = message; render(); }
 
     private void render() {
         handler.removeCallbacks(refreshStatus);
-        if (importButton == null) return;
-        importButton.setEnabled(!busy());
-        managerButton.setEnabled(!busy());
+        if (statusView == null) return;
         boolean completeReady = IslandRuleAppliedStatus.confirms(savedRevision);
         boolean authorizationAction = access == Access.REQUIRED || access == Access.RECOVER;
         projectionButton.setVisibility(authorizationAction && !completeReady ? android.view.View.VISIBLE : android.view.View.GONE);
         projectionButton.setText(access == Access.RECOVER ? "重新检查读取授权" : "允许 SystemUI 读取应用范围和所选字段路径");
-        projectionButton.setEnabled(!projectionBusy && !busy());
-        cancelButton.setVisibility(reading == null ? android.view.View.GONE : android.view.View.VISIBLE);
+        projectionButton.setEnabled(!projectionBusy);
         String application = savedRevision < 0 ? "无法读取已保存规则，请解锁后重新打开页面。"
                 : savedRevision == 0 ? "尚无已保存的规则集" : "App 已保存";
         if (savedRevision > 0) {
@@ -561,7 +327,8 @@ final class IslandRuleImportUi {
             if (parent == null) throw new IOException("CREDENTIAL_STORAGE_UNAVAILABLE");
             // 首次创建 no_backup 时，也确认它在 App 数据目录中的入口。
             syncDirectory(parent.toPath().getParent());
-            store = new IslandRuleRepository(parent.toPath().resolve("island-rules"), IslandRuleImportUi::syncDirectory);
+            store = new IslandRuleRepository(parent.toPath().resolve(IslandRuleRepository.DIRECTORY_NAME),
+                    IslandRuleImportUi::syncDirectory);
         }
         return store;
     }
@@ -611,45 +378,9 @@ final class IslandRuleImportUi {
                 default: return "规则操作失败，请重新打开列表并检查可用空间。";
             }
         }
-        if ("USER_LOCKED".equals(failure.getMessage())) return "请先解锁设备再导入规则。";
+        if ("USER_LOCKED".equals(failure.getMessage())) return "请先解锁设备再操作规则。";
         Log.w(TAG, "rule import IO failed: " + failure.getClass().getSimpleName());
         return "读取或保存规则失败，请检查文件访问与 App 私有存储。";
     }
 
-    private static void startCloser(Runnable action) {
-        Thread thread = new Thread(action, "FocusRestore-rule-close");
-        thread.setDaemon(true);
-        thread.start();
-    }
-
-    private static final class ReadOperation {
-        final CancellationSignal signal = new CancellationSignal();
-        Future<?> future;
-        Runnable timeout;
-        private InputStream stream;
-        private boolean cancelled;
-
-        synchronized void attach(InputStream input) throws IOException {
-            if (cancelled) throw new IOException("RULE_READ_CANCELLED");
-            stream = input;
-        }
-
-        synchronized void detach() { stream = null; }
-
-        void cancel() {
-            InputStream open;
-            synchronized (this) {
-                cancelled = true;
-                open = stream;
-            }
-            future.cancel(true);
-            startCloser(() -> {
-                try { signal.cancel(); }
-                catch (RuntimeException failure) { Log.w(TAG, "rule provider cancellation failed"); }
-                if (open == null) return;
-                try { open.close(); }
-                catch (IOException failure) { Log.w(TAG, "rule input close failed"); }
-            });
-        }
-    }
 }

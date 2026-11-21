@@ -9,6 +9,8 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -30,6 +32,19 @@ public class IslandCaptureEditorTest {
 
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
 
+    @Test public void captureListCleanupUsesAdapterCallbacksAndRejectsOldListReplies() throws Exception {
+        String sourceDir = "app/src/main/java/com/hyperos3/focusrestore/";
+        String pages = new String(Files.readAllBytes(Paths.get(sourceDir, "IslandRuleEditorUi.java")), StandardCharsets.UTF_8);
+        assertTrue(pages.contains("if (!(view instanceof AdapterView)) view.setOnClickListener(null);"));
+
+        String editor = new String(Files.readAllBytes(Paths.get(sourceDir, "IslandCaptureEditorUi.java")), StandardCharsets.UTF_8);
+        String release = editor.substring(editor.indexOf("private void releaseList("), editor.indexOf("private void openRecord("));
+        int detach = release.indexOf("view.list = null;");
+        assertTrue(detach >= 0 && release.indexOf("list.setOnItemClickListener(null);") > detach);
+        assertTrue(release.indexOf("list.setAdapter(null);") > release.indexOf("list.setOnScrollListener(null);"));
+        assertTrue(editor.contains("if (current == view && view.list == requestedList) revoke(view);"));
+    }
+
     @Test public void reorderingChangesPreviewAndRuleWithoutPersistingSamples() throws Exception {
         Fixture f = new Fixture();
         IslandCaptureEditor editor = f.editor();
@@ -48,6 +63,8 @@ public class IslandCaptureEditorTest {
         IslandRuleImportValidator.Result check = new IslandRuleImportValidator().validate(bytes, null);
         assertTrue(check.canApprove(false));
         IslandRule rule = check.rule;
+        assertEquals(2, rule.ruleVersion);
+        assertEquals(Arrays.asList(CONTENT.path, TITLE.path, LEGACY_TITLE.path), rule.notificationType.paths);
         assertEquals("baseInfo", rule.meta.templateType);
         assertEquals(1, rule.match.size());
         assertEquals("packageName", rule.match.get(0).field);
@@ -94,10 +111,13 @@ public class IslandCaptureEditorTest {
         }
         // 任选同组达到上限时，剩余路径仍可浏览但无法再选。
         assertTrue(available.size() > IslandCaptureEditor.MAX_SELECTION);
+        List<String> signature = new ArrayList<>();
+        for (IslandCapturePreview.Field field : available) signature.add(field.path.path);
+        IslandNotificationType type = IslandNotificationType.create(null, null, null, signature);
         for (int offset = 0; offset < available.size();) {
             int next = Math.min(offset + IslandCapturePreview.MAX_PAGE_FIELDS, available.size());
             assertTrue(editor.append(new IslandCapturePreview.Page(next == available.size() ? -1 : next,
-                    available.subList(offset, next))));
+                    available.subList(offset, next), type)));
             offset = next;
         }
         for (int i = 0; i < IslandCaptureEditor.MAX_SELECTION; i++) assertTrue(editor.toggle(available.get(i).path));

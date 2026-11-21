@@ -234,7 +234,7 @@ public class IslandRulePostProcessorTest {
     private static IslandRule rule(DisplaySpec display, int replacements) {
         IslandRule.Metadata meta = new IslandRule.Metadata("test.package", null, null, null, null,
                 null, null, null, null, "legacy", null, null, "ImKani", "", "2026-11-18T00:00:00Z");
-        return new IslandRule(1, meta,
+        return new IslandRule(IslandRule.CURRENT_VERSION, meta,
                 Collections.singletonList(new MatchClause("packageName", "equals", "test.package")),
                 Arrays.asList(binding("a", "/title", Math.min(8, replacements)),
                         binding("b", "/desc1", Math.max(0, replacements - 8)), binding("c", "/desc2", 0)),

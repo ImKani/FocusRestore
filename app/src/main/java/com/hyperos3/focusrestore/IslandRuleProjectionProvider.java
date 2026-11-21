@@ -64,7 +64,7 @@ public final class IslandRuleProjectionProvider extends ContentProvider {
             File parent = app.getNoBackupFilesDir();
             if (parent == null) throw new IOException("RULE_PROJECTION_CE_REQUIRED");
             IslandRuleImportUi.syncDirectory(parent.toPath().getParent());
-            consent = new IslandRuleProjectionConsent(parent.toPath().resolve("island-projection-consent"),
+            consent = new IslandRuleProjectionConsent(parent.toPath().resolve(IslandRuleProjectionConsent.FILE_NAME),
                     IslandRuleImportUi::syncDirectory);
         }
         return consent;

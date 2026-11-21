@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+ SPDX-License-Identifier: GPL-3.0-only
+ Copyright (C) ImKani. Project: FocusRestore
+ Source: https://github.com/ImKani/FocusRestore
+ 图形来源：本项目按几何形状独立绘制，未复制第三方图标资源。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M9,2h6v2h5v2H4V4h5z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M6.2,8h11.6l-0.9,13.1a1.7,1.7 0 0 1-1.7,1.6H8.8a1.7,1.7 0 0 1-1.7-1.6z" />
+</vector>

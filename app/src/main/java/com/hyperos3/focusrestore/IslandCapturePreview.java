@@ -23,7 +23,7 @@ final class IslandCapturePreview {
     static final int MAX_RECORD_BYTES = 64 * 1024;
     static final int MAX_PAGE_FIELDS = 12;
     static final int MAX_PAGE_BYTES = 8192;
-    static final int PAGE_HEADER_BYTES = 64;
+    static final int PAGE_HEADER_BYTES = 64 + 8 + 2 * IslandRuleProjection.REGISTRY_BINDING.length();
     private static final Pattern NUMBER = Pattern.compile("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?");
 
     enum Type { STRING, BOOLEAN, NUMBER }
@@ -78,9 +78,12 @@ final class IslandCapturePreview {
     static final class Page {
         final int nextOffset;
         final List<Field> fields;
-        Page(int nextOffset, List<Field> fields) {
+        final IslandNotificationType notificationType;
+
+        Page(int nextOffset, List<Field> fields, IslandNotificationType notificationType) {
             this.nextOffset = nextOffset;
-            this.fields = Collections.unmodifiableList(fields);
+            this.fields = IslandRule.immutableList(fields, "fields");
+            this.notificationType = notificationType;
         }
     }
 
@@ -88,12 +91,14 @@ final class IslandCapturePreview {
     final int user;
     final long generation;
     private final List<Field> fields;
+    final IslandNotificationType notificationType;
 
     final IslandCaptureRecord exportSource;
     final long retainedBytes;
     private final String snippet;
 
-    private IslandCapturePreview(IslandCaptureRecord record, long generation, List<Field> fields, Uneditable reason, String displayText) {
+    private IslandCapturePreview(IslandCaptureRecord record, long generation, List<Field> fields, Uneditable reason, String displayText, IslandNotificationType notificationType) {
+        this.notificationType = notificationType;
         summary = new Summary(record.sequence, record.packageName, record.capturedAt, record.sourceKey, fields.size(), reason);
         user = record.userId;
         this.generation = generation;
@@ -101,7 +106,7 @@ final class IslandCapturePreview {
         String projected = displayText.isEmpty() ? IslandCaptureEditor.snippet(fields) : displayText;
         snippet = projected.isEmpty() ? shortText(record.bodyText) : projected;
         exportSource = isSourceKey(record.sourceKey) ? record : null;
-        long bytes = record.bodyBytes + 2L * snippet.length();
+        long bytes = record.bodyBytes + 2L * snippet.length() + typeWireBytes(notificationType);
         for (Field field : fields) bytes += field.wireBytes;
         retainedBytes = bytes;
     }
@@ -117,26 +122,24 @@ final class IslandCapturePreview {
     static IslandCapturePreview project(IslandCaptureRecord record, long generation, Uneditable reason, String snippet) {
         if (record.state != IslandCaptureRecord.State.CAPTURED || record.userId == null) return null;
         List<Field> empty = Collections.emptyList();
-        if (reason != null) return new IslandCapturePreview(record, generation, empty, reason, snippet);
+        if (reason != null) return new IslandCapturePreview(record, generation, empty, reason, snippet, null);
         if (!isSourceKey(record.sourceKey) || !InputLimits.isPayloadAllowed(record.rawParamJSON)) {
-            return new IslandCapturePreview(record, generation, empty, Uneditable.LIMIT, snippet);
+            return new IslandCapturePreview(record, generation, empty, Uneditable.LIMIT, snippet, null);
         }
         Object parsed;
         try { parsed = IslandExportJson.parse(record.rawParamJSON); }
         catch (IslandExportJson.Invalid invalid) { parsed = null; }
-        if (!(parsed instanceof Map)) return new IslandCapturePreview(record, generation, empty, Uneditable.INVALID, snippet);
+        if (!(parsed instanceof Map)) return new IslandCapturePreview(record, generation, empty, Uneditable.INVALID, snippet, null);
         Map<?, ?> root = (Map<?, ?>) parsed;
         Map<?, ?> selected = IslandRuleExtractor.selectContainer(root, null);
+        IslandNotificationType type = IslandRuleContextAdapter.classify(root, null);
         List<Field> fields = new ArrayList<>();
         int bytes = 0;
         boolean limited = false;
         for (IslandRulePaths.Entry path : IslandRulePaths.all()) {
             if (!IslandRulePaths.isRuntimeAllowed(path)) continue;
-            Object value = "legacy".equals(path.templateGroup) ? root : selected;
-            for (String segment : path.path.substring(1).split("/")) {
-                value = value instanceof Map ? ((Map<?, ?>) value).get(segment) : null;
-                if (value == null) break;
-            }
+            if (type == null || !type.paths.contains(path.path)) continue;
+            Object value = IslandNotificationType.value(root, selected, path);
             Field field = projectField(path, value);
             if (field == null || field.wireBytes > MAX_RECORD_BYTES - bytes) {
                 if (value instanceof String || value instanceof IslandExportJson.NumberToken) limited = true;
@@ -146,7 +149,7 @@ final class IslandCapturePreview {
             bytes += field.wireBytes;
         }
         return new IslandCapturePreview(record, generation, fields, fields.isEmpty()
-                ? (limited ? Uneditable.LIMIT : Uneditable.NO_FIELDS) : null, snippet);
+                ? (limited ? Uneditable.LIMIT : Uneditable.NO_FIELDS) : null, snippet, type);
     }
 
     private static Field projectField(IslandRulePaths.Entry path, Object value) {
@@ -174,7 +177,7 @@ final class IslandCapturePreview {
     Page page(int offset) {
         if (offset < 0 || offset >= fields.size()) return null;
         List<Field> page = new ArrayList<>();
-        int bytes = PAGE_HEADER_BYTES;
+        int bytes = PAGE_HEADER_BYTES + typeWireBytes(notificationType);
         int next = offset;
         while (next < fields.size() && page.size() < MAX_PAGE_FIELDS) {
             Field field = fields.get(next);
@@ -183,8 +186,16 @@ final class IslandCapturePreview {
             bytes += field.wireBytes;
             next++;
         }
-        return new Page(next == fields.size() ? -1 : next, page);
+        return new Page(next == fields.size() ? -1 : next, page, notificationType);
     }
+
+    static int typeWireBytes(IslandNotificationType type) {
+        // 各字符串长度、结束符、对齐和字段计数均计入原分页上限。
+        return type == null ? 0 : 32 + 4 * type.paths.size()
+                + 2 * (length(type.protocol) + length(type.business) + length(type.scene));
+    }
+
+    private static int length(String value) { return value == null ? 0 : value.length(); }
 
     private static boolean finiteNumber(String text) {
         if (!NUMBER.matcher(text).matches()) return false;

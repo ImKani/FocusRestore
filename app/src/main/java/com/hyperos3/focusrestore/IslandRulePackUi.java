@@ -16,14 +16,18 @@ import android.os.ParcelFileDescriptor;
 import android.provider.DocumentsContract;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.LongConsumer;
 import java.util.function.Supplier;
 
 /** 规则包专用 SAF 入口。选择器、暂存确认及文档写入各有明确的所有者。 */
@@ -39,10 +43,10 @@ final class IslandRulePackUi {
     private static final ExecutorService RELEASE = Executors.newSingleThreadExecutor(
             action -> daemon(action, "FocusRestore-rule-pack-release"));
 
-    private final Activity activity;
+    private final SettingsActivity activity;
     private final Context app;
     private final ContentResolver resolver;
-    private final Runnable refreshSavedRevision;
+    private final LongConsumer onSaved;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable refreshAvailability = this::render;
     private Button importer;
@@ -53,17 +57,19 @@ final class IslandRulePackUi {
     private boolean destroyed;
     private boolean abandonPicker;
     private int request;
-    private String status = "导入或导出整批自定义规则（FRPK）。";
+    private String status = "在设备之间导入或导出规则包。";
     private Task current;
-    private AlertDialog dialog;
+    private long pageGeneration;
+    private IslandRulePackReviewUi review;
+    private AlertDialog exportDialog;
     private Prepared pending;
     private IslandRuleRepository.PackExport outgoing;
 
-    IslandRulePackUi(Activity activity, Runnable refreshSavedRevision) {
+    IslandRulePackUi(SettingsActivity activity, LongConsumer onSaved) {
         this.activity = activity;
         this.app = activity.getApplicationContext();
         resolver = app.getContentResolver();
-        this.refreshSavedRevision = refreshSavedRevision;
+        this.onSaved = onSaved;
     }
 
     void bind(Button importer, Button exporter, Button cancel, TextView statusView) {
@@ -72,7 +78,7 @@ final class IslandRulePackUi {
         this.cancel = cancel;
         this.statusView = statusView;
         importer.setOnClickListener(view -> choose(REQUEST_IMPORT));
-        exporter.setOnClickListener(view -> prepareExport());
+        exporter.setOnClickListener(view -> chooseExportMode());
         cancel.setOnClickListener(view -> cancel(IslandRulePackSaf.Stop.CANCELLED));
         render();
     }
@@ -127,17 +133,31 @@ final class IslandRulePackUi {
     }
 
     private void invalidateWork() {
+        pageGeneration++;
         main.removeCallbacks(refreshAvailability);
+        if (exportDialog != null) exportDialog.dismiss();
         cancel(IslandRulePackSaf.Stop.CANCELLED);
         if (pending != null) abandonConfirmation();
+        else closeReview();
+    }
+
+    private void closeReview() {
+        IslandRulePackReviewUi shown = review;
+        review = null;
+        if (shown != null) shown.close();
     }
 
     private void abandonConfirmation() {
         Prepared prepared = pending;
         pending = null;
-        if (dialog != null) dialog.dismiss();
+        closeReview();
         release(prepared);
         setStatus("已取消规则包确认，当前规则未修改。");
+    }
+
+    private boolean canShowReview() {
+        return resumed && !destroyed && !activity.isFinishing() && !activity.isDestroyed()
+                && importer != null && review == null;
     }
 
     private boolean canStart() {
@@ -158,7 +178,7 @@ final class IslandRulePackUi {
                 .addCategory(Intent.CATEGORY_OPENABLE)
                 .setType(importing ? "*/*" : "application/octet-stream");
         if (!importing) intent.putExtra(Intent.EXTRA_TITLE, "FocusRestore-rules-r" + outgoing.revision + ".frpk");
-        setStatus(importing ? "请选择 FRPK 规则包。" : "请选择规则包保存位置。");
+        setStatus(importing ? "请选择 .frpk 规则包。" : "请选择规则包保存位置。");
         try {
             activity.startActivityForResult(intent, code);
         } catch (RuntimeException failure) {
@@ -199,13 +219,34 @@ final class IslandRulePackUi {
         catch (RuntimeException failure) { return false; }
     }
 
-    private void prepareExport() {
+    private void chooseExportMode() {
+        if (!canStart() || exportDialog != null) return;
+        CheckBox clearValues = new CheckBox(activity);
+        clearValues.setText("清除示例文字（脱敏）");
+        clearValues.setChecked(true);
+        LinearLayout content = new LinearLayout(activity);
+        int horizontal = Math.round(24 * activity.getResources().getDisplayMetrics().density);
+        content.setPadding(horizontal, 0, horizontal, 0);
+        content.addView(clearValues);
+        exportDialog = new AlertDialog.Builder(activity)
+                .setTitle("导出规则包")
+                .setMessage("清除示例文字后，导入者可查看字段路径和顺序。取消勾选会将通知中的示例值写入文件，可能包含私人信息。")
+                .setView(content)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("继续", (ignored, which) -> prepareExport(!clearValues.isChecked()))
+                .create();
+        exportDialog.setOnDismissListener(ignored -> exportDialog = null);
+        exportDialog.show();
+    }
+
+    private void prepareExport(boolean includeSampleValues) {
         if (!canStart()) return;
-        Task task = begin("正在生成完整规则包…", false);
+        Task task = begin("正在生成规则包…", false);
         if (task == null) return;
         submit(task, main, () -> {
             try {
-                IslandRuleRepository.PackExport result = IslandRulePackSaf.prepareExport(IslandRuleImportUi.repository(app), task.operation);
+                IslandRuleRepository.PackExport result = IslandRulePackSaf.prepareExport(
+                        IslandRuleImportUi.repository(app), task.operation, includeSampleValues);
                 return () -> {
                     boolean deliver = task.operation.canDeliver(current == task, destroyed);
                     if (!finish(task, null) || !deliver) return;
@@ -221,14 +262,14 @@ final class IslandRulePackUi {
     }
 
     private void startRead(Uri uri) {
-        Task task = begin("正在读取并校验规则包…", false);
+        Task task = begin("正在读取并校验规则文件…", false);
         if (task == null) return;
         submit(task, main, () -> {
             try {
                 IslandRuleRepository repository = IslandRuleImportUi.repository(app);
-                IslandRuleRepository.PendingBatch candidate = IslandRulePackSaf.prepare(repository,
+                IslandRuleRepository.PendingBatch imported = IslandRulePackSaf.prepare(repository,
                         () -> task.input(resolver, uri), this::environment, task.operation);
-                Prepared prepared = new Prepared(repository, candidate);
+                Prepared prepared = new Prepared(repository, imported);
                 return () -> {
                     boolean deliver = task.operation.canDeliver(current == task, destroyed);
                     if (!finish(task, null) || !deliver || importer == null || activity.isFinishing()) {
@@ -236,7 +277,7 @@ final class IslandRulePackUi {
                         return;
                     }
                     pending = prepared;
-                    setStatus("等待确认整批规则操作。");
+                    setStatus("请核对规则包并确认导入。");
                     confirmIfReady();
                 };
             } catch (IOException | RuntimeException failure) {
@@ -246,36 +287,36 @@ final class IslandRulePackUi {
     }
 
     private void confirmIfReady() {
-        if (!resumed || destroyed || importer == null || activity.isFinishing() || dialog != null || pending == null) return;
+        if (!canShowReview() || pending == null) return;
         Prepared prepared = pending;
-        boolean empty = prepared.candidate.entryCount == 0;
-        dialog = new AlertDialog.Builder(activity)
-                .setTitle(empty ? "清空全部规则" : "确认替换全部规则")
-                .setMessage(IslandRulePackSaf.summary(prepared.candidate))
-                .setNegativeButton("取消", null)
-                .setPositiveButton(empty ? "清空全部规则" : "替换全部规则", (ignored, which) -> commit(prepared,
-                        empty ? IslandRuleRepository.BatchConfirmation.CLEAR_ALL : IslandRuleRepository.BatchConfirmation.REPLACE_ALL))
-                .create();
-        dialog.setOnDismissListener(ignored -> {
-            dialog = null;
-            if (pending == prepared) abandonConfirmation();
+        IslandRulePackReviewUi shown = IslandRulePackReviewUi.preview(activity, prepared.candidate,
+                replacements -> commit(prepared, replacements));
+        review = shown;
+        shown.show(() -> {
+            if (review == shown && pending == prepared) abandonConfirmation();
         });
-        dialog.show();
     }
 
-    private void commit(Prepared prepared, IslandRuleRepository.BatchConfirmation confirmation) {
+    private void commit(Prepared prepared, Set<Integer> replacements) {
         if (!resumed || destroyed || activity.isFinishing() || pending != prepared) return;
-        Task task = begin("正在保存整批规则…", false);
-        if (task == null) return;
+        Task task = begin("正在处理规则包…", false);
+        if (task == null) {
+            setStatus(BLOCKED);
+            return;
+        }
+        long generation = pageGeneration;
         pending = null;
+        closeReview();
         submit(task, main, () -> {
-            long revision = prepared.candidate.baselineRevision + 1;
+            IslandRuleRepository.BatchResult completed = null;
             boolean changed = false;
             String text;
             try {
-                revision = IslandRulePackSaf.commit(prepared.repository, prepared.candidate, confirmation, this::environment, task.operation);
-                changed = true;
-                text = savedText(revision, prepared.candidate.entryCount);
+                completed = IslandRulePackSaf.commit(prepared.repository, prepared.candidate, replacements,
+                        this::environment, task.operation);
+                changed = completed.changed;
+                text = IslandRulePackReviewUi.resultHeading(completed) + "。\n"
+                        + IslandRulePackReviewUi.resultDetail(completed);
             } catch (IOException | RuntimeException failure) {
                 if (failure instanceof IslandRuleRepository.Failure) {
                     IslandRuleRepository.Code code = ((IslandRuleRepository.Failure) failure).code;
@@ -284,7 +325,7 @@ final class IslandRulePackUi {
                     if (code == IslandRuleRepository.Code.DURABILITY_UNCERTAIN) {
                         text = "规则集已切换，保存状态待确认，请重新查看已保存规则。";
                     } else if (changed) {
-                        text = savedText(revision, prepared.candidate.entryCount) + "旧文件清理待完成。";
+                        text = "App 已保存规则，旧文件清理待完成。请重新查看已保存规则。";
                     } else text = IslandRulePackSaf.failure(failure);
                 } else text = IslandRulePackSaf.failure(failure);
             } finally {
@@ -296,17 +337,30 @@ final class IslandRulePackUi {
                 IslandRuleProjectionProvider.notifyChanged(resolver);
             }
             boolean manifestChanged = changed;
-            String result = text;
+            IslandRuleRepository.BatchResult result = completed;
+            String resultText = text;
             return () -> {
-                if (finish(task, task.stopped == null || manifestChanged ? result : null) && manifestChanged) {
-                    refreshSavedRevision.run();
-                }
+                boolean deliver = task.operation.canDeliver(current == task, destroyed);
+                if (!finish(task, task.stopped == null || manifestChanged ? resultText : null)) return;
+                if (manifestChanged) onSaved.accept(0);
+                // 切页后仍刷新已生效的修订，但不再弹出旧页面的规则明细。
+                if (deliver && result != null && generation == pageGeneration && canShowReview()) showResult(result);
             };
         });
     }
 
-    private static String savedText(long revision, int count) {
-        return "App 已保存，导入 " + count + " 条规则。";
+    private void showResult(IslandRuleRepository.BatchResult result) {
+        IslandRulePackReviewUi shown = IslandRulePackReviewUi.result(activity, result, completed -> {
+            if (review != completed) return;
+            closeReview();
+            long revision = result.confirmableRevision();
+            // 只有主动完成结果页才继续请求授权。返回或切页仍可从设置页手动确认。
+            if (revision > 0 && canShowReview()) onSaved.accept(revision);
+        });
+        review = shown;
+        shown.show(() -> {
+            if (review == shown) closeReview();
+        });
     }
 
     private IslandRuleImportValidator.Environment environment() throws IOException {
@@ -439,6 +493,7 @@ final class IslandRulePackUi {
 
     private void render() {
         main.removeCallbacks(refreshAvailability);
+        if (exportDialog != null) exportDialog.dismiss();
         if (destroyed || importer == null || !resumed) return;
         boolean occupied = FLIGHT.occupied();
         boolean waitingForExit = occupied && (current == null || current.stopped != null);

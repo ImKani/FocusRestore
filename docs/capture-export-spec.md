@@ -397,3 +397,7 @@ Section 13 retains its historical drafting status. The C2-3 memory capture, C2-4
 
 D1 补选条前原始数据适配、协议操作语义检查及无正文诊断，捕获记录的 11 个字段和导出格式沿用原定义。D2 捕获适配当时仍在设计中，`comparison` 当时统一为 `not-observed`，阶段记录为 216 项纯 JVM 测试。
 D1 leaves the eleven capture fields and export format unchanged. D2 capture adaptation is only a proposal in the D1 report. Comparison remains not-observed, and the JVM checks do not establish Android or ROM acceptance.
+
+## 15. 类型签名与预览分页 / Type signatures and preview pages
+
+从捕获创建规则前，编辑器在原有活动会话中读取预览分页。每页携带同一份完整登记路径签名、稳定协议标识和登记表摘要，仍受 8 KiB 页上限约束。签名在截减预览值之前计算。发现跨页签名不一致、旧页缺少签名或登记表不匹配时终止编辑。保存许可继续绑定当前会话和规则摘要，SystemUI 以当前捕获签名复算摘要。规则格式见 [全文规则合同](island-rules-spec.md#41-从捕获创建的通知类型规则--notification-types-in-capture-created-rules)。

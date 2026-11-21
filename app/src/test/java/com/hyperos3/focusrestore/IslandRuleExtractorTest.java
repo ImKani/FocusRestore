@@ -49,7 +49,7 @@ public class IslandRuleExtractorTest {
             List<DisplaySpec.Projection> order) {
         IslandRule.Metadata metadata = new IslandRule.Metadata("test.package", null, null,
                 null, null, null, null, null, null, template, null, null, "ImKani", "", "2026-11-18T00:00:00Z");
-        return new IslandRule(1, metadata,
+        return new IslandRule(IslandRule.CURRENT_VERSION, metadata,
                 Collections.singletonList(new MatchClause("packageName", "equals", "test.package")),
                 bindings, new DisplaySpec(order, "·", false));
     }

@@ -6,6 +6,8 @@ package com.hyperos3.focusrestore;
 import java.io.ByteArrayInputStream;
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -49,6 +51,37 @@ public class IslandRulePostSaveTest {
         long next = save("com.test.next");
         assertNull(consent.read(store));
         assertEquals(REVIEW, afterSave(next, next, true, consent.preview(store), false, true));
+    }
+
+    @Test public void importedRevisionOffersReviewAndPublishesRulesAfterExplicitConsent() throws Exception {
+        long previous = save("com.test.first");
+        consent.approve(store, consent.preview(store));
+        byte[] incoming = IslandCaptureEditor.candidate("com.test.imported",
+                Collections.singletonList(IslandRulePaths.find("/baseInfo/title")), 0).bytes();
+        byte[] pack = IslandRulePack.encode(Collections.singletonList(
+                new IslandRulePack.Entry(UUID.randomUUID(), true, 0, incoming)), false);
+        IslandRuleRepository.BatchResult result;
+        try (IslandRuleRepository.PendingBatch pending = store.prepareBatch(new ByteArrayInputStream(pack), null)) {
+            result = store.commitBatch(pending, Collections.emptySet(), null);
+        }
+        long revision = result.confirmableRevision();
+        assertEquals(previous + 1, revision);
+        assertNull(consent.read(store));
+        IslandRuleProjectionConsent.Preview preview = consent.preview(store);
+        assertEquals(REVIEW, afterSave(revision, store.revision(), true, preview, false, false));
+        assertEquals(NONE, afterSave(revision, store.revision(), true, preview, true, false));
+        assertEquals(NONE, afterSave(revision, store.revision(), false, preview, false, false));
+
+        try (IslandRuleRepository.PendingBatch pending = store.prepareBatch(new ByteArrayInputStream(pack), null)) {
+            IslandRuleRepository.BatchResult skipped = store.commitBatch(pending, Collections.emptySet(), null);
+            assertEquals(0, skipped.confirmableRevision());
+            assertEquals(NONE, afterSave(skipped.confirmableRevision(), revision, true, preview, false, false));
+        }
+        consent.approve(store, preview);
+        List<IslandRuleProjection.Row> rows = IslandRuleProjection.decode(consent.read(store));
+        assertEquals(2, rows.size());
+        assertEquals("com.test.imported", rows.get(1).packageName);
+        assertEquals(Collections.singletonList("/baseInfo/title"), rows.get(1).paths);
     }
 
     @Test public void strictReaderAndEmptyProjectionDoNotNeedReview() throws Exception {

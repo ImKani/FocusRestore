@@ -10,9 +10,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -29,15 +31,13 @@ public class IslandRulePackSafTest {
             new IslandRuleImportValidator.Environment("17.03.260226.r", 42L);
     private static final IslandRuleImportValidator.Environment OTHER =
             new IslandRuleImportValidator.Environment("17.03.260226.r", 43L);
-    private static final IslandRuleRepository.BatchConfirmation REPLACE = IslandRuleRepository.BatchConfirmation.REPLACE_ALL;
-    private static final IslandRuleRepository.BatchConfirmation CLEAR = IslandRuleRepository.BatchConfirmation.CLEAR_ALL;
     private static final String SENTINEL = "private-test-content-737";
-    private static final String RULE = "{\"ruleVersion\":1,\"meta\":{\"packageName\":\"com.test.pack\",\"templateType\":\"baseInfo\","
+    private static final String RULE = "{\"ruleVersion\":2,\"meta\":{\"packageName\":\"com.test.pack\",\"templateType\":\"baseInfo\","
             + "\"ruleAuthor\":\"FocusRestore\",\"ruleDescription\":\"\",\"createdAt\":\"2026-11-19T00:00:00Z\"},"
             + "\"match\":{\"all\":[{\"field\":\"packageName\",\"op\":\"equals\",\"value\":\"com.test.pack\"}]},"
             + "\"extract\":[{\"id\":\"field1\",\"path\":\"/baseInfo/title\"}],\"display\":{\"order\":[{\"slot\":\"extra\",\"ref\":\"field1\"}]}}";
     private static final String UNVERIFIED = RULE.replace("\"createdAt\"", "\"protocolVersion\":1,\"createdAt\"");
-    private static final String UNSUPPORTED = RULE.replace("\"ruleVersion\":1", "\"ruleVersion\":1,\"x-note\":\"" + SENTINEL + "\"");
+    private static final String UNSUPPORTED = RULE.replace("\"ruleVersion\":2", "\"ruleVersion\":2,\"x-note\":\"" + SENTINEL + "\"");
     private static final String DOCUMENT_URI = "content://com.android.externalstorage.documents/document/primary%3Arules.frpk";
     @Rule public final TemporaryFolder temp = new TemporaryFolder();
 
@@ -53,10 +53,11 @@ public class IslandRulePackSafTest {
     @Test public void oversizedAndCorruptInputsKeepOldRevision() throws Exception {
         IslandRuleRepository repository = repository();
         installSingle(repository, RULE);
-        IslandRulePack.Failure tooLarge = assertThrows(IslandRulePack.Failure.class, () ->
-                prepare(repository, new byte[IslandRulePack.MAX_BYTES + 1]));
+        byte[] oversized = new byte[IslandRulePack.MAX_BYTES + 1];
+        ByteBuffer.wrap(oversized).putInt(IslandRulePack.MAGIC).putInt(2);
+        IslandRulePack.Failure tooLarge = assertThrows(IslandRulePack.Failure.class, () -> prepare(repository, oversized));
         assertEquals(IslandRulePack.Code.PACK_SIZE, tooLarge.code);
-        assertTrue(IslandRulePackSaf.failure(tooLarge).contains("2,122,796"));
+        assertTrue(IslandRulePackSaf.failure(tooLarge).contains("大小上限"));
         byte[] corrupt = pack(item(1, true, 7, RULE));
         corrupt[corrupt.length - 1] ^= 1;
         assertEquals(IslandRulePack.Code.DIGEST, assertThrows(IslandRulePack.Failure.class,
@@ -86,23 +87,43 @@ public class IslandRulePackSafTest {
         assertEquals(0, repository.revision());
     }
 
-    @Test public void confirmationUsesExactValidatedBytesAndSafeOrderedSummary() throws Exception {
+    @Test public void pickerReadsCurrentPackOnceAndRejectsExperimentFormats() throws Exception {
+        IslandRuleRepository repository = repository();
+        installSingle(repository, RULE);
+        AtomicInteger opens = new AtomicInteger();
+        byte[] source = pack(item(1, true, 7, RULE));
+        try (IslandRuleRepository.PendingBatch batch = IslandRulePackSaf.prepare(repository, () -> {
+            opens.incrementAndGet();
+            return new ByteArrayInputStream(source);
+        }, () -> CURRENT, operation())) {
+            assertEquals(1, batch.rows.size());
+            assertEquals(1, opens.get());
+        }
+        byte[] oldPack = source.clone();
+        ByteBuffer.wrap(oldPack).putInt(Integer.BYTES, 1);
+        assertThrows(IslandRulePack.Failure.class, () -> prepare(repository, oldPack));
+        assertThrows(IslandRulePack.Failure.class, () -> prepare(repository, bytes(RULE + "\n")));
+        assertThrows(IslandRulePack.Failure.class, () -> prepare(repository, Arrays.copyOf(source, 5)));
+        assertEquals(1, repository.revision());
+    }
+
+    @Test public void confirmationUsesExactValidatedBytesAndOrderedPreview() throws Exception {
         IslandRuleRepository repository = repository();
         byte[] original = bytes(RULE + "\n");
-        byte[] source = pack(IslandRulePackTest.entry(2, false, Integer.MIN_VALUE, original), item(1, true, 7, UNVERIFIED));
+        byte[] source = pack(IslandRulePackTest.entry(2, false, Integer.MIN_VALUE, original), item(1, true, 7, distinct(UNVERIFIED)));
         AtomicInteger opens = new AtomicInteger();
         try (IslandRuleRepository.PendingBatch candidate = IslandRulePackSaf.prepare(repository, () -> {
             opens.incrementAndGet();
             return new ByteArrayInputStream(source);
         }, () -> CURRENT, operation())) {
-            String summary = IslandRulePackSaf.summary(candidate);
-            assertTrue(summary.contains("规则包 2 条，启用 1 条"));
-            assertTrue(summary.contains("1. 禁用 · 优先级 -2147483648\n2. 启用 · 优先级 7 · 兼容性待核实"));
-            assertFalse(summary.contains("com.test.pack"));
-            assertFalse(summary.contains("/baseInfo/title"));
+            assertEquals(2, candidate.rows.size());
+            assertEquals(IslandRuleRepository.BatchRowStatus.ADD, candidate.rows.get(0).status);
+            assertFalse(candidate.rows.get(0).incoming.enabled);
+            assertEquals(Integer.MIN_VALUE, candidate.rows.get(0).incoming.priority);
+            assertTrue(candidate.rows.get(1).findings.stream().anyMatch(item -> "L2_UNVERIFIABLE".equals(item.code)));
             assertEquals(0, repository.revision());
             Arrays.fill(source, (byte) 0);
-            assertEquals(1, IslandRulePackSaf.commit(repository, candidate, REPLACE, () -> CURRENT, operation()));
+            assertEquals(1, IslandRulePackSaf.commit(repository, candidate, Collections.emptySet(), () -> CURRENT, operation()).revision);
         }
         assertEquals(1, opens.get());
         try (IslandRuleRepository.ReadView view = repository.openRead()) {
@@ -112,49 +133,56 @@ public class IslandRulePackSafTest {
 
     @Test public void lateBaselineAndEnvironmentChangesCannotSaveBatch() throws Exception {
         IslandRuleRepository repository = repository();
-        byte[] source = pack(item(1, true, 7, RULE));
+        byte[] source = pack(item(1, true, 7, distinct(RULE)));
         try (IslandRuleRepository.PendingBatch candidate = prepare(repository, source)) {
             installSingle(repository, RULE);
             assertEquals(IslandRuleRepository.Code.BASELINE_CHANGED, assertThrows(IslandRuleRepository.Failure.class,
-                    () -> IslandRulePackSaf.commit(repository, candidate, REPLACE, () -> CURRENT, operation())).code);
+                    () -> IslandRulePackSaf.commit(repository, candidate, Collections.emptySet(), () -> CURRENT, operation())).code);
         }
         AtomicInteger environmentReads = new AtomicInteger();
         try (IslandRuleRepository.PendingBatch candidate = prepare(repository, source)) {
             assertEquals(IslandRuleRepository.Code.ENVIRONMENT_CHANGED, assertThrows(IslandRuleRepository.Failure.class,
-                    () -> IslandRulePackSaf.commit(repository, candidate, REPLACE,
+                    () -> IslandRulePackSaf.commit(repository, candidate, Collections.emptySet(),
                             () -> environmentReads.incrementAndGet() == 1 ? CURRENT : OTHER, operation())).code);
             assertEquals(2, environmentReads.get());
         }
         assertEquals(1, repository.revision());
     }
 
-    @Test public void emptyPackCanBeDismissedOrExplicitlyConfirmed() throws Exception {
+    @Test public void emptyPackKeepsLocalRulesAndRevision() throws Exception {
         IslandRuleRepository repository = repository();
         installSingle(repository, RULE);
         try (IslandRuleRepository.PendingBatch candidate = prepare(repository, pack())) {
-            assertTrue(IslandRulePackSaf.summary(candidate).contains("清空全部规则"));
-            assertEquals(IslandRuleRepository.Code.VALIDATION, assertThrows(IslandRuleRepository.Failure.class,
-                    () -> IslandRulePackSaf.commit(repository, candidate, REPLACE, () -> CURRENT, operation())).code);
-        }
-        assertEquals(1, repository.revision());
-        try (IslandRuleRepository.PendingBatch candidate = prepare(repository, pack())) {
-            assertEquals(2, IslandRulePackSaf.commit(repository, candidate, CLEAR, () -> CURRENT, operation()));
+            assertTrue(candidate.rows.isEmpty());
+            IslandRuleRepository.BatchResult result = IslandRulePackSaf.commit(repository, candidate,
+                    Collections.emptySet(), () -> CURRENT, operation());
+            assertFalse(result.changed);
+            assertTrue(result.rows.isEmpty());
+            assertEquals(1, result.revision);
         }
         try (IslandRuleRepository.ReadView view = repository.openRead()) {
-            assertEquals(2, view.revision);
-            assertTrue(view.entries.isEmpty());
+            assertEquals(1, view.revision);
+            assertEquals(1, view.entries.size());
+            assertArrayEquals(bytes(RULE), view.read(view.entries.get(0)));
         }
     }
 
-    @Test public void rejectedDisabledTailLeavesEarlierValidEntryUncommitted() throws Exception {
+    @Test public void invalidRowAppearsInPreviewAndValidRowIsAddedOnlyAfterConfirming() throws Exception {
         IslandRuleRepository repository = repository();
         installSingle(repository, RULE);
-        IslandRuleRepository.BatchRejected rejected = assertThrows(IslandRuleRepository.BatchRejected.class,
-                () -> prepare(repository, pack(item(1, true, 0, RULE), item(2, false, 0, UNSUPPORTED))));
-        String response = IslandRulePackSaf.failure(rejected);
-        assertTrue(response.contains("第 2 条"));
-        assertFalse(response.contains(SENTINEL));
-        assertEquals(1, repository.revision());
+        try (IslandRuleRepository.PendingBatch candidate = prepare(repository,
+                pack(item(1, true, 0, distinct(RULE)), item(2, false, 0, UNSUPPORTED)))) {
+            assertEquals(IslandRuleRepository.BatchRowStatus.ADD, candidate.rows.get(0).status);
+            assertEquals(IslandRuleRepository.BatchRowStatus.FAILED, candidate.rows.get(1).status);
+            assertNotNull(candidate.rows.get(1).failureCode);
+            assertFalse(candidate.rows.get(1).failureCode.contains(SENTINEL));
+            assertEquals(1, repository.revision());
+            IslandRuleRepository.BatchResult result = IslandRulePackSaf.commit(repository, candidate,
+                    Collections.emptySet(), () -> CURRENT, operation());
+            assertEquals(IslandRuleRepository.BatchResultStatus.ADDED, result.rows.get(0).status);
+            assertEquals(IslandRuleRepository.BatchResultStatus.FAILED, result.rows.get(1).status);
+            assertEquals(2, result.revision);
+        }
     }
 
     @Test public void cancellationAtFinalGateRemovesStageAndPreservesEntireOldRevision() throws Exception {
@@ -169,12 +197,12 @@ public class IslandRulePackSafTest {
             }
         });
         installSingle(repository, RULE);
-        try (IslandRuleRepository.PendingBatch candidate = prepare(repository, pack(item(1, true, 0, RULE), item(2, true, 8, RULE)))) {
+        try (IslandRuleRepository.PendingBatch candidate = prepare(repository, pack(item(1, true, 0, distinct(RULE))))) {
             AtomicLong clock = new AtomicLong();
             IslandRulePackSaf.Operation operation = new IslandRulePackSaf.Operation(clock::get);
             cancelling.set(operation);
             FutureTask<IslandRulePackSaf.Stopped> work = background(() -> assertThrows(IslandRulePackSaf.Stopped.class,
-                    () -> IslandRulePackSaf.commit(repository, candidate, REPLACE, () -> CURRENT, operation)));
+                    () -> IslandRulePackSaf.commit(repository, candidate, Collections.emptySet(), () -> CURRENT, operation)));
             try {
                 await(staging);
                 assertTrue(operation.stop(IslandRulePackSaf.Stop.CANCELLED));
@@ -399,8 +427,8 @@ public class IslandRulePackSafTest {
         installSingle(repository, RULE);
         AtomicLong clock = new AtomicLong();
         IslandRulePackSaf.Operation operation = new IslandRulePackSaf.Operation(clock::get);
-        try (IslandRuleRepository.PendingBatch candidate = prepare(repository, pack())) {
-            FutureTask<Long> work = background(() -> IslandRulePackSaf.commit(repository, candidate, CLEAR,
+        try (IslandRuleRepository.PendingBatch candidate = prepare(repository, pack(item(1, true, 0, distinct(RULE))))) {
+            FutureTask<IslandRuleRepository.BatchResult> work = background(() -> IslandRulePackSaf.commit(repository, candidate, Collections.emptySet(),
                     () -> CURRENT, operation));
             try {
                 await(switching);
@@ -411,7 +439,7 @@ public class IslandRulePackSafTest {
             } finally {
                 unblock.countDown();
             }
-            assertEquals(2L, work.get(5, TimeUnit.SECONDS).longValue());
+            assertEquals(2L, work.get(5, TimeUnit.SECONDS).revision);
             assertTrue(operation.canDeliver(true, false));
             assertEquals(2L, repository.revision());
         }
@@ -439,6 +467,7 @@ public class IslandRulePackSafTest {
     }
 
     private static IslandRulePackSaf.Operation operation() { return new IslandRulePackSaf.Operation(System::nanoTime); }
+    private static String distinct(String rule) { return rule.replace("com.test.pack", "com.test.another"); }
     private static byte[] bytes(String value) { return value.getBytes(StandardCharsets.UTF_8); }
     private static IslandRulePack.Entry item(int id, boolean enabled, int priority, String rule) {
         return IslandRulePackTest.entry(id, enabled, priority, bytes(rule));

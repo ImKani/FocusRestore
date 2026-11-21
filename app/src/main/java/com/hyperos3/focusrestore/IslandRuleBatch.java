@@ -3,7 +3,6 @@
  */
 package com.hyperos3.focusrestore;
 
-import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -66,16 +65,23 @@ final class IslandRuleBatch {
         List<IslandRuleSetLoader.Source> sources = new ArrayList<>();
         for (IslandRuleRepository.Entry entry : manifest.entries) {
             Blob blob = blobs.get(entry.blob);
+            IslandRuleImportValidator.Result validation;
             if (blob == null) {
                 byte[] bytes = new byte[entry.byteCount];
                 in.readFully(bytes);
                 if (!entry.sha256.equals(IslandRuleRepository.digest(bytes))) throw new IOException("BATCH_DIGEST");
-                blob = new Blob(bytes, validator.validate(bytes, environment));
+                validation = validator.validate(bytes, environment);
+            } else {
+                validation = blob.validation;
+            }
+            // 每条仍按本条批准记录校验，不能借用同一对象其他条目的兼容例外。
+            checkApproval(entry, validation);
+            if (blob == null) {
+                blob = new Blob(validation, entry.byteCount);
                 blobs.put(entry.blob, blob);
             }
-            checkApproval(entry, blob.validation);
             sources.add(IslandRuleSetLoader.Source.fromVerifiedObject(entry.id, entry.revision,
-                    entry.enabled, entry.priority, blob));
+                    entry.enabled, entry.priority, blob.object));
         }
         if (in.readLong() != expected || in.read() != -1) throw new IOException("BATCH_TRAILER");
         return new IslandRuleBatch(expected, sources);
@@ -91,15 +97,13 @@ final class IslandRuleBatch {
         }
     }
 
-    private static final class Blob implements IslandRuleSetLoader.StreamSource {
-        final byte[] bytes;
+    private static final class Blob {
         final IslandRuleImportValidator.Result validation;
+        final IslandRuleSetLoader.VerifiedObject object;
 
-        Blob(byte[] bytes, IslandRuleImportValidator.Result validation) {
-            this.bytes = bytes;
+        Blob(IslandRuleImportValidator.Result validation, int byteCount) {
             this.validation = validation;
+            this.object = new IslandRuleSetLoader.VerifiedObject(validation.rule, byteCount);
         }
-
-        @Override public InputStream open() { return new ByteArrayInputStream(bytes); }
     }
 }

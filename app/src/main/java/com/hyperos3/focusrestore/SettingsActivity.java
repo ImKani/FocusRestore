@@ -48,6 +48,7 @@ import android.view.MotionEvent;
 import android.view.ViewConfiguration;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
@@ -74,9 +75,7 @@ import android.text.TextWatcher;
 
 import java.util.function.IntConsumer;
 import java.util.function.BooleanSupplier;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.concurrent.Executor;
 
 
 import java.util.ArrayList;
@@ -169,19 +168,20 @@ public final class SettingsActivity extends Activity {
     private ImageButton[] navButtons;
     private int currentPage;
 
-    private int COLOR_PRIMARY = 0xFF3E5F7A;
+    int COLOR_PRIMARY = 0xFF3E5F7A;
     private int COLOR_PRIMARY_LIGHT = 0xFFC7DCEB;
-    private int COLOR_BACKGROUND = 0xFFF2F5F8;
-    private int COLOR_TEXT_PRIMARY = 0xFF191C1E;
-    private int COLOR_TEXT_SECONDARY = 0xFF42474B;
-    private int COLOR_DIVIDER = 0xFFC2C7CB;
-    private int COLOR_SURFACE = 0xFFF7FAFC;
-    private int COLOR_SURFACE_HIGH = 0xFFE9EEF2;
+    int COLOR_BACKGROUND = 0xFFF2F5F8;
+    int COLOR_TEXT_PRIMARY = 0xFF191C1E;
+    int COLOR_TEXT_SECONDARY = 0xFF42474B;
+    int COLOR_DIVIDER = 0xFFC2C7CB;
+    int COLOR_SURFACE = 0xFFF7FAFC;
+    int COLOR_SURFACE_HIGH = 0xFFE9EEF2;
     private int COLOR_NAV_SELECTED = 0xFFD6E4EE;
     private boolean nightMode;
     private Dialog activeDialog;
     private Toast feedbackToast;
     private ScrollView pageScroll;
+    private PageFirstDraw pageFirstDraw;
     private final int[] scrollPositions = new int[3];
     private final Set<String> expandedSections = new HashSet<>();
     private final Map<String, View> searchTargets = new java.util.HashMap<>();
@@ -272,8 +272,7 @@ public final class SettingsActivity extends Activity {
     private Switch tintIslandIconSwitch;
     private static final String[] ICON_TYPE_LABELS = {"应用图标", "焦点专用图标", "通知小图标", "超级岛解析图标"};
     private LinearLayout focusIconOrderContainer;
-    private final LinearLayout[] focusIconOrderRows = new LinearLayout[4];
-    private FocusIconDragHandler focusIconDragHandler;
+    private SettingsSortRows focusIconDragHandler;
     private Switch tintDeviceIconSwitch;
     private Switch notificationRowClickFallbackSwitch;
     private Switch independentFocusBannerSwitch;
@@ -361,7 +360,6 @@ public final class SettingsActivity extends Activity {
     private Switch dialogShowSystemSwitch;
     private TextView dialogEmptyView;
     private boolean dialogAppsLoaded;
-    private boolean dialogAppsLoading;
     private static final String APP_CACHE_SEPARATOR = "\u001e";
     private final Map<String, String> appLabels = new java.util.HashMap<>();
 
@@ -373,8 +371,7 @@ public final class SettingsActivity extends Activity {
                 : android.R.style.Theme_Material_Light_NoActionBar);
         super.onCreate(savedInstanceState);
         ruleImportUi = new IslandRuleImportUi(this);
-        ruleImportUi.restore(savedInstanceState);
-        rulePackUi = new IslandRulePackUi(this, ruleImportUi::refreshSavedRevision);
+        rulePackUi = new IslandRulePackUi(this, revision -> ruleImportUi.afterCommit(revision, false));
         rulePackUi.restore(savedInstanceState);
         islandCaptureUi = new IslandCaptureUi(this, ruleImportUi);
         applySystemPalette();
@@ -777,31 +774,21 @@ public final class SettingsActivity extends Activity {
     private void navigateToSetting(SettingsSearchIndex.Entry entry) {
         // 先展开再重建，只定位，不自动修改模式、依赖开关或任何配置值。
         expandedSections.add(entry.section);
-        showPage(entry.page);
-        ScrollView scroll = pageScroll;
-        View target = searchTargets.get(entry.id);
-        if (target == null) {
-            android.util.Log.w(TAG, "settings search target missing id=" + entry.id);
-            showFeedback("暂时无法定位这项设置，请在“" + entry.section + "”中查看。");
-            return;
+        showPage(entry.page, entry);
+    }
+
+    private View positionSearchTarget(ScrollView scroll, View target) {
+        // 页面本身仍不可见，只检查目标到滚动容器之间的局部显隐。
+        View visibleTarget = target;
+        for (View node = target; node != scroll && node.getParent() instanceof View;
+                node = (View) node.getParent()) {
+            if (node.getVisibility() != View.VISIBLE) visibleTarget = (View) node.getParent();
         }
-        scroll.post(() -> {
-            if (destroyed || pageScroll != scroll || searchTargets.get(entry.id) != target) return;
-            View visibleTarget = target;
-            while (!visibleTarget.isShown() && visibleTarget.getParent() instanceof View
-                    && visibleTarget.getParent() != scroll) {
-                visibleTarget = (View) visibleTarget.getParent();
-            }
-            if (visibleTarget != target || !target.isEnabled()) {
-                showFeedback("已定位；此项需先开启所属功能。");
-            }
-            android.graphics.Rect rect = new android.graphics.Rect();
-            visibleTarget.getDrawingRect(rect);
-            scroll.offsetDescendantRectToMyCoords(visibleTarget, rect);
-            scroll.scrollTo(0, Math.max(0, rect.top - dp(64)));
-            scrollPositions[entry.page] = scroll.getScrollY();
-            highlightSettingsSearchTarget(visibleTarget);
-        });
+        android.graphics.Rect rect = new android.graphics.Rect();
+        visibleTarget.getDrawingRect(rect);
+        scroll.offsetDescendantRectToMyCoords(visibleTarget, rect);
+        scroll.scrollTo(0, Math.max(0, rect.top - dp(64)));
+        return visibleTarget;
     }
 
     private void highlightSettingsSearchTarget(View target) {
@@ -887,8 +874,12 @@ public final class SettingsActivity extends Activity {
     }
 
     private void showPage(int page) {
+        showPage(page, null);
+    }
+
+    private void showPage(int page, SettingsSearchIndex.Entry destination) {
         captureCurrentInputs();
-        if (pageScroll != null) scrollPositions[currentPage] = pageScroll.getScrollY();
+        rememberPageScroll();
         clearPageControls();
         rebuildingPage = true;
         try {
@@ -898,6 +889,7 @@ public final class SettingsActivity extends Activity {
             ScrollView scroll = new ScrollView(this);
             pageScroll = scroll;
             scroll.setFillViewport(true);
+            scroll.setVisibility(View.INVISIBLE);
             LinearLayout content = new LinearLayout(this);
             content.setOrientation(LinearLayout.VERTICAL);
             content.setPadding(dp(16), dp(12), dp(16), dp(24));
@@ -907,15 +899,104 @@ public final class SettingsActivity extends Activity {
             bindSettingsSearchTargets();
             scroll.addView(content);
             pageContainer.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
-            scroll.post(() -> {
-                if (!destroyed && pageScroll == scroll) scroll.scrollTo(0, scrollPositions[page]);
-            });
+            pageFirstDraw = new PageFirstDraw(scroll, page, destination);
+            pageFirstDraw.start();
         } finally {
             rebuildingPage = false;
         }
     }
 
+    private void rememberPageScroll() {
+        // 快速切页时，尚未首绘的新视图仍在初始位置，不能覆盖此前记录。
+        if (pageScroll != null && pageFirstDraw == null && pageScroll.isLaidOut()
+                && pageScroll.getVisibility() == View.VISIBLE) {
+            scrollPositions[currentPage] = pageScroll.getScrollY();
+        }
+    }
+
+    private final class PageFirstDraw implements ViewTreeObserver.OnGlobalLayoutListener,
+            ViewTreeObserver.OnPreDrawListener, View.OnAttachStateChangeListener {
+        private static final int MAX_FRAMES = 3;
+        final ScrollView scroll;
+        final int page;
+        final SettingsSearchIndex.Entry destination;
+        private ViewTreeObserver observer;
+        private int frames;
+
+        PageFirstDraw(ScrollView scroll, int page, SettingsSearchIndex.Entry destination) {
+            this.scroll = scroll;
+            this.page = page;
+            this.destination = destination;
+        }
+
+        void start() {
+            scroll.addOnAttachStateChangeListener(this);
+            if (scroll.isAttachedToWindow()) onViewAttachedToWindow(scroll);
+        }
+
+        @Override public void onGlobalLayout() {
+            revealWhenReady(false);
+        }
+
+        @Override public boolean onPreDraw() {
+            // 全局布局不保证再次回调。取消这帧绘制由 ViewRoot 调度下一帧，保留上一屏直到恢复结束。
+            return revealWhenReady(++frames >= MAX_FRAMES);
+        }
+
+        private boolean revealWhenReady(boolean deadline) {
+            boolean current = pageFirstDraw == this && pageScroll == scroll && currentPage == page;
+            if (!current || destroyed || !scroll.isAttachedToWindow()) {
+                close();
+                return true;
+            }
+            View target = destination == null ? null : searchTargets.get(destination.id);
+            View child = scroll.getChildAt(0);
+            if (!deadline && (child == null || !child.isLaidOut() || scroll.getHeight() <= 0)) return false;
+            View located = null;
+            if (target != null) {
+                located = positionSearchTarget(scroll, target);
+            } else {
+                int viewport = scroll.getHeight() - scroll.getPaddingTop() - scroll.getPaddingBottom();
+                // 与 ScrollView 的滚动边界一致，内容不足时给尚在变化的高度留出后续布局帧。
+                int maxY = child == null ? 0 : Math.max(0, child.getHeight() - viewport);
+                int savedY = scrollPositions[page];
+                if (!deadline && maxY < savedY) return false;
+                scroll.scrollTo(0, Math.min(savedY, maxY));
+            }
+            scroll.setVisibility(View.VISIBLE);
+            scrollPositions[page] = scroll.getScrollY();
+            close();
+            if (located != null) {
+                if (located != target || !target.isEnabled()) showFeedback("已定位；此项需先开启所属功能。");
+                highlightSettingsSearchTarget(located);
+            } else if (destination != null) {
+                android.util.Log.w(TAG, "settings search target missing id=" + destination.id);
+                showFeedback("暂时无法定位这项设置，请在“" + destination.section + "”中查看。");
+            }
+            return true;
+        }
+
+        @Override public void onViewAttachedToWindow(View view) {
+            observer = scroll.getViewTreeObserver();
+            observer.addOnGlobalLayoutListener(this);
+            observer.addOnPreDrawListener(this);
+        }
+
+        @Override public void onViewDetachedFromWindow(View view) { close(); }
+
+        void close() {
+            if (observer != null && observer.isAlive()) {
+                observer.removeOnGlobalLayoutListener(this);
+                observer.removeOnPreDrawListener(this);
+            }
+            observer = null;
+            scroll.removeOnAttachStateChangeListener(this);
+            if (pageFirstDraw == this) pageFirstDraw = null;
+        }
+    }
+
     private void clearPageControls() {
+        if (pageFirstDraw != null) pageFirstDraw.close();
         defaultActionRefreshers.clear();
         ruleImportUi.unbind();
         rulePackUi.unbind();
@@ -964,11 +1045,9 @@ public final class SettingsActivity extends Activity {
         focusDividerStyleField = null;
         focusDividerOptionsPanel = null;
         tintIslandIconSwitch = null;
-        if (focusIconDragHandler != null) focusIconDragHandler.finish(false);
+        if (focusIconDragHandler != null) focusIconDragHandler.unbind();
         focusIconDragHandler = null;
-        if (focusIconOrderContainer != null) focusIconOrderContainer.setOnTouchListener(null);
         focusIconOrderContainer = null;
-        java.util.Arrays.fill(focusIconOrderRows, null);
         tintDeviceIconSwitch = null;
         notificationRowClickFallbackSwitch = null;
         independentFocusBannerSwitch = null;
@@ -1499,8 +1578,7 @@ public final class SettingsActivity extends Activity {
         focusIconOrderContainer.setOrientation(LinearLayout.VERTICAL);
         iconPanel.addView(focusIconOrderContainer, matchWrap(dp(8)));
         rebuildFocusIconOrderRows();
-        focusIconDragHandler = new FocusIconDragHandler();
-        focusIconOrderContainer.setOnTouchListener(focusIconDragHandler);
+        focusIconDragHandler = new SettingsSortRows(this, focusIconOrderContainer, this::moveFocusIcon);
         iconPanel.addView(text("通知小图标（smallIcon）依赖应用自行适配。国内不少应用未提供适合状态栏的单色透明图标，反色后可能显示为大白块；遇到这种情况，建议选择应用图标或焦点专用图标优先。",
                 13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
         tintIslandIconSwitch = createSwitch("超级岛解析图标与通知小图标跟随状态栏反色");
@@ -1816,19 +1894,27 @@ public final class SettingsActivity extends Activity {
         }
         root.addView(rulePanel, matchWrap(dp(12)));
         LinearLayout migration = panel();
-        Button importRule = actionButton("导入单条规则 JSON", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        Button cancelRule = actionButton("取消读取规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        Button importPack = actionButton("批量导入规则包", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        Button exportPack = actionButton("批量导出规则包", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button importPack = actionButton("导入规则", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
+        Button exportPack = actionButton("导出规则包", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
         TextView packStatus = text("", 13, COLOR_TEXT_SECONDARY);
         Button cancelPack = actionButton("取消规则包操作", COLOR_SURFACE_HIGH, COLOR_PRIMARY);
-        for (View control : new View[] {importRule, cancelRule, importPack, exportPack, packStatus, cancelPack,
-                samples, exportSample, cancelCaptureExport}) {
+        migration.addView(text("导入会先预览新增规则，同类型规则可逐条选择替换。导出默认清除示例文字。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        for (View control : new View[] {importPack, exportPack, packStatus, cancelPack}) {
             migration.addView(control, matchWrap(dp(8)));
         }
-        addCollapsibleSection(root, "规则迁移与样本导出", migration);
+        addCollapsibleSection(root, "规则迁移", migration);
+        LinearLayout diagnostics = panel();
+        diagnostics.addView(text("用于排查超级岛字段结构，导出的诊断样本不能导入为规则。",
+                13, COLOR_TEXT_SECONDARY), matchWrap(dp(8)));
+        for (View control : new View[] {samples, exportSample, cancelCaptureExport}) {
+            diagnostics.addView(control, matchWrap(dp(8)));
+        }
+        addCollapsibleSection(root, "字段结构诊断", diagnostics);
         rulePackUi.bind(importPack, exportPack, cancelPack, packStatus);
-        ruleImportUi.bind(importRule, cancelRule, ruleStatus, projection, manager);
+        ruleImportUi.bind(ruleStatus, projection, manager, () -> {
+            if (!islandCaptureUi.openRecent()) showFeedback("请先开启最近记录并等待捕获通知。");
+        });
         islandCaptureUi.bind(startCapture, samples, exportSample, endCapture, cancelCaptureExport, captureStatus, recentCapture);
 
         root.addView(sectionHeader("链接"), matchWrap(dp(8)));
@@ -1874,10 +1960,6 @@ public final class SettingsActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent result) {
         super.onActivityResult(requestCode, resultCode, result);
-        if (requestCode == IslandRuleImportUi.REQUEST) {
-            ruleImportUi.onDocumentResult(resultCode, result);
-            return;
-        }
         if (requestCode == IslandRulePackUi.REQUEST_IMPORT || requestCode == IslandRulePackUi.REQUEST_EXPORT) {
             rulePackUi.onDocumentResult(requestCode, resultCode, result);
             return;
@@ -2151,7 +2233,7 @@ public final class SettingsActivity extends Activity {
                         ? View.VISIBLE : View.GONE);
     }
 
-    private Button actionButton(String label, int background, int foreground) {
+    Button actionButton(String label, int background, int foreground) {
         Button button = new Button(this);
         button.setText(label);
         button.setAllCaps(false);
@@ -2167,11 +2249,11 @@ public final class SettingsActivity extends Activity {
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
-        ruleImportUi.save(outState);
         rulePackUi.save(outState);
         captureCurrentInputs();
-        if (pageScroll != null) scrollPositions[currentPage] = pageScroll.getScrollY();
+        rememberPageScroll();
         outState.putInt("m3.page", currentPage);
+        outState.putIntArray("ui.scrollPositions", scrollPositions.clone());
         outState.putBoolean("ui.settingsSearchOpen", settingsSearchDialog != null
                 && settingsSearchDialog.isShowing());
         outState.putString("ui.settingsSearchQuery", settingsSearchQuery);
@@ -2242,6 +2324,10 @@ public final class SettingsActivity extends Activity {
 
     private void restorePendingState(Bundle state) {
         currentPage = Math.max(0, Math.min(2, state.getInt("m3.page", 0)));
+        int[] positions = state.getIntArray("ui.scrollPositions");
+        if (positions != null && positions.length == scrollPositions.length) {
+            for (int i = 0; i < positions.length; i++) scrollPositions[i] = Math.max(0, positions[i]);
+        }
         ArrayList<String> expanded = state.getStringArrayList("ui.expandedSections");
         if (expanded != null) expandedSections.addAll(expanded);
         // 仅迁移本次界面的展开状态，不触碰持久设置或配置备份。
@@ -2618,186 +2704,26 @@ public final class SettingsActivity extends Activity {
         focusIconOrderContainer.removeAllViews();
         int[] order = FocusIconPriority.order(pendingFocusIconPriority);
         for (int slot = 0; slot < order.length; slot++) {
-            LinearLayout row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setTag(order[slot]);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(14), dp(8), dp(14), dp(8));
-            row.setMinimumHeight(dp(48));
-            row.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
-            TextView label = text("", 15, COLOR_TEXT_PRIMARY);
-            label.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            row.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
-            TextView handle = text("≡", 20, COLOR_TEXT_SECONDARY);
-            handle.setGravity(Gravity.CENTER);
-            handle.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-            row.addView(handle, new LinearLayout.LayoutParams(dp(28), -2));
-            focusIconOrderRows[slot] = row;
+            String label = ICON_TYPE_LABELS[order[slot]];
+            LinearLayout row = SettingsSortRows.card(this, text((slot + 1) + ". " + label, 15, COLOR_TEXT_PRIMARY));
+            row.setContentDescription(label + "，第 " + (slot + 1) + " 位，按住可拖动排序");
+            SettingsSortRows.accessibleMoves(row, slot, order.length, this::moveFocusIcon);
             focusIconOrderContainer.addView(row, matchWrap(dp(4)));
         }
-        refreshFocusIconRowLabels();
     }
 
-    private void refreshFocusIconRowLabels() {
-        for (int slot = 0; slot < focusIconOrderRows.length; slot++) {
-            LinearLayout row = focusIconOrderRows[slot];
-            String label = ICON_TYPE_LABELS[(Integer) row.getTag()];
-            ((TextView) row.getChildAt(0)).setText((slot + 1) + ". " + label);
-            row.setContentDescription(label + "，第 " + (slot + 1) + " 位，按住可拖动排序");
-        }
-    }
-
-    /** 只在单指长按成立后阻止父级滚动；预览不写配置，取消时恢复已保存顺序。 */
-    private final class FocusIconDragHandler implements View.OnTouchListener {
-        private final int touchSlop = ViewConfiguration.get(SettingsActivity.this).getScaledTouchSlop();
-        private int pointerId = -1;
-        private LinearLayout touchedRow;
-        private boolean dragging;
-        private float downX, downY, pointerOffset;
-        private float minimumPointerY, maximumPointerY;
-        private final Runnable armDrag = () -> {
-            if (destroyed || touchedRow == null || focusIconDragHandler != this
-                    || focusIconOrderContainer == null || !focusIconOrderContainer.isAttachedToWindow()) return;
-            dragging = true;
-            focusIconOrderContainer.getParent().requestDisallowInterceptTouchEvent(true);
-            touchedRow.setElevation(dp(6));
-            touchedRow.setAlpha(0.94f);
-            touchedRow.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-            if (BuildConfig.DEBUG) android.util.Log.i(TAG, "DIAG icon sort start version="
-                    + BuildConfig.VERSION_NAME + " slot=" + draggingSlot()
-                    + " rowHeightPx=" + touchedRow.getHeight() + " grabOffsetPx=" + pointerOffset
-                    + " edgeSpacePx=" + focusIconOrderContainer.getPaddingTop());
-        };
-
-        @Override
-        public boolean onTouch(View view, MotionEvent event) {
-            int action = event.getActionMasked();
-            if (action == MotionEvent.ACTION_DOWN) {
-                finish(false);
-                for (LinearLayout row : focusIconOrderRows) {
-                    if (event.getY() >= row.getTop() && event.getY() < row.getBottom()) {
-                        touchedRow = row;
-                        break;
-                    }
-                }
-                if (touchedRow == null) return false;
-                pointerId = event.getPointerId(0);
-                downX = event.getX();
-                downY = event.getY();
-                minimumPointerY = maximumPointerY = downY;
-                pointerOffset = downY - touchedRow.getTop();
-                view.postDelayed(armDrag, ViewConfiguration.getLongPressTimeout());
-                return true;
-            }
-            if (touchedRow == null) return false;
-            // 多指或系统取消都丢弃预览，不能将未完成的拖动当成保存。
-            if (action == MotionEvent.ACTION_CANCEL || event.getPointerCount() != 1
-                    || event.findPointerIndex(pointerId) < 0) {
-                finish(false);
-                return true;
-            }
-            if (action == MotionEvent.ACTION_MOVE) {
-                if (!dragging) {
-                    if (Math.abs(event.getX() - downX) > touchSlop
-                            || Math.abs(event.getY() - downY) > touchSlop) finish(false);
-                    return true;
-                }
-                moveRow(event.getY());
-                return true;
-            }
-            if (action == MotionEvent.ACTION_UP) {
-                if (dragging) moveRow(event.getY());
-                finish(dragging);
-                return true;
-            }
-            return true;
-        }
-
-        private int draggingSlot() {
-            for (int slot = 0; slot < focusIconOrderRows.length; slot++) {
-                if (focusIconOrderRows[slot] == touchedRow) return slot;
-            }
-            return -1;
-        }
-
-        private float slotTop(int slot) {
-            float top = focusIconOrderContainer.getPaddingTop();
-            // 按实际测高计算，字体放大导致行高变化时仍能准确排序。
-            for (int index = 0; index < slot; index++) {
-                LinearLayout row = focusIconOrderRows[index];
-                LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) row.getLayoutParams();
-                top += params.topMargin + row.getHeight() + params.bottomMargin;
-            }
-            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams)
-                    focusIconOrderRows[slot].getLayoutParams();
-            return top + params.topMargin;
-        }
-
-        private void moveRow(float pointerY) {
-            minimumPointerY = Math.min(minimumPointerY, pointerY);
-            maximumPointerY = Math.max(maximumPointerY, pointerY);
-            int slot = draggingSlot();
-            if (slot < 0) return;
-            float[] slotCenters = new float[focusIconOrderRows.length];
-            for (int index = 0; index < slotCenters.length; index++) {
-                slotCenters[index] = slotTop(index) + focusIconOrderRows[index].getHeight() / 2f;
-            }
-            int target = FocusIconDragGeometry.targetSlot(pointerY, pointerOffset,
-                    touchedRow.getHeight(), slot, slotCenters);
-            while (slot > target) {
-                focusIconOrderRows[slot] = focusIconOrderRows[slot - 1];
-                focusIconOrderRows[--slot] = touchedRow;
-            }
-            while (slot < target) {
-                focusIconOrderRows[slot] = focusIconOrderRows[slot + 1];
-                focusIconOrderRows[++slot] = touchedRow;
-            }
-            // 只限制绘制位置；越过首尾的手指坐标仍能用于换位，行本身留在列表内。
-            float top = Math.max(0f, Math.min(pointerY - pointerOffset,
-                    focusIconOrderContainer.getHeight() - touchedRow.getHeight()));
-            // 手势期间只移动现有子视图；不移除触摸目标，避免重挂导致事件流中断。
-            for (int index = 0; index < focusIconOrderRows.length; index++) {
-                LinearLayout row = focusIconOrderRows[index];
-                row.setTranslationY((row == touchedRow ? top : slotTop(index)) - row.getTop());
-            }
-            refreshFocusIconRowLabels();
-        }
-
-        void finish(boolean commit) {
-            if (focusIconOrderContainer == null) return;
-            focusIconOrderContainer.removeCallbacks(armDrag);
-            if (touchedRow == null) return;
-            if (dragging && BuildConfig.DEBUG) android.util.Log.i(TAG, "DIAG icon sort finish commit="
-                    + commit + " slot=" + draggingSlot() + " minPointerY=" + minimumPointerY
-                    + " maxPointerY=" + maximumPointerY);
-            boolean changed = false;
-            if (commit && dragging) {
-                int[] order = new int[focusIconOrderRows.length];
-                for (int slot = 0; slot < order.length; slot++) {
-                    order[slot] = (Integer) focusIconOrderRows[slot].getTag();
-                }
-                int priority = FocusIconPriority.indexOf(order);
-                if (priority >= 0 && priority != pendingFocusIconPriority) {
-                    pendingFocusIconPriority = priority;
-                    pendingUseSmallIconFallback = FocusIconPriority.smallFirst(priority);
-                    changed = true;
-                }
-            }
-            for (LinearLayout row : focusIconOrderRows) {
-                row.setTranslationY(0f);
-                row.setElevation(0f);
-                row.setAlpha(1f);
-            }
-            touchedRow = null;
-            pointerId = -1;
-            if (dragging) {
-                // 松手后重建排列；取消、暂停或切页从原配置还原，无排队动画引用。
-                rebuildFocusIconOrderRows();
-                focusIconOrderContainer.getParent().requestDisallowInterceptTouchEvent(false);
-            }
-            dragging = false;
-            if (changed) markPending();
-        }
+    private void moveFocusIcon(int from, int to) {
+        int[] order = FocusIconPriority.order(pendingFocusIconPriority);
+        int moved = order[from];
+        if (from < to) System.arraycopy(order, from + 1, order, from, to - from);
+        else if (from > to) System.arraycopy(order, to, order, to + 1, from - to);
+        order[to] = moved;
+        int priority = FocusIconPriority.indexOf(order);
+        if (priority < 0 || priority == pendingFocusIconPriority) return;
+        pendingFocusIconPriority = priority;
+        pendingUseSmallIconFallback = FocusIconPriority.smallFirst(priority);
+        rebuildFocusIconOrderRows();
+        markPending();
     }
 
     private void rebuildMediaBriefFieldRows() {
@@ -3164,21 +3090,13 @@ public final class SettingsActivity extends Activity {
                         updateForcePackagesButton();
                     }
                     markPending();
-                }, null);
-    }
-
-    Dialog showCaptureTargetDialog(String current, Executor loader, BiConsumer<String, String> onSelected) {
-        Set<String> selected = current == null ? Collections.emptySet() : Collections.singleton(current);
-        return showPackagePicker("选择要捕获的应用", selected, packages -> {
-            String packageName = packages.iterator().next();
-            onSelected.accept(packageName, appLabels.get(packageName));
-        }, loader);
+                });
     }
 
     private Dialog showPackagePicker(String title, Set<String> selected,
-                                     Consumer<Set<String>> onDone, Executor captureLoader) {
+                                     Consumer<Set<String>> onDone) {
         if (activeDialog != null) return null;
-        dialogAllApps = captureLoader == null ? readCachedApps() : Collections.emptyList();
+        dialogAllApps = readCachedApps();
         dialogSelectedPackages = new HashSet<>(selected);
         dialogAppsLoaded = !dialogAllApps.isEmpty();
 
@@ -3191,7 +3109,7 @@ public final class SettingsActivity extends Activity {
         });
         activeDialog = dialog;
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setContentView(createPackagePickerView(dialog, title, onDone, captureLoader));
+        dialog.setContentView(createPackagePickerView(dialog, title, onDone));
         Window window = dialog.getWindow();
         if (window != null) window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         dialog.show();
@@ -3204,13 +3122,11 @@ public final class SettingsActivity extends Activity {
             int height = (int) (getResources().getDisplayMetrics().heightPixels * 0.82f);
             window.setLayout(width, height);
         }
-        if (captureLoader != null) loadCapturePickerApps(dialog, captureLoader);
         return dialog;
     }
 
     private View createPackagePickerView(Dialog dialog, String caption,
-                                         Consumer<Set<String>> onDone, Executor captureLoader) {
-        boolean singleSelection = captureLoader != null;
+                                         Consumer<Set<String>> onDone) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackground(roundedBg(COLOR_SURFACE_HIGH, 12));
@@ -3265,10 +3181,7 @@ public final class SettingsActivity extends Activity {
         flattenButton(refresh);
         refresh.setMinHeight(dp(40));
         refresh.setPadding(dp(16), 0, dp(16), 0);
-        refresh.setOnClickListener(v -> {
-            if (singleSelection) loadCapturePickerApps(dialog, captureLoader);
-            else loadDialogApps();
-        });
+        refresh.setOnClickListener(v -> loadDialogApps());
         options.addView(refresh, new LinearLayout.LayoutParams(-2, -2));
         root.addView(options, matchWrap(dp(4)));
 
@@ -3280,10 +3193,7 @@ public final class SettingsActivity extends Activity {
         dialogListView.setVisibility(View.GONE);
         dialogListView.setOnItemClickListener((parent, view, position, id) -> {
             ApplicationInfo app = dialogVisibleApps.get(position);
-            if (singleSelection) {
-                dialogSelectedPackages.clear();
-                dialogSelectedPackages.add(app.packageName);
-            } else if (dialogSelectedPackages.contains(app.packageName)) {
+            if (dialogSelectedPackages.contains(app.packageName)) {
                 dialogSelectedPackages.remove(app.packageName);
             } else if (dialogSelectedPackages.size() >= InputLimits.MAX_FORCE_PACKAGES) {
                 showFeedback("最多选择 " + InputLimits.MAX_FORCE_PACKAGES + " 个应用");
@@ -3308,10 +3218,6 @@ public final class SettingsActivity extends Activity {
         buttons.addView(cancel, new LinearLayout.LayoutParams(-2, dp(40)));
         Button done = actionButton("完成", COLOR_PRIMARY, Color.WHITE);
         done.setOnClickListener(v -> {
-            if (singleSelection && (dialogAppsLoading || dialogSelectedPackages.isEmpty())) {
-                showFeedback(dialogAppsLoading ? "正在加载应用…" : "请选择一个应用");
-                return;
-            }
             onDone.accept(new HashSet<>(dialogSelectedPackages));
             dialog.dismiss();
         });
@@ -3332,44 +3238,6 @@ public final class SettingsActivity extends Activity {
         dialogShowSystemSwitch = null;
         dialogEmptyView = null;
         dialogAppsLoaded = false;
-        dialogAppsLoading = false;
-    }
-
-    private void loadCapturePickerApps(Dialog dialog, Executor executor) {
-        if (dialogAppsLoading) return;
-        dialogAppsLoading = true;
-        if (!dialogAppsLoaded) dialogEmptyView.setText("正在加载应用…");
-        executor.execute(() -> {
-            PackageManager pm = getPackageManager();
-            List<ApplicationInfo> apps = new ArrayList<>();
-            Map<String, String> labels = new java.util.HashMap<>();
-            boolean failed = false;
-            try {
-                for (ApplicationInfo app : pm.getInstalledApplications(0)) {
-                    if (!app.enabled || !IslandCaptureRuntime.validPackage(app.packageName)) continue;
-                    CharSequence label = pm.getApplicationLabel(app);
-                    apps.add(app);
-                    labels.put(app.packageName, label == null ? app.packageName : label.toString());
-                }
-            } catch (RuntimeException failure) {
-                apps.clear();
-                labels.clear();
-                failed = true;
-            }
-            boolean loadFailed = failed;
-            runOnUiThread(() -> {
-                // 页面切换或取消后，旧列表不能写进另一个选包弹窗。
-                if (activeDialog != dialog || !dialog.isShowing()) return;
-                dialogAppsLoading = false;
-                dialogAppsLoaded = true;
-                dialogAllApps = apps;
-                appLabels.clear();
-                appLabels.putAll(labels);
-                dialogSelectedPackages.retainAll(labels.keySet());
-                filterDialogApps();
-                if (loadFailed) dialogEmptyView.setText("无法读取应用列表，请点击“刷新”重试");
-            });
-        });
     }
 
     private void loadDialogApps() {
@@ -3863,7 +3731,7 @@ public final class SettingsActivity extends Activity {
         row.addView(r, new LinearLayout.LayoutParams(0, -2, 1f));
         return row;
     }
-    private Drawable roundedBg(int color, float radiusDp) {
+    Drawable roundedBg(int color, float radiusDp) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(color);
         drawable.setCornerRadius(dp((int) radiusDp));
@@ -4236,7 +4104,7 @@ public final class SettingsActivity extends Activity {
     private void styleSwitch(Switch s) { if (Build.VERSION.SDK_INT >= 21) { int[][] states = {new int[]{android.R.attr.state_checked}, new int[]{}}; int offThumb = nightMode ? 0xFF8A949A : Color.rgb(189,193,198); int offTrack = nightMode ? 0xFF3A4248 : Color.rgb(218,220,224); s.setThumbTintList(new ColorStateList(states, new int[]{Color.WHITE, offThumb})); s.setTrackTintList(new ColorStateList(states, new int[]{COLOR_PRIMARY, offTrack})); } }
     private void openExternalLink(String url) { try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); } catch (ActivityNotFoundException e) { showFeedback("设备没有可用的浏览器，无法打开链接"); } }
     private void configureSystemBars(Window w) { w.setStatusBarColor(COLOR_BACKGROUND); w.setNavigationBarColor(COLOR_BACKGROUND); if (Build.VERSION.SDK_INT >= 23) { int f = 0; if (!nightMode) { f = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR; if (Build.VERSION.SDK_INT >= 26) f |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR; } w.getDecorView().setSystemUiVisibility(f); } }
-    private TextView text(String value, int size, int color) { TextView v = new TextView(this); v.setText(value); v.setTextSize(size); v.setTextColor(color); return v; }
+    TextView text(String value, int size, int color) { TextView v = new TextView(this); v.setText(value); v.setTextSize(size); v.setTextColor(color); return v; }
     private LinearLayout.LayoutParams matchWrap(int margin) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.bottomMargin = margin; return p; }
-    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }

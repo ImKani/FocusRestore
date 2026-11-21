@@ -14,15 +14,23 @@ import java.util.Objects;
 
 /** 一条规则的不可变声明；不保留原始 JSON 或 x-* 注解。 */
 public final class IslandRule {
+    static final int CURRENT_VERSION = 2;
     public final int ruleVersion;
     public final Metadata meta;
     public final List<MatchClause> match;
     public final List<ExtractSpec> extract;
     public final DisplaySpec display;
+    final IslandNotificationType notificationType;
 
     IslandRule(int ruleVersion, Metadata meta, List<MatchClause> match,
             List<ExtractSpec> extract, DisplaySpec display) {
+        this(ruleVersion, meta, match, extract, display, null);
+    }
+
+    IslandRule(int ruleVersion, Metadata meta, List<MatchClause> match,
+            List<ExtractSpec> extract, DisplaySpec display, IslandNotificationType notificationType) {
         this.ruleVersion = ruleVersion;
+        this.notificationType = notificationType;
         this.meta = Objects.requireNonNull(meta, "meta");
         this.match = immutableList(match, "match");
         this.extract = immutableList(extract, "extract");

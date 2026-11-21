@@ -56,9 +56,10 @@ public final class IslandRuleSelector {
         diagnostics.add(index, entry.id, Phase.SELECTION, Code.CANDIDATE, "$");
         IslandRule rule = entry.rule;
         try {
-            if (rule.ruleVersion != 1 || rule.match.isEmpty() || rule.match.size() > 16) {
+            boolean versionSupported = rule.ruleVersion == IslandRule.CURRENT_VERSION;
+            if (!versionSupported || rule.match.isEmpty() || rule.match.size() > 16) {
                 diagnostics.add(index, entry.id, Phase.SEMANTIC, Code.INVALID_RULE,
-                        rule.ruleVersion != 1 ? "$.ruleVersion" : "$.match.all");
+                        !versionSupported ? "$.ruleVersion" : "$.match.all");
                 return false;
             }
             // 语义先于条件短路，避免前一条件不匹配掩盖后面的非法协议操作。
@@ -102,6 +103,13 @@ public final class IslandRuleSelector {
             if (meter != null) meter.checkTime();
             if (!matched) {
                 diagnostics.add(entryIndex, ruleId, Phase.MATCH, Code.FIELD_MISMATCH, path + ".value");
+                return false;
+            }
+        }
+        if (rule.notificationType != null) {
+            if (meter != null) meter.readField();
+            if (!rule.notificationType.equals(context.notificationType)) {
+                diagnostics.add(entryIndex, ruleId, Phase.MATCH, Code.FIELD_MISMATCH, "$.match.notificationType");
                 return false;
             }
         }

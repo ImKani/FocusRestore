@@ -233,7 +233,7 @@ final class IslandRuleSystemUi {
                 paths.add(registered);
             }
             IslandCaptureEditor.Candidate candidate = IslandCaptureEditor.candidate(
-                    row.packageName, paths, System.currentTimeMillis());
+                    row.packageName, paths, System.currentTimeMillis(), row.notificationType);
             if (candidate == null) throw new IOException("RULE_PROJECTION_CANDIDATE");
             final byte[] rule = candidate.bytes();
             sources.add(new IslandRuleSetLoader.Source("projection-" + index, 1L, true,

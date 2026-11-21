@@ -23,6 +23,16 @@ public final class IslandRuleSetLoader {
         InputStream open() throws IOException;
     }
 
+    static final class VerifiedObject {
+        final IslandRule rule;
+        final int utf8Bytes;
+
+        VerifiedObject(IslandRule rule, int utf8Bytes) {
+            this.rule = java.util.Objects.requireNonNull(rule);
+            this.utf8Bytes = utf8Bytes;
+        }
+    }
+
     /** 外部条目元数据，不从规则 JSON 推导 id、revision、enabled 或 priority。 */
     public static final class Source {
         public final String id;
@@ -30,10 +40,10 @@ public final class IslandRuleSetLoader {
         public final boolean enabled;
         public final int priority;
         public final StreamSource streamSource;
-        private final boolean verifiedObject;
+        private final VerifiedObject verifiedObject;
 
-        static Source fromVerifiedObject(String id, long revision, boolean enabled, int priority, StreamSource bytes) {
-            return new Source(id, revision, enabled, priority, bytes, true);
+        static Source fromVerifiedObject(String id, long revision, boolean enabled, int priority, VerifiedObject object) {
+            return new Source(id, revision, enabled, priority, null, object);
         }
 
         public Source(String id, long revision, boolean enabled, StreamSource streamSource) {
@@ -42,11 +52,11 @@ public final class IslandRuleSetLoader {
 
         public Source(String id, long revision, boolean enabled, int priority,
                 StreamSource streamSource) {
-            this(id, revision, enabled, priority, streamSource, false);
+            this(id, revision, enabled, priority, streamSource, null);
         }
 
         private Source(String id, long revision, boolean enabled, int priority,
-                StreamSource streamSource, boolean verifiedObject) {
+                StreamSource streamSource, VerifiedObject verifiedObject) {
             this.id = id;
             this.revision = revision;
             this.enabled = enabled;
@@ -143,13 +153,13 @@ public final class IslandRuleSetLoader {
         }
         List<Source> orderedSources = new ArrayList<>(sources);
         Set<String> acceptedIds = new HashSet<>();
-        java.util.IdentityHashMap<StreamSource, IslandRuleCodec.DecodeResult> shared = new java.util.IdentityHashMap<>();
+        Set<VerifiedObject> acceptedObjects = new HashSet<>();
         int acceptedBytes = 0;
         int activeCount = 0;
         for (int index = 0; index < orderedSources.size(); index++) {
             Source source = orderedSources.get(index);
             if (source == null || source.id == null || source.id.isEmpty()
-                    || source.revision < 0 || source.streamSource == null) {
+                    || source.revision < 0 || (source.streamSource == null && source.verifiedObject == null)) {
                 failures.add(new Failure(index, source == null ? null : source.id,
                         Code.SOURCE_METADATA, null, "invalid external entry metadata"));
                 continue;
@@ -159,31 +169,36 @@ public final class IslandRuleSetLoader {
                         "duplicate accepted rule id"));
                 continue;
             }
-            IslandRuleCodec.DecodeResult decoded = source.verifiedObject ? shared.get(source.streamSource) : null;
-            boolean firstObject = decoded == null;
-            try {
-                if (firstObject) {
-                    try (InputStream input = source.streamSource.open()) {
-                        decoded = codec.decode(input);
-                    }
+            VerifiedObject verified = source.verifiedObject;
+            IslandRule rule;
+            int utf8Bytes;
+            if (verified != null) {
+                rule = verified.rule;
+                utf8Bytes = verified.utf8Bytes;
+            } else {
+                IslandRuleCodec.DecodeResult decoded;
+                try (InputStream input = source.streamSource.open()) {
+                    decoded = codec.decode(input);
+                } catch (IOException e) {
+                    // 关闭失败也拒绝该条，不发布无法确认资源释放状态的加载结果。
+                    failures.add(new Failure(index, source.id, Code.SOURCE_IO, null,
+                            "rule stream open or close failed"));
+                    continue;
+                } catch (RuntimeException e) {
+                    failures.add(new Failure(index, source.id, Code.SOURCE_EXCEPTION, null,
+                            "rule source failed"));
+                    continue;
                 }
-            } catch (IOException e) {
-                // 关闭失败也拒绝该条，不发布无法确认资源释放状态的加载结果。
-                failures.add(new Failure(index, source.id, Code.SOURCE_IO, null,
-                        "rule stream open or close failed"));
-                continue;
-            } catch (RuntimeException e) {
-                failures.add(new Failure(index, source.id, Code.SOURCE_EXCEPTION, null,
-                        "rule source failed"));
-                continue;
+                if (!decoded.isSuccess()) {
+                    failures.add(new Failure(index, source.id, Code.DECODE_REJECTED, decoded.error,
+                            "strict rule decode rejected"));
+                    continue;
+                }
+                rule = decoded.rule;
+                utf8Bytes = decoded.utf8Bytes;
             }
-            if (!decoded.isSuccess()) {
-                failures.add(new Failure(index, source.id, Code.DECODE_REJECTED, decoded.error,
-                        "strict rule decode rejected"));
-                continue;
-            }
-            // enabled=false 也保留原文容量；先检查总字节，再检查活跃数，优先级不影响接纳顺序。
-            int additionalBytes = firstObject ? decoded.utf8Bytes : 0;
+            // enabled=false 也计入字节额度；批次中共享同一已验证对象的条目只对对象计费一次。
+            int additionalBytes = verified != null && acceptedObjects.contains(verified) ? 0 : utf8Bytes;
             if (acceptedBytes + additionalBytes > IslandRuleSet.MAX_TOTAL_UTF8_BYTES) {
                 failures.add(new Failure(index, source.id, Code.SET_BYTE_CAPACITY, null,
                         "accepted rule files exceed 2097152 UTF-8 bytes"));
@@ -195,10 +210,10 @@ public final class IslandRuleSetLoader {
                 continue;
             }
             entries.add(new IslandRuleSet.Entry(source.id, source.revision, source.enabled,
-                    source.priority, decoded.rule, decoded.utf8Bytes));
+                    source.priority, rule, utf8Bytes));
             acceptedIds.add(source.id);
             acceptedBytes += additionalBytes;
-            if (source.verifiedObject && firstObject) shared.put(source.streamSource, decoded);
+            if (verified != null) acceptedObjects.add(verified);
             if (source.enabled) activeCount++;
         }
         return new Snapshot(generation, revision, true, entries, failures);

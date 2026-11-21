@@ -163,7 +163,7 @@ public class IslandRuleDiagnosticHistoryTest {
     private static IslandRuleSet.Entry rule(String id, List<MatchClause> clauses) {
         IslandRule.Metadata metadata = new IslandRule.Metadata("test.app", null, null, null, null,
                 null, null, null, null, "legacy", null, null, "ImKani", "", "2026-11-18T00:00:00Z");
-        IslandRule rule = new IslandRule(1, metadata, clauses,
+        IslandRule rule = new IslandRule(IslandRule.CURRENT_VERSION, metadata, clauses,
                 singletonList(new ExtractSpec("a", "/title", true, emptyList())),
                 new DisplaySpec(singletonList(new DisplaySpec.Projection("title", "a")), "·", false));
         return new IslandRuleSet.Entry(id, 0, true, rule, 1);

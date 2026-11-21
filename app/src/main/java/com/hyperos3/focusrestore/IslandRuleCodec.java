@@ -100,9 +100,10 @@ public final class IslandRuleCodec {
         }
         try {
             Map<String, Object> root = readDocument(bytes);
-            int version = (int) integer(required(root, "ruleVersion", "$"), "$.ruleVersion", 1, 1, Code.L1_VERSION);
+            integer(required(root, "ruleVersion", "$"), "$.ruleVersion",
+                    IslandRule.CURRENT_VERSION, IslandRule.CURRENT_VERSION, Code.L1_VERSION);
             inspectStructure(root);
-            return new DecodeResult(model(root, version), null, bytes.length);
+            return new DecodeResult(model(root), null, bytes.length);
         } catch (CharacterCodingException e) {
             return failure(Code.L1_ENCODING, "$", -1, "invalid UTF-8", bytes.length);
         } catch (Rejected e) {
@@ -129,7 +130,7 @@ public final class IslandRuleCodec {
         }
     }
 
-    private static IslandRule model(Map<String, Object> root, int version) throws Rejected {
+    private static IslandRule model(Map<String, Object> root) throws Rejected {
         Map<String, Object> meta = object(required(root, "meta", "$"), "$.meta");
         String pkg = text(required(meta, "packageName", "$.meta"), "$.meta.packageName", 3, 255);
         if (!pkg.matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")) throw reject(Code.L1_TYPE, "$.meta.packageName", "package syntax");
@@ -161,6 +162,7 @@ public final class IslandRuleCodec {
                 optionalText(meta, "notificationCategory", 64), text(required(meta, "ruleAuthor", "$.meta"), "$.meta.ruleAuthor", 1, 64),
                 text(required(meta, "ruleDescription", "$.meta"), "$.meta.ruleDescription", 0, 2048), created);
         Map<String, Object> match = object(required(root, "match", "$"), "$.match");
+        IslandNotificationType notificationType = match.containsKey("notificationType") ? notificationType(match.get("notificationType")) : null;
         List<Object> clauses = array(required(match, "all", "$.match"), "$.match.all", 1, 16);
         if (new HashSet<>(clauses).size() != clauses.size()) throw reject(Code.L1_CAPACITY, "$.match.all", "unique items required");
         List<MatchClause> matches = new ArrayList<>();
@@ -170,6 +172,10 @@ public final class IslandRuleCodec {
             matches.add(new MatchClause(choice(required(clause, "field", at), at + ".field", set("packageName", "protocolVersion", "business", "scene"), Code.L1_PATH_ENUM),
                     choice(required(clause, "op", at), at + ".op", set("equals", "contains", "startsWith"), Code.L1_OPERATOR_ENUM),
                     text(required(clause, "value", at), at + ".value", 1, 256)));
+        }
+        if (notificationType != null && (matches.size() != 1 || !"packageName".equals(matches.get(0).field)
+                || !"equals".equals(matches.get(0).op) || !pkg.equals(matches.get(0).value))) {
+            throw reject(Code.L1_TYPE, "$.match.all", "notification type requires exact package match");
         }
         List<Object> bindings = array(required(root, "extract", "$"), "$.extract", 1, 32);
         List<ExtractSpec> extracts = new ArrayList<>();
@@ -182,6 +188,9 @@ public final class IslandRuleCodec {
             IslandRulePaths.Entry entry = IslandRulePaths.find(path);
             if (entry == null || !IslandRulePaths.isRuntimeAllowed(entry)) throw reject(Code.L1_PATH_ENUM, at + ".path", "path not allowlisted");
             if (!IslandRulePaths.matchesTemplate(template, entry)) throw reject(Code.L1_TEMPLATE_PATH, at + ".path", "path outside template group");
+            if (notificationType != null && !notificationType.paths.contains(path)) {
+                throw reject(Code.L1_PATH_ENUM, at + ".path", "path absent from notification type");
+            }
             List<ExtractSpec.Replacement> replacements = new ArrayList<>();
             if (binding.containsKey("replace")) {
                 List<Object> replace = array(binding.get("replace"), at + ".replace", 0, 8);
@@ -201,17 +210,35 @@ public final class IslandRuleCodec {
             Map<String, Object> projection = object(ordered.get(i), at);
             projections.add(new DisplaySpec.Projection(choice(required(projection, "slot", at), at + ".slot", set("title", "subtitle", "progress", "extra"), Code.L1_SLOT_ENUM), identifier(required(projection, "ref", at), at + ".ref")));
         }
-        return new IslandRule(version, metadata, matches, extracts, new DisplaySpec(projections,
+        return new IslandRule(IslandRule.CURRENT_VERSION, metadata, matches, extracts, new DisplaySpec(projections,
                 display.containsKey("separator") ? text(display.get("separator"), "$.display.separator", 0, 32) : "·",
-                display.containsKey("dedupe") && bool(display.get("dedupe"), "$.display.dedupe")));
+                display.containsKey("dedupe") && bool(display.get("dedupe"), "$.display.dedupe")), notificationType);
+    }
+    private static IslandNotificationType notificationType(Object value) throws Rejected {
+        String at = "$.match.notificationType";
+        Map<String, Object> type = object(value, at);
+        List<Object> items = array(required(type, "paths", at), at + ".paths", 1, IslandNotificationType.MAX_PATHS);
+        List<String> paths = new ArrayList<>();
+        for (Object item : items) paths.add(text(item, at + ".paths", 1, 512));
+        IslandNotificationType result = IslandNotificationType.create(
+                type.containsKey("protocol") ? text(type.get("protocol"), at + ".protocol", 1, 10) : null,
+                type.containsKey("business") ? text(type.get("business"), at + ".business", 1, IslandNotificationType.MAX_IDENTIFIER) : null,
+                type.containsKey("scene") ? text(type.get("scene"), at + ".scene", 1, IslandNotificationType.MAX_IDENTIFIER) : null, paths);
+        if (result == null) throw reject(Code.L1_PATH_ENUM, at, "invalid notification type");
+        return result;
     }
     private static void inspectStructure(Map<String, Object> root) throws Rejected {
         List<Rejected> findings = new ArrayList<>();
         scanObject(root, set("ruleVersion", "meta", "match", "extract", "display"), "$", findings);
         scanObject(root.get("meta"), META, "$.meta", findings);
         if (root.get("meta") instanceof Map) scanObject(((Map<?, ?>) root.get("meta")).get("systemUiVersion"), set("name", "code"), "$.meta.systemUiVersion", findings);
-        scanObject(root.get("match"), set("all"), "$.match", findings);
-        if (root.get("match") instanceof Map) scanArray(((Map<?, ?>) root.get("match")).get("all"), set("field", "op", "value"), "$.match.all", findings);
+        scanObject(root.get("match"), set("all", "notificationType"), "$.match", findings);
+        if (root.get("match") instanceof Map) {
+            Map<?, ?> match = (Map<?, ?>) root.get("match");
+            scanArray(match.get("all"), set("field", "op", "value"), "$.match.all", findings);
+            scanObject(match.get("notificationType"), set("protocol", "business", "scene", "paths"),
+                    "$.match.notificationType", findings);
+        }
         scanArray(root.get("extract"), set("id", "path", "required", "replace"), "$.extract", findings);
         if (root.get("extract") instanceof List) {
             List<?> bindings = (List<?>) root.get("extract");
@@ -345,17 +372,17 @@ public final class IslandRuleCodec {
         int at;
         Reader(String json) { this.json = json; }
         Object document() throws Rejected {
-            Object result = value(0); space();
+            Object result = value(0, 0); space();
             if (at != json.length()) throw syntax();
             return result;
         }
-        Object value(int depth) throws Rejected {
+        Object value(int depth, int typeScope) throws Rejected {
             space();
             if (at == json.length()) throw syntax();
             char c = json.charAt(at);
             if (c == '{' || c == '[') {
                 if (depth == MAX_JSON_DEPTH) throw capacity("max JSON depth 8");
-                return c == '{' ? objectValue(depth + 1) : arrayValue(depth + 1);
+                return c == '{' ? objectValue(depth + 1, typeScope) : arrayValue(depth + 1, typeScope == 3);
             }
             if (c == '"') return string(MAX_STRING_UNITS);
             if (c == 't' && literal("true")) return Boolean.TRUE;
@@ -364,7 +391,7 @@ public final class IslandRuleCodec {
             if (c == '-' || c >= '0' && c <= '9') return number();
             throw syntax();
         }
-        Map<String, Object> objectValue(int depth) throws Rejected {
+        Map<String, Object> objectValue(int depth, int typeScope) throws Rejected {
             at++;
             Map<String, Object> result = new LinkedHashMap<>(); space();
             if (take('}')) return result;
@@ -375,18 +402,23 @@ public final class IslandRuleCodec {
                 String key = string(MAX_KEY_UNITS);
                 if (result.containsKey(key)) throw reject(Code.L1_DUPLICATE_KEY, "$", at, "duplicate member");
                 space(); if (!take(':')) throw syntax();
-                result.put(key, value(depth)); space();
+                // 只有 $.match.notificationType.paths 可装下超过 32 条登记路径。
+                int childScope = depth == 1 && "match".equals(key) ? 1
+                        : typeScope == 1 && "notificationType".equals(key) ? 2
+                        : typeScope == 2 && "paths".equals(key) ? 3 : 0;
+                result.put(key, value(depth, childScope)); space();
                 if (take('}')) return result;
             } while (take(','));
             throw syntax();
         }
-        List<Object> arrayValue(int depth) throws Rejected {
+        List<Object> arrayValue(int depth, boolean signature) throws Rejected {
             at++;
             List<Object> result = new ArrayList<>(); space();
             if (take(']')) return result;
             do {
-                if (result.size() == MAX_ARRAY_ITEMS) throw capacity("max array items 32");
-                result.add(value(depth)); space();
+                int max = signature ? IslandNotificationType.MAX_PATHS : MAX_ARRAY_ITEMS;
+                if (result.size() == max) throw capacity("max array items " + max);
+                result.add(value(depth, 0)); space();
                 if (take(']')) return result;
             } while (take(','));
             throw syntax();

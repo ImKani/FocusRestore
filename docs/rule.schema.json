@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/ImKani/FocusRestore/blob/master/docs/rule.schema.json",
-  "title": "FocusRestore island text rule v1 (C1 contract)",
-  "description": "ImKani / FocusRestore / GPL-3.0-only. C1 immutable model and strict decoder only; no runtime integration.",
-  "$comment": "File <=65536 UTF-8 bytes including whitespace. Strict reader: container depth <=8 (root=1), object keys <=64, array items <=32, key <=256 UTF-16 units, string and number token <=4096 UTF-16 units. All apply inside x-* annotations; annotations do not enter the model. Schema maxLength counts code points; decoder additionally checks UTF-16 units. Duplicate keys, strict UTF-8, date-time assertions, cross references and L3/R need hand validation. No remote schema loading. Runtime quotas are contract only in C1. See island-rules-spec.md and island-rule-paths.md.",
+  "title": "FocusRestore island text rule v2",
+  "description": "ImKani / FocusRestore / GPL-3.0-only. Declarative island text rules with optional exact notification types.",
+  "$comment": "File <=65536 UTF-8 bytes including whitespace. Strict reader: container depth <=8 (root=1), object keys <=64, array items <=32 except match.notificationType.paths (<=106), key <=256 UTF-16 units, string and number token <=4096 UTF-16 units. All apply inside x-* annotations; annotations do not enter the model. Schema maxLength counts code points; decoder additionally checks UTF-16 units. Duplicate keys, strict UTF-8, date-time assertions, cross references and L3/R need hand validation. No remote schema loading. See island-rules-spec.md and island-rule-paths.md.",
   "x-jsonMaxDepth": 8,
   "x-maxObjectKeys": 64,
   "x-maxArrayItems": 32,
@@ -43,7 +43,7 @@
   "additionalProperties": false, "patternProperties": {"^x-": true},
   "properties": {
     "ruleVersion": {
-      "const": 1
+      "const": 2
     },
     "meta": {
       "type": "object",
@@ -266,6 +266,23 @@
               "value"
             ]
           }
+        },
+        "notificationType": {
+          "type": "object",
+          "additionalProperties": false, "patternProperties": {"^x-": true},
+          "properties": {
+            "protocol": {"type": "string", "pattern": "^(?:0|[1-9][0-9]{0,9})$", "maxLength": 10},
+            "business": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,96}$"},
+            "scene": {"type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,96}$"},
+            "paths": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 106,
+              "uniqueItems": true,
+              "items": {"$ref": "#/properties/extract/items/properties/path"}
+            }
+          },
+          "required": ["paths"]
         }
       },
       "required": [
@@ -485,6 +502,22 @@
     "display"
   ],
   "allOf": [
+    {
+      "if": {"properties": {"match": {"required": ["notificationType"]}}, "required": ["match"]},
+      "then": {
+        "properties": {
+          "match": {
+            "properties": {
+              "all": {
+                "maxItems": 1,
+                "items": {"properties": {"field": {"const": "packageName"}, "op": {"const": "equals"}}}
+              }
+            }
+          }
+        },
+        "$comment": "The strict decoder requires the exact package value to equal meta.packageName, limits protocol to 2147483647, and requires every extract.path in notificationType.paths."
+      }
+    },
     {
       "if": {
         "properties": {

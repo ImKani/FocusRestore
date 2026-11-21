@@ -59,7 +59,7 @@ public class IslandC2IntegrationTest {
     }
 
     @Test public void stablePrioritySkipsBadJsonUnknownVersionAndDisabledWithoutReorderingAcceptedEntries() throws Exception {
-        Map<String, Object> future = ruleTree(); future.put("ruleVersion", 2);
+        Map<String, Object> future = ruleTree(); future.put("ruleVersion", 3);
         IslandRuleSetLoader.Snapshot snapshot = loader.load(5, Arrays.asList(
                 realSource("low", true, Integer.MIN_VALUE),
                 memorySource("bad-json", true, Integer.MAX_VALUE, "{"),
@@ -120,7 +120,7 @@ public class IslandC2IntegrationTest {
         IslandRuleSet.Entry good = snapshot.orderedActiveEntries.get(0);
         IslandRule base = good.rule;
         // 文件入口仍严格解码；这里只在包内构造意外损坏的内存条目，触发真实匹配异常隔离。
-        IslandRule badRule = new IslandRule(1, base.meta, Collections.singletonList(
+        IslandRule badRule = new IslandRule(IslandRule.CURRENT_VERSION, base.meta, Collections.singletonList(
                 new MatchClause("deviceModel", "equals", "not-a-runtime-field")), base.extract, base.display);
         IslandRuleSet.Entry broken = new IslandRuleSet.Entry("broken-memory", 0, true, 10, badRule, good.utf8Bytes);
         assertSame(good, selector.select(Arrays.asList(broken, good), travelContext()));

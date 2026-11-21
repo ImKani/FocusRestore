@@ -24,17 +24,18 @@ import java.util.UUID;
 
 /** FRPK 文件封装。规则语义和本机批准由规则仓库处理。 */
 final class IslandRulePack {
-    private static final int MAGIC = 0x4652504b;
-    private static final int VERSION = 1;
+    static final int MAGIC = 0x4652504b;
+    static final int VERSION = 2;
     private static final int HEADER_BYTES = 12;
     private static final int ENTRY_BYTES = 25;
     private static final int HASH_BYTES = 32;
-    static final int MAX_BYTES = HEADER_BYTES + HASH_BYTES + ENTRY_BYTES * IslandRuleRepository.MAX_ENTRIES
-            + IslandRuleRepository.MAX_RULE_FILE_BYTES;
+    static final int MAX_BYTES = HEADER_BYTES + HASH_BYTES
+            + (ENTRY_BYTES + Integer.BYTES) * IslandRuleRepository.MAX_ENTRIES
+            + IslandRuleRepository.MAX_RULE_FILE_BYTES + IslandRuleRepository.MAX_SAMPLE_FILE_BYTES;
 
     enum Code {
         MAGIC, VERSION, ENTRY_COUNT, ACTIVE_COUNT, DUPLICATE_ID, ENABLED, RULE_SIZE, CONTENT_SIZE,
-        PACK_SIZE, ENCODING, TRUNCATED, DIGEST, TRAILING
+        PACK_SIZE, ENCODING, TRUNCATED, DIGEST, TRAILING, SAMPLE_SIZE, SAMPLE_FORMAT
     }
 
     static final class Failure extends IOException {
@@ -48,12 +49,24 @@ final class IslandRulePack {
         final boolean enabled;
         final int priority;
         private final byte[] bytes;
+        final IslandRuleSample sample;
+        final Code rowError;
 
         Entry(UUID id, boolean enabled, int priority, byte[] bytes) {
+            this(id, enabled, priority, bytes, null);
+        }
+
+        Entry(UUID id, boolean enabled, int priority, byte[] bytes, IslandRuleSample sample) {
+            this(id, enabled, priority, bytes, sample, null);
+        }
+
+        private Entry(UUID id, boolean enabled, int priority, byte[] bytes, IslandRuleSample sample, Code rowError) {
             this.id = Objects.requireNonNull(id);
             this.enabled = enabled;
             this.priority = priority;
             this.bytes = bytes.clone();
+            this.sample = sample;
+            this.rowError = rowError;
         }
 
         byte[] bytes() { return bytes.clone(); }
@@ -73,11 +86,24 @@ final class IslandRulePack {
 
     /** 根据实际读取字节和 EOF 校验封装。调用方负责关闭流。 */
     static Decoded decode(InputStream input) throws IOException {
-        byte[] bytes = IslandRuleRepository.readBounded(input, MAX_BYTES, new Failure(Code.PACK_SIZE));
+        byte[] prefix = new byte[8];
+        for (int index = 0; index < prefix.length; index++) {
+            checkInterrupted();
+            int value = input.read();
+            if (value < 0) throw new Failure(Code.TRUNCATED);
+            prefix[index] = (byte) value;
+        }
+        ByteBuffer header = ByteBuffer.wrap(prefix);
+        if (header.getInt() != MAGIC) throw new Failure(Code.MAGIC);
+        if (header.getInt() != VERSION) throw new Failure(Code.VERSION);
+        byte[] remainder = IslandRuleRepository.readBounded(input,
+                MAX_BYTES - prefix.length, new Failure(Code.PACK_SIZE));
+        byte[] bytes = new byte[prefix.length + remainder.length];
+        System.arraycopy(prefix, 0, bytes, 0, prefix.length);
+        System.arraycopy(remainder, 0, bytes, prefix.length, remainder.length);
         ByteBuffer in = ByteBuffer.wrap(bytes);
         requireRemaining(in, HEADER_BYTES);
-        if (in.getInt() != MAGIC) throw new Failure(Code.MAGIC);
-        if (in.getInt() != VERSION) throw new Failure(Code.VERSION);
+        in.position(prefix.length);
         int count = in.getInt();
         checkCount(count);
         List<Entry> entries = new ArrayList<>(count);
@@ -87,15 +113,30 @@ final class IslandRulePack {
             requireRemaining(in, ENTRY_BYTES);
             UUID id = new UUID(in.getLong(), in.getLong());
             int enabled = in.get() & 255;
-            if (enabled > 1) throw new Failure(Code.ENABLED);
+            Code rowError = enabled > 1 ? Code.ENABLED : null;
             int priority = in.getInt();
             int size = in.getInt();
             limits.add(id, enabled == 1, size);
             requireRemaining(in, size);
             byte[] rule = new byte[size];
             in.get(rule);
-            utf8(rule);
-            entries.add(new Entry(id, enabled == 1, priority, rule));
+            if (rowError == null) {
+                try { utf8(rule); }
+                catch (Failure invalid) { rowError = invalid.code; }
+            }
+            IslandRuleSample sample = null;
+            requireRemaining(in, Integer.BYTES);
+            int sampleSize = in.getInt();
+            limits.addSample(sampleSize);
+            if (sampleSize > 0) {
+                requireRemaining(in, sampleSize);
+                byte[] encoded = new byte[sampleSize];
+                in.get(encoded);
+                try { sample = IslandRuleSample.decode(encoded); }
+                catch (IOException invalid) { if (rowError == null) rowError = Code.SAMPLE_FORMAT; }
+            }
+            // 固定长度可安全跳过的坏行保留索引，整包摘要通过后才交预览。
+            entries.add(new Entry(id, enabled == 1, priority, rule, sample, rowError));
         }
         int bodySize = in.position();
         requireRemaining(in, HASH_BYTES);
@@ -107,7 +148,9 @@ final class IslandRulePack {
     }
 
     /** 仓库出口传入已经重建的条目，完整编码后一次返回。 */
-    static byte[] encode(List<Entry> source) throws IOException {
+    static byte[] encode(List<Entry> source) throws IOException { return encode(source, false); }
+
+    static byte[] encode(List<Entry> source, boolean includeSampleValues) throws IOException {
         checkCount(source.size());
         Limits limits = new Limits();
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
@@ -117,6 +160,7 @@ final class IslandRulePack {
             out.writeInt(source.size());
             for (Entry entry : source) {
                 checkInterrupted();
+                if (entry.rowError != null) throw new Failure(entry.rowError);
                 limits.add(entry.id, entry.enabled, entry.bytes.length);
                 utf8(entry.bytes);
                 out.writeLong(entry.id.getMostSignificantBits());
@@ -125,6 +169,11 @@ final class IslandRulePack {
                 out.writeInt(entry.priority);
                 out.writeInt(entry.bytes.length);
                 out.write(entry.bytes);
+                byte[] sample = entry.sample == null ? null : entry.sample.encode(includeSampleValues);
+                int sampleSize = sample == null ? 0 : sample.length;
+                limits.addSample(sampleSize);
+                out.writeInt(sampleSize);
+                if (sample != null) out.write(sample);
             }
             byte[] body = buffer.toByteArray();
             out.write(hash(body, body.length));
@@ -136,6 +185,13 @@ final class IslandRulePack {
         private final Set<UUID> ids = new HashSet<>();
         private int enabledCount;
         private int contentBytes;
+        private int sampleBytes;
+
+        void addSample(int size) throws Failure {
+            if (size < 0 || size > IslandRuleSample.MAX_BYTES) throw new Failure(Code.SAMPLE_SIZE);
+            if (size > IslandRuleRepository.MAX_SAMPLE_FILE_BYTES - sampleBytes) throw new Failure(Code.SAMPLE_SIZE);
+            sampleBytes += size;
+        }
 
         void add(UUID id, boolean enabled, int size) throws Failure {
             if (!ids.add(id)) throw new Failure(Code.DUPLICATE_ID);

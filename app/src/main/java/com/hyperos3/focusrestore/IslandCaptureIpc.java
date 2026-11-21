@@ -214,8 +214,32 @@ final class IslandCaptureIpc {
                 bytes += field.wireBytes;
                 fields.add(field);
             }
-            if (p.dataAvail() != 0) throw new IOException("CAPTURE_PREVIEW_PAGE_INVALID");
-            return new IslandCapturePreview.Page(next, fields);
+            // 预览页必须完整携带类型尾部，以免捕获规则退化为包级匹配。
+            if (p.dataAvail() < 16) throw new IOException("CAPTURE_PREVIEW_TYPE_MISSING");
+            if (!IslandRuleProjection.REGISTRY_BINDING.equals(p.readString())) {
+                throw new IOException("CAPTURE_PREVIEW_REGISTRY_CHANGED");
+            }
+            String protocol = p.readString();
+            String business = p.readString();
+            String scene = p.readString();
+            int pathCount = p.readInt();
+            if (pathCount < 1 || pathCount > IslandNotificationType.MAX_PATHS || p.dataAvail() != pathCount * 4) {
+                throw new IOException("CAPTURE_PREVIEW_TYPE_INVALID");
+            }
+            List<String> paths = new ArrayList<>(pathCount);
+            for (int i = 0; i < pathCount; i++) {
+                int index = p.readInt();
+                if (index < 0 || index >= IslandCapturePreview.MAX_FIELDS) throw new IOException("CAPTURE_PREVIEW_TYPE_INVALID");
+                paths.add(IslandRulePaths.all().get(index).path);
+            }
+            IslandNotificationType type = IslandNotificationType.create(protocol, business, scene, paths);
+            if (type == null || IslandCapturePreview.typeWireBytes(type) > IslandCapturePreview.MAX_PAGE_BYTES - bytes) {
+                throw new IOException("CAPTURE_PREVIEW_TYPE_INVALID");
+            }
+            for (IslandCapturePreview.Field field : fields) {
+                if (!type.paths.contains(field.path.path)) throw new IOException("CAPTURE_PREVIEW_TYPE_INVALID");
+            }
+            return new IslandCapturePreview.Page(next, fields, type);
         });
     }
 
@@ -230,6 +254,13 @@ final class IslandCaptureIpc {
                 case NUMBER: out.writeInt(3); out.writeString(field.text); break;
             }
         }
+        IslandNotificationType type = page.notificationType;
+        out.writeString(IslandRuleProjection.REGISTRY_BINDING);
+        out.writeString(type.protocol);
+        out.writeString(type.business);
+        out.writeString(type.scene);
+        out.writeInt(type.paths.size());
+        for (String path : type.paths) out.writeInt(IslandRulePaths.all().indexOf(IslandRulePaths.find(path)));
     }
 
     static void closePreview(PreviewTicket ticket) throws IOException {

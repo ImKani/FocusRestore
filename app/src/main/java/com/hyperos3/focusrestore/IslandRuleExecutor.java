@@ -55,6 +55,8 @@ public final class IslandRuleExecutor {
         Objects.requireNonNull(isCancelled, "isCancelled");
         IslandRuleSelection.Collector diagnostics = new IslandRuleSelection.Collector();
         if (isCancelled.getAsBoolean()) return cancelled(diagnostics);
+        IslandRuleExtractor.Preparation typedPayload = null;
+        IslandRuleContext typedContext = null;
         if (orderedActiveEntries != null && context != null) {
             int count = Math.min(orderedActiveEntries.size(), IslandRuleSet.MAX_ACTIVE_RULES);
             for (int index = 0; index < count; index++) {
@@ -68,12 +70,24 @@ public final class IslandRuleExecutor {
                             ? new IslandRuleBudget(clock, isCancelled) : null;
                     phase = Phase.MATCH;
                     path = "$.match";
-                    if (!IslandRuleSelector.matchesCandidate(entry, context, index, diagnostics,
+                    boolean classify = budget != null && entry.rule.ruleVersion == IslandRule.CURRENT_VERSION
+                            && entry.rule.notificationType != null && entry.rule.meta.packageName.equals(context.packageName);
+                    if (classify && typedContext == null) {
+                        // 只为当前包的类型规则解析一次，失败或取消仍按执行预算处理。
+                        typedPayload = extractor.prepare(rawPayload, budget);
+                        if (!typedPayload.isSuccess()) {
+                            addProblem(diagnostics, index, entry.id, Phase.PREPARATION, typedPayload.failure);
+                            continue;
+                        }
+                        typedContext = new IslandRuleContext(context.packageName, context.protocolVersion,
+                                context.business, context.scene, typedPayload.payload.notificationType(budget));
+                    }
+                    if (!IslandRuleSelector.matchesCandidate(entry, classify ? typedContext : context, index, diagnostics,
                             budget == null ? null : meter(budget))) continue;
 
                     phase = Phase.PREPARATION;
                     path = "$";
-                    IslandRuleExtractor.Preparation prepared = extractor.prepare(rawPayload, budget);
+                    IslandRuleExtractor.Preparation prepared = classify ? typedPayload : extractor.prepare(rawPayload, budget);
                     if (!prepared.isSuccess()) {
                         addProblem(diagnostics, index, entry.id, phase, prepared.failure);
                         continue;

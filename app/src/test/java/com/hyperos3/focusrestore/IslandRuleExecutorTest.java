@@ -385,13 +385,13 @@ public class IslandRuleExecutorTest {
             List<ExtractSpec> bindings, String ref) {
         IslandRule.Metadata meta = new IslandRule.Metadata("test.app", null, null, null, null, null, null, null,
                 null, template, null, null, "ImKani", "", "2026-11-18T00:00:00Z");
-        IslandRule rule = new IslandRule(1, meta, conditions, bindings, new DisplaySpec(Collections.singletonList(
+        IslandRule rule = new IslandRule(IslandRule.CURRENT_VERSION, meta, conditions, bindings, new DisplaySpec(Collections.singletonList(
                 new DisplaySpec.Projection("title", ref)), "·", false));
         return new IslandRuleSet.Entry(id, 0, enabled, rule, 1);
     }
 
     private static IslandRuleSetLoader.Source source(String id, int priority, boolean enabled, String path) {
-        String json = "{\"ruleVersion\":1,\"meta\":{\"packageName\":\"test.app\",\"templateType\":\"legacy\","
+        String json = "{\"ruleVersion\":2,\"meta\":{\"packageName\":\"test.app\",\"templateType\":\"legacy\","
                 + "\"ruleAuthor\":\"ImKani\",\"ruleDescription\":\"\",\"createdAt\":\"2026-11-18T00:00:00Z\"},"
                 + "\"match\":{\"all\":[{\"field\":\"packageName\",\"op\":\"equals\",\"value\":\"test.app\"}]},"
                 + "\"extract\":[{\"id\":\"a\",\"path\":\"" + path + "\",\"required\":true}],"

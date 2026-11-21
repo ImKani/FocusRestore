@@ -1,5 +1,5 @@
 {
-  "ruleVersion": 1,
+  "ruleVersion": 2,
   "meta": {
     "packageName": "com.miui.personalassistant",
     "focusNotificationName": "出行 / Travel (human label)",

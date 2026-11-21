@@ -26,7 +26,7 @@ public class IslandD1SelectionTest {
     private static IslandRule rule(List<MatchClause> clauses) {
         IslandRule.Metadata meta = new IslandRule.Metadata("not-a-match-source", null, null, null,
                 null, null, null, null, null, "baseInfo", null, null, "ImKani", "", "2026-11-18T00:00:00Z");
-        return new IslandRule(1, meta, clauses, Collections.singletonList(new ExtractSpec(
+        return new IslandRule(IslandRule.CURRENT_VERSION, meta, clauses, Collections.singletonList(new ExtractSpec(
                 "poison", "/not-readable", true, Collections.singletonList(new ExtractSpec.Replacement("", "bad")))),
                 new DisplaySpec(Collections.singletonList(new DisplaySpec.Projection("title", "absent")), "DO-NOT-EXECUTE", true));
     }
@@ -195,7 +195,7 @@ public class IslandD1SelectionTest {
         IslandRuleSet.Entry empty = entry("empty", true);
         IslandRule original = rule(Collections.singletonList(clause("business", "equals", "train")));
         IslandRuleSet.Entry future = new IslandRuleSet.Entry("future", 0, true,
-                new IslandRule(2, original.meta, original.match, original.extract, original.display), 1);
+                new IslandRule(3, original.meta, original.match, original.extract, original.display), 1);
         IslandRuleSelection result = selector.selectDetailed(Arrays.asList(null, disabled, empty, future), CONTEXT);
         assertNull(result.selectedEntry);
         assertEquals(Arrays.asList(Code.INVALID_RULE, Code.SKIPPED_DISABLED, Code.CANDIDATE, Code.INVALID_RULE,

@@ -13,9 +13,14 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 
 /** App 私有授权。文件仅保存所批准的修订和条目组合摘要。 */
 final class IslandRuleProjectionConsent {
+    static final String FILE_NAME = "island-projection-consent-v2";
+
     static final class Preview {
         final IslandRuleProjection.Snapshot snapshot;
         final boolean approved;
@@ -70,9 +75,25 @@ final class IslandRuleProjectionConsent {
 
     enum ReductionResult { SAVED, SAVED_REAUTHORIZE }
 
-    /** 只接受删除/停用；仓库校验目标 ID 和页面修订，提交后才能为剩余条目写入授权。 */
-    synchronized ReductionResult reduce(IslandRuleRepository repository, long baseline, String targetId,
+    static final class Reduction {
+        final long revision;
+        final ReductionResult result;
+
+        Reduction(long revision, ReductionResult result) {
+            this.revision = revision;
+            this.result = result;
+        }
+    }
+
+    ReductionResult reduce(IslandRuleRepository repository, long baseline, String targetId,
             boolean delete) throws IOException {
+        return reduceMany(repository, baseline, Collections.singleton(targetId), delete).result;
+    }
+
+    /** 仓库校验整批目标和页面修订，提交后才能为剩余条目写入授权。 */
+    synchronized Reduction reduceMany(IslandRuleRepository repository, long baseline, Set<String> ids,
+            boolean delete) throws IOException {
+        Set<String> targets = new HashSet<>(ids);
         synchronized (repository) {
             IslandRuleProjection.Snapshot previous = null;
             ReductionResult result = ReductionResult.SAVED;
@@ -86,22 +107,22 @@ final class IslandRuleProjectionConsent {
                 // 授权不可证实仍允许减少本地规则，页面另行提示重新核对。
                 result = ReductionResult.SAVED_REAUTHORIZE;
             }
-            long revision = delete ? repository.delete(baseline, targetId)
-                    : repository.setEnabled(baseline, targetId, false, null);
-            if (revision == baseline || previous == null) return result;
+            long revision = delete ? repository.deleteAll(baseline, targets)
+                    : repository.changeEnabled(baseline, targets, false, null);
+            if (revision == baseline || previous == null) return new Reduction(revision, result);
             generation = new Object();
             try {
                 IslandRuleProjection.Snapshot current = snapshot(repository);
-                if (current.revision != revision || !current.retainsAllExcept(previous, targetId)) {
-                    return ReductionResult.SAVED_REAUTHORIZE;
+                if (current.revision != revision || !current.retainsAllExcept(previous, targets)) {
+                    return new Reduction(revision, ReductionResult.SAVED_REAUTHORIZE);
                 }
                 if (!current.rows.isEmpty()) replaceGrant(grant(current));
-                return ReductionResult.SAVED;
+                return new Reduction(revision, ReductionResult.SAVED);
             } catch (IOException | RuntimeException grantFailure) {
                 // 清单已提交。新授权可能已重命名但目录同步失败，清除后重新授权。
                 try { revoke(); }
                 catch (IOException | RuntimeException unavailableStorage) { uncertain = true; }
-                return ReductionResult.SAVED_REAUTHORIZE;
+                return new Reduction(revision, ReductionResult.SAVED_REAUTHORIZE);
             }
         }
     }

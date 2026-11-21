@@ -21,7 +21,7 @@ import static org.junit.Assert.*;
 public class IslandRuleSelectorTest {
     private final IslandRuleSelector selector = new IslandRuleSelector();
     private static String json() {
-        return "{\"ruleVersion\":1,\"meta\":{\"packageName\":\"com.example.app\","
+        return "{\"ruleVersion\":2,\"meta\":{\"packageName\":\"com.example.app\","
                 + "\"templateType\":\"baseInfo\",\"ruleAuthor\":\"ImKani\","
                 + "\"ruleDescription\":\"\",\"createdAt\":\"2026-11-18T00:00:00+08:00\"},"
                 + "\"match\":{\"all\":[{\"field\":\"business\",\"op\":\"equals\",\"value\":\"train\"}]},"
@@ -37,7 +37,7 @@ public class IslandRuleSelectorTest {
     }
     private static IslandRuleSet.Entry entry(String id, int priority, boolean enabled, MatchClause... clauses) {
         IslandRule base = base();
-        IslandRule rule = new IslandRule(1, base.meta, Arrays.asList(clauses), base.extract, base.display);
+        IslandRule rule = new IslandRule(IslandRule.CURRENT_VERSION, base.meta, Arrays.asList(clauses), base.extract, base.display);
         return new IslandRuleSet.Entry(id, 0L, enabled, priority, rule, json().getBytes(StandardCharsets.UTF_8).length);
     }
     private IslandRuleSet.Entry select(IslandRuleSet.Entry entry, IslandRuleContext context) {
@@ -54,14 +54,26 @@ public class IslandRuleSelectorTest {
                 () -> new ByteArrayInputStream(json().getBytes(StandardCharsets.UTF_8)));
     }
 
-    @Test public void contextExposesOnlyFourImmutableStrings() {
+    @Test public void contextExposesFourImmutableStringsAndKeepsThePathSignatureInternal() {
         Set<String> names = new HashSet<>();
+        Set<String> internal = new HashSet<>();
         for (Field field : IslandRuleContext.class.getDeclaredFields()) {
-            assertEquals(String.class, field.getType());
-            assertTrue(Modifier.isPublic(field.getModifiers())); assertTrue(Modifier.isFinal(field.getModifiers()));
-            names.add(field.getName());
+            assertTrue(Modifier.isFinal(field.getModifiers()));
+            if (Modifier.isPublic(field.getModifiers())) {
+                assertEquals(String.class, field.getType());
+                names.add(field.getName());
+            } else {
+                assertEquals(IslandNotificationType.class, field.getType());
+                internal.add(field.getName());
+            }
         }
         assertEquals(new HashSet<>(Arrays.asList("packageName", "protocolVersion", "business", "scene")), names);
+        assertEquals(java.util.Collections.singleton("notificationType"), internal);
+        String raw = "{\"baseInfo\":{\"title\":\"仅显示于通知的正文\"}}";
+        IslandNotificationType type = new IslandRuleContextAdapter().adapt("com.example.app", raw).context.notificationType;
+        assertEquals(java.util.Collections.singletonList("/baseInfo/title"), type.paths);
+        assertFalse(type.json().toString().contains("仅显示于通知的正文"));
+        assertThrows(UnsupportedOperationException.class, () -> type.paths.add("/baseInfo/content"));
     }
 
     @Test public void eachFieldMatchesAndRejectsIndependently() {
@@ -223,7 +235,7 @@ public class IslandRuleSelectorTest {
         IslandRule.Metadata declarations = new IslandRule.Metadata("different.pkg", "name", "tag",
                 new IslandRule.SystemUiVersion("unverified", 999L), "firmware", "model", "codename",
                 999, "metadataOnly", "legacy", "channel", "category", "ImKani", "description", "2026-11-18T00:00:00Z");
-        IslandRule rule = new IslandRule(1, declarations,
+        IslandRule rule = new IslandRule(IslandRule.CURRENT_VERSION, declarations,
                 Collections.singletonList(clause("business", "equals", "train")), base.extract, base.display);
         IslandRuleSet.Entry entry = new IslandRuleSet.Entry("metadata", 0L, true, rule, 1024);
         assertSame(entry, select(entry, train()));
@@ -237,7 +249,7 @@ public class IslandRuleSelectorTest {
                 Collections.singletonList(new ExtractSpec.Replacement("", "never")));
         DisplaySpec display = new DisplaySpec(Collections.singletonList(
                 new DisplaySpec.Projection("title", "missingRef")), "\ufeff\u200b separator ", true);
-        IslandRule rule = new IslandRule(1, base.meta,
+        IslandRule rule = new IslandRule(IslandRule.CURRENT_VERSION, base.meta,
                 Collections.singletonList(clause("business", "equals", "train")),
                 Collections.singletonList(extraction), display);
         IslandRuleSet.Entry entry = new IslandRuleSet.Entry("selectionOnly", 0L, true, rule, 1024);
@@ -250,13 +262,13 @@ public class IslandRuleSelectorTest {
     @Test public void emptyMatchAndUnsupportedVersionCannotBecomeImplicitMatchAll() {
         IslandRuleSet.Entry empty = entry("empty", 0, true);
         IslandRule base = base();
-        IslandRule futureRule = new IslandRule(2, base.meta,
+        IslandRule futureRule = new IslandRule(3, base.meta,
                 Collections.singletonList(clause("business", "equals", "train")), base.extract, base.display);
         IslandRuleSet.Entry future = new IslandRuleSet.Entry("future", 0L, true, futureRule, 1024);
         assertNull(select(empty, train())); assertNull(select(future, train()));
         List<MatchClause> tooMany = new ArrayList<>();
         for (int i = 0; i < 17; i++) tooMany.add(clause("business", "equals", "train"));
-        IslandRule oversized = new IslandRule(1, base.meta, tooMany, base.extract, base.display);
+        IslandRule oversized = new IslandRule(IslandRule.CURRENT_VERSION, base.meta, tooMany, base.extract, base.display);
         assertNull(select(new IslandRuleSet.Entry("tooMany", 0L, true, oversized, 1024), train()));
     }
 }

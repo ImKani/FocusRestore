@@ -18,7 +18,7 @@ import static org.junit.Assert.*;
 
 public class IslandRuleTextEngineTest {
     private static final String RAW = "{\"protocol\":1,\"business\":\"train\",\"scene\":\"arrival\",\"desc1\":\"Platform 4\"}";
-    private static final String RULE_JSON = "{\"ruleVersion\":1,\"meta\":{\"packageName\":\"test.app\","
+    private static final String RULE_JSON = "{\"ruleVersion\":2,\"meta\":{\"packageName\":\"test.app\","
             + "\"templateType\":\"legacy\",\"ruleAuthor\":\"ImKani\",\"ruleDescription\":\"\","
             + "\"createdAt\":\"2026-11-18T00:00:00Z\"},\"match\":{\"all\":["
             + "{\"field\":\"packageName\",\"op\":\"equals\",\"value\":\"test.app\"}]},"

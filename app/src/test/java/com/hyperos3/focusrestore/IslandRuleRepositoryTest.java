@@ -79,7 +79,7 @@ public class IslandRuleRepositoryTest {
         }
         String last = add(owner, bytes, true);
         try (IslandRuleRepository.Pending invalid = owner.prepareUpdate(3, middle, "[]".getBytes(StandardCharsets.UTF_8), CURRENT)) {
-            assertFalse(invalid.empty);
+            assertNull(invalid.validation.rule);
             assertFalse(invalid.canApprove(true));
             assertEquals(3, owner.revision());
         }
@@ -112,6 +112,51 @@ public class IslandRuleRepositoryTest {
             assertEquals(1, view.entries.get(1).revision);
         }
         rejects(IslandRuleRepository.Code.UNKNOWN_RULE, () -> owner.delete(7, first));
+    }
+
+    @Test public void batchChangesUseOneRevisionAndPreserveUnselectedRules() throws Exception {
+        Path dir = root();
+        IslandRuleRepository store = repo(dir);
+        String first = add(store, valid(), false);
+        String middle = add(store, valid(), true);
+        String last = add(store, valid(), false);
+        java.util.Set<String> targets = new java.util.HashSet<>(Arrays.asList(first, last));
+        assertEquals(4, store.changeEnabled(3, targets, true, CURRENT));
+        assertEquals(4, store.changeEnabled(4, targets, true, CURRENT));
+        rejects(IslandRuleRepository.Code.BASELINE_CHANGED, () -> store.deleteAll(3, targets));
+        rejects(IslandRuleRepository.Code.UNKNOWN_RULE, () -> store.deleteAll(4,
+                new java.util.HashSet<>(Arrays.asList(first, "unknown"))));
+        try (IslandRuleRepository.ReadView beforeDelete = store.openRead()) {
+            assertTrue(beforeDelete.entries.stream().allMatch(entry -> entry.enabled));
+            assertEquals(2, beforeDelete.entries.get(0).revision);
+            assertEquals(1, beforeDelete.entries.get(1).revision);
+            assertEquals(2, beforeDelete.entries.get(2).revision);
+            assertEquals(5, store.deleteAll(4, targets));
+            assertArrayEquals(valid(), beforeDelete.readById(first));
+        }
+        try (IslandRuleRepository.ReadView view = repo(dir).openRead()) {
+            assertEquals(5, view.revision);
+            assertEquals(1, view.entries.size());
+            assertEquals(middle, view.entries.get(0).id);
+            assertEquals(0, view.entries.get(0).order);
+            assertEquals(1, view.entries.get(0).revision);
+        }
+    }
+
+    @Test public void batchEnableValidatesEveryChangedTargetBeforePublishing() throws Exception {
+        Path dir = root();
+        IslandRuleRepository store = repo(dir);
+        String first = add(store, valid(), false);
+        byte[] versionBound = variant("\"systemUiVersion\": null", "\"systemUiVersion\": {\"name\":\"test\",\"code\":1}");
+        String last = add(store, versionBound, false);
+        java.util.Set<String> targets = new java.util.HashSet<>(Arrays.asList(first, last));
+        IslandRuleImportValidator.Environment changed = new IslandRuleImportValidator.Environment("other", 2L);
+        rejects(IslandRuleRepository.Code.VALIDATION, () -> store.changeEnabled(2, targets, true, changed));
+        try (IslandRuleRepository.ReadView view = repo(dir).openRead()) {
+            assertEquals(2, view.revision);
+            assertTrue(view.entries.stream().noneMatch(entry -> entry.enabled));
+        }
+        assertEquals(3, store.changeEnabled(2, targets, true, CURRENT));
     }
 
     @Test public void boundaryReadsExactlyOnceAndRetainsOriginalUtf8() throws Exception {
@@ -363,9 +408,9 @@ public class IslandRuleRepositoryTest {
         IslandRuleRepository r = repo(root);
         add(r, valid(), true);
         Path manifest = root.resolve("manifest");
-        Files.write(manifest, new byte[IslandRuleRepository.MAX_MANIFEST_BYTES]);
+        Files.write(manifest, new byte[IslandRuleRepository.MAX_PRIVATE_MANIFEST_BYTES]);
         rejects(IslandRuleRepository.Code.CORRUPT_REPOSITORY, () -> repo(root));
-        Files.write(manifest, new byte[IslandRuleRepository.MAX_MANIFEST_BYTES + 1]);
+        Files.write(manifest, new byte[IslandRuleRepository.MAX_PRIVATE_MANIFEST_BYTES + 1]);
         rejects(IslandRuleRepository.Code.MANIFEST_LIMIT, () -> repo(root));
         String longId = String.join("", java.util.Collections.nCopies(43, "界"));
         assertEquals(129, longId.getBytes(StandardCharsets.UTF_8).length);
@@ -382,7 +427,17 @@ public class IslandRuleRepositoryTest {
         try (IslandRuleRepository.ReadView view = r.openRead()) {
             assertEquals(1024, view.entries.size());
             assertEquals(36, view.entries.get(0).id.getBytes(StandardCharsets.UTF_8).length);
-            assertArrayEquals(valid(), view.read(view.entries.get(1023)));
+            byte[] original = valid();
+            assertArrayEquals(original, view.read(view.entries.get(1023)));
+            ByteArrayOutputStream wire = new ByteArrayOutputStream();
+            IslandRuleBatch.write(wire, view);
+            IslandRuleBatch batch = IslandRuleBatch.read(new ByteArrayInputStream(wire.toByteArray()),
+                    view.revision, CURRENT);
+            IslandRuleSetLoader.Snapshot snapshot = new IslandRuleSetLoader().load(batch.revision, batch.sources);
+            assertTrue(snapshot.failures.isEmpty());
+            assertEquals(1024, snapshot.ruleSet.entries.size());
+            assertEquals(original.length, snapshot.ruleSet.totalUtf8Bytes);
+            assertSame(snapshot.ruleSet.entries.get(0).rule, snapshot.ruleSet.entries.get(1023).rule);
         }
         assertEquals(1, files(root));
         rejects(IslandRuleRepository.Code.METADATA_LIMIT, () -> prepare(r, valid(), null, false));
@@ -396,12 +451,12 @@ public class IslandRuleRepositoryTest {
         Files.write(root.resolve("rule-" + blob + ".blob"), bytes);
         ByteArrayOutputStream envelope = new ByteArrayOutputStream();
         try (DataOutputStream out = new DataOutputStream(envelope)) {
-            out.writeInt(0x46524952); out.writeInt(1); out.writeLong(count); out.writeInt(count);
+            out.writeInt(0x4652494d); out.writeInt(2); out.writeLong(count); out.writeInt(count);
             for (int i = 0; i < count; i++) {
                 out.writeUTF(i == 0 && firstId != null ? firstId : new UUID(0, i).toString());
                 out.writeLong(1); out.writeBoolean(false); out.writeInt(0); out.writeLong(i);
                 out.writeUTF(hash(bytes)); out.writeInt(bytes.length); out.writeUTF(blob);
-                out.writeBoolean(false); out.writeByte(0);
+                out.writeBoolean(false); out.writeByte(0); out.writeBoolean(false);
             }
             out.write(hash(envelope.toByteArray()).getBytes(StandardCharsets.US_ASCII));
         }

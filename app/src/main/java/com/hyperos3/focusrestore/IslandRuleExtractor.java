@@ -29,6 +29,10 @@ public final class IslandRuleExtractor {
     public static final class Payload {
         private final Map<?, ?> root;
         private Payload(Map<?, ?> root) { this.root = root; }
+
+        IslandNotificationType notificationType(IslandRuleBudget budget) {
+            return IslandRuleContextAdapter.classify(root, budget::checkTime);
+        }
     }
     public static final class Preparation {
         public final Payload payload;
@@ -187,7 +191,9 @@ public final class IslandRuleExtractor {
 
     /** 导入与运行入口共用防御；运行入口额外检查时间预算。 */
     private static void validate(IslandRule rule, IslandRuleBudget budget) {
-        if (rule == null || rule.ruleVersion != 1) throw reject(Code.L3_FORBIDDEN_CAPABILITY, "$", "RULE_VERSION");
+        if (rule == null || rule.ruleVersion != IslandRule.CURRENT_VERSION) {
+            throw reject(Code.L3_FORBIDDEN_CAPABILITY, "$", "RULE_VERSION");
+        }
         if (rule.extract.isEmpty() || rule.extract.size() > 32
                 || rule.display.order.isEmpty() || rule.display.order.size() > 16)
             throw reject(Code.L3_QUOTA, "$", "MODEL_COUNT");

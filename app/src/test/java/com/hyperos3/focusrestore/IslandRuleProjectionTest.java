@@ -74,6 +74,8 @@ public class IslandRuleProjectionTest {
         save(repository, replace(rule("com.test.changed", 0, TITLE), " · ", "private value"), true, 0);
         save(repository, replace(rule("com.test.required", 0, TITLE), "\"path\":",
                 "\"required\":true,\"path\":"), true, 0);
+        save(repository, replace(rule("com.test.conditional", 0, TITLE), "]},\"extract\"",
+                ",{\"field\":\"business\",\"op\":\"equals\",\"value\":\"train\"}]},\"extract\""), true, 0);
         IslandRuleProjection.Snapshot snapshot = consent(folder.newFolder().toPath().resolve("consent"))
                 .preview(repository).snapshot;
         List<IslandRuleProjection.Row> rows = IslandRuleProjection.decode(snapshot.payload());
@@ -159,7 +161,7 @@ public class IslandRuleProjectionTest {
         String disabled = entryId(store, 3);
         IslandRuleProjectionConsent consent = consent(grantFile);
         consent.approve(store, consent.preview(store));
-        assertEquals(2, consent.read(store)[4]);
+        assertEquals(3, consent.read(store)[4]);
         assertEquals(IslandRuleProjectionConsent.ReductionResult.SAVED,
                 consent.reduce(store, store.revision(), disabled, true));
         assertEquals(3, IslandRuleProjection.decode(consent.read(store)).size());
@@ -173,11 +175,40 @@ public class IslandRuleProjectionTest {
                 consent.reduce(store, store.revision(), mixed, true));
         IslandRuleRepository reopened = repository(root);
         byte[] surviving = consent(grantFile).read(reopened);
-        assertEquals(1, surviving[4]);
+        assertEquals(3, surviving[4]);
         assertEquals(1, IslandRuleProjection.decode(surviving).size());
         assertEquals("com.test.same", IslandRuleProjection.decode(surviving).get(0).packageName);
         consent.reduce(store, store.revision(), last, false);
         assertNull(consent(grantFile).read(repository(root)));
+    }
+
+    @Test public void batchReductionRetainsOnlyApprovedSurvivorsAndEnableRequiresNewGrant() throws Exception {
+        Path root = folder.newFolder().toPath();
+        Path file = root.resolve("consent");
+        IslandRuleRepository store = repository(root);
+        save(store, rule("com.test.first", 0, TITLE), true, 30);
+        save(store, rule("com.test.keep", 0, CONTENT, TITLE), true, 20);
+        save(store, rule("com.test.last", 0, TITLE), true, 10);
+        save(store, rule("com.test.disabled", 0, TITLE), false, 40);
+        String first = entryId(store, 0), last = entryId(store, 2), disabled = entryId(store, 3);
+        IslandRuleProjectionConsent consent = consent(file);
+        consent.approve(store, consent.preview(store));
+        java.util.Set<String> targets = new java.util.HashSet<>(Arrays.asList(first, last, disabled));
+        IslandRuleProjectionConsent.Reduction stopped = consent.reduceMany(store, 4, targets, false);
+        assertEquals(5, stopped.revision);
+        assertEquals(IslandRuleProjectionConsent.ReductionResult.SAVED, stopped.result);
+        List<IslandRuleProjection.Row> rows = IslandRuleProjection.decode(consent(file).read(repository(root)));
+        assertEquals(1, rows.size());
+        assertEquals("com.test.keep", rows.get(0).packageName);
+        assertEquals(Arrays.asList(CONTENT, TITLE), rows.get(0).paths);
+        assertEquals(6, store.changeEnabled(5, targets, true, null));
+        assertNull(consent.read(store));
+        consent.approve(store, consent.preview(store));
+        IslandRuleProjectionConsent.Reduction deleted = consent.reduceMany(store, 6, targets, true);
+        assertEquals(7, deleted.revision);
+        assertEquals(IslandRuleProjectionConsent.ReductionResult.SAVED, deleted.result);
+        assertEquals("com.test.keep", IslandRuleProjection.decode(consent(file).read(repository(root))).get(0).packageName);
+        assertEquals(1, IslandRuleProjection.decode(consent.read(store)).size());
     }
 
     @Test public void reductionRequiresCurrentGrantAndRejectsStalePageOrWrongTarget() throws Exception {
@@ -275,7 +306,7 @@ public class IslandRuleProjectionTest {
         IslandRuleRepository migrated = repository(folder.newFolder().toPath());
         try (IslandRuleRepository.PendingBatch batch = migrated.prepareBatch(
                 new ByteArrayInputStream(source.exportPack()), environment)) {
-            migrated.commitBatch(batch, IslandRuleRepository.BatchConfirmation.REPLACE_ALL, environment);
+            migrated.commitBatch(batch, java.util.Collections.emptySet(), environment);
         }
         for (IslandRuleRepository repository : Arrays.asList(source, migrated)) {
             try (IslandRuleRepository.ReadView view = repository.openRead()) {
@@ -288,7 +319,7 @@ public class IslandRuleProjectionTest {
             assertNull(consent.read(repository));
             consent.approve(repository, consent.preview(repository));
             byte[] projected = consent.read(repository);
-            assertArrayEquals(wire(2, 1, paths), projected);
+            assertArrayEquals(wire(3, 1, paths), projected);
             IslandRuleProjection.Row decoded = IslandRuleProjection.decode(projected).get(0);
             assertEquals(Arrays.asList(paths), decoded.paths);
             byte[] rebuilt = rule(decoded.packageName, 1000, decoded.paths.toArray(new String[0]));
@@ -309,27 +340,42 @@ public class IslandRuleProjectionTest {
         assertEquals("ticker · raw · base", result.text);
     }
 
-    @Test public void singleGroupProjectionKeepsOriginalWireBytes() throws Exception {
+    @Test public void emptyAndSingleGroupProjectionsUseCurrentWireVersion() throws Exception {
         IslandRuleRepository repository = repository(folder.newFolder().toPath());
+        try (IslandRuleRepository.ReadView view = repository.openRead()) {
+            byte[] payload = IslandRuleProjection.snapshot(view).payload();
+            assertArrayEquals(wire(3, 0), payload);
+            assertTrue(IslandRuleProjection.decode(payload).isEmpty());
+        }
         save(repository, rule("com.test.first", 0, CONTENT, TITLE), true, 0);
         try (IslandRuleRepository.ReadView view = repository.openRead()) {
-            assertArrayEquals(wire(1, 1, CONTENT, TITLE), IslandRuleProjection.snapshot(view).payload());
+            byte[] payload = IslandRuleProjection.snapshot(view).payload();
+            assertArrayEquals(wire(3, 1, CONTENT, TITLE), payload);
+            assertNull(IslandRuleProjection.decode(payload).get(0).notificationType);
         }
     }
 
-    @Test public void decoderRejectsUnknownVersionsAndExtraUnregisteredOrOversizedFields() throws Exception {
-        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(3, 1, TITLE)));
-        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(2, 1, TITLE, TITLE)));
-        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(2, 1, TITLE, "/baseInfo/unknown")));
-        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(1, 51, TITLE)));
-        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(1, 1, "/unexpected")));
-        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(1, 1, TITLE, TITLE)));
-        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(1, 1, TITLE, "/hintInfo/title")));
+    @Test public void decoderRejectsHistoricalAndUnknownVersions() throws Exception {
+        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(1, 1, TITLE)));
+        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(2, 1, TITLE, "/hintInfo/title")));
+        byte[] future = wire(3, 1, TITLE);
+        future[4] = 4;
+        assertThrows(IOException.class, () -> IslandRuleProjection.decode(future));
+    }
+
+    @Test public void currentDecoderRejectsUnregisteredDuplicateOversizedOrMalformedRows() throws Exception {
+        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(3, 1, TITLE, TITLE)));
+        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(3, 1, TITLE, "/baseInfo/unknown")));
+        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(3, 51, TITLE)));
+        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(3, 1, "/unexpected")));
+        assertThrows(IOException.class, () -> IslandRuleProjection.decode(wire(3, 1)));
         assertThrows(IOException.class, () -> IslandRuleProjection.decode(new byte[129 * 1024]));
-        byte[] valid = wire(1, 1, TITLE);
+        byte[] valid = wire(3, 1, TITLE);
         assertThrows(IOException.class, () -> IslandRuleProjection.decode(Arrays.copyOf(valid, valid.length + 1)));
         assertThrows(IOException.class, () -> IslandRuleProjection.decode(Arrays.copyOf(valid, valid.length - 1)));
         assertEquals(TITLE, IslandRuleProjection.decode(valid).get(0).paths.get(0));
+        valid[valid.length - 1] = 2;
+        assertThrows(IOException.class, () -> IslandRuleProjection.decode(valid));
     }
 
     private static byte[] wire(int version, int rows, String... paths) throws IOException {
@@ -338,9 +384,13 @@ public class IslandRuleProjectionTest {
             out.writeInt(0x4652504a);
             out.writeByte(version);
             out.writeByte(rows);
-            out.writeUTF("com.test.first");
-            out.writeByte(paths.length);
-            for (String path : paths) out.writeUTF(path);
+            if (version == 3) out.writeUTF(IslandRuleProjection.REGISTRY_BINDING);
+            if (rows > 0) {
+                out.writeUTF("com.test.first");
+                out.writeByte(paths.length);
+                for (String path : paths) out.writeUTF(path);
+                if (version == 3) out.writeByte(0);
+            }
         }
         return bytes.toByteArray();
     }

@@ -35,8 +35,8 @@ android {
         applicationId 'com.hyperos3.focusrestore'
         minSdk 31
         targetSdk 35
-        versionCode 355
-        versionName '0.50.2'
+        versionCode 364
+        versionName '0.54.2'
     }
 
     signingConfigs {

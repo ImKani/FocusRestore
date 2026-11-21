@@ -9,10 +9,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-/** 可移植 v1 的封闭规则子集。只从已解码声明重建，保留支持字段的完整语义。 */
+/** 可移植的封闭规则子集。只从已解码声明重建，保留支持字段的完整语义。 */
 final class IslandPortableRule {
     private static final Pattern REF = Pattern.compile("field(?:[1-9]|1[0-6])");
     private static final Pattern SYSTEM_UI = Pattern.compile("[0-9]{1,9}(?:\\.[0-9]{1,9}){1,4}(?:\\.[a-z])?");
+
+    static boolean isFieldRef(String id) { return REF.matcher(id).matches(); }
 
     private IslandPortableRule() {}
 
@@ -26,7 +28,8 @@ final class IslandPortableRule {
         String separator = rule.display.separator;
         if (!("".equals(separator) || "·".equals(separator) || " · ".equals(separator))) throw unsupported();
 
-        StringBuilder json = new StringBuilder("{\"ruleVersion\":1,\"meta\":{\"packageName\":\"")
+        StringBuilder json = new StringBuilder("{\"ruleVersion\":").append(rule.ruleVersion)
+                .append(",\"meta\":{\"packageName\":\"")
                 .append(meta.packageName).append("\",\"templateType\":\"").append(meta.templateType)
                 .append("\",\"ruleAuthor\":\"").append(meta.ruleAuthor)
                 .append("\",\"ruleDescription\":\"\",\"createdAt\":\"").append(meta.createdAt).append('"');
@@ -37,7 +40,10 @@ final class IslandPortableRule {
         }
         if (meta.protocolVersion != null) json.append(",\"protocolVersion\":").append(meta.protocolVersion);
         json.append("},\"match\":{\"all\":[{\"field\":\"packageName\",\"op\":\"equals\",\"value\":\"")
-                .append(meta.packageName).append("\"}]},\"extract\":[");
+                .append(meta.packageName).append("\"}]");
+        if (rule.notificationType != null) json.append(",\"notificationType\":")
+                .append(IslandExportJson.write(rule.notificationType.json(), IslandRuleCodec.MAX_UTF8_BYTES));
+        json.append("},\"extract\":[");
         for (int index = 0; index < rule.extract.size(); index++) {
             ExtractSpec binding = rule.extract.get(index);
             if (!REF.matcher(binding.id).matches() || !binding.replace.isEmpty()) throw unsupported();
@@ -69,6 +75,9 @@ final class IslandPortableRule {
         for (Map<String, Object> binding : (List<Map<String, Object>>) source.get("extract")) {
             binding.putIfAbsent("required", false);
         }
+        Map<String, Object> match = (Map<String, Object>) source.get("match");
+        Map<String, Object> type = (Map<String, Object>) match.get("notificationType");
+        if (type != null) ((List<String>) type.get("paths")).sort(String::compareTo);
         Map<String, Object> display = (Map<String, Object>) source.get("display");
         display.putIfAbsent("separator", "·");
         display.putIfAbsent("dedupe", false);

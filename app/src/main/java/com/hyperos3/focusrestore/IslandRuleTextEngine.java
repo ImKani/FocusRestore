@@ -190,7 +190,7 @@ public final class IslandRuleTextEngine implements AutoCloseable {
         }
         try {
             IslandRuleContextAdapter.Result adapted = contextAdapter.adapt(
-                    job.request.notificationPackageName, job.request.rawPayload);
+                    job.request.notificationPackageName, job.request.rawPayload, false);
             IslandRuleExecutor.Result executed = ruleExecutor.execute(
                     job.request.snapshot.orderedActiveEntries, adapted.context,
                     job.request.rawPayload, new BooleanSupplier() {

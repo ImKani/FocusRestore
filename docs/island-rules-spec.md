@@ -25,7 +25,7 @@ This specification, Schema and samples define the handwritten Java 8 C1 decoder 
 一个 UTF-8 JSON 文件是一条规则；禁止 BOM、重复键、尾随内容、非法 UTF-8、未配对代理项、非有限数及非标准 JSON。文件含所有空白的字节数 ≤ **65,536 bytes (64 KiB)**。独立仓库可持有多条规则，但本版文件不是数组或内嵌包格式。
 One UTF-8 JSON object per rule file. Reject BOM, duplicate keys, trailing data, invalid UTF-8, lone surrogates, non-finite numbers and nonstandard JSON. The 65,536-byte limit includes whitespace. A future repository may hold multiple files; this format is not a multi-rule envelope.
 
-规则文件 ≤65,536 UTF-8 字节是 L1 有界读取合同，包含所有空白和 `x-*` 注解；`x-maxUtf8Bytes` 仅是 Schema 注解。读入器在构造超额对象前拒绝：**JSON 对象/数组容器嵌套深度 ≤8**，根容器计 1，标量不增加容器深度；**每对象 ≤64 键，每数组 ≤32 项，键名 ≤256 UTF-16 单元，字符串值和 JSON 数字 token 各 ≤4096 UTF-16 单元**。已知业务字段还须满足 Schema 更严格的逐字段/逐数组限制。此 JSON 深度与 §5 的提取路径最多 8 段是不同的边界。
+规则文件 ≤65,536 UTF-8 字节是 L1 有界读取合同，包含所有空白和 `x-*` 注解；`x-maxUtf8Bytes` 仅是 Schema 注解。读入器在构造超额对象前拒绝：**JSON 对象/数组容器嵌套深度 ≤8**，根容器计 1，标量不增加容器深度；**每对象 ≤64 键，每数组 ≤32 项（`match.notificationType.paths` ≤106 项），键名 ≤256 UTF-16 单元，字符串值和 JSON 数字 token 各 ≤4096 UTF-16 单元**。已知业务字段还须满足 Schema 更严格的逐字段/逐数组限制。此 JSON 深度与 §5 的提取路径最多 8 段是不同的边界。
 The bounded reader caps each rule at 65,536 UTF-8 bytes, including whitespace and annotations. JSON object/array container depth is at most 8 (root container = 1; scalars add no container depth), with at most 64 keys per object, 32 items per array, 256 UTF-16 units per key, and 4096 UTF-16 units per string or number token. Known fields additionally obey their stricter Schema bounds. JSON depth is separate from the eight-segment extraction-path limit.
 
 Schema: [rule.schema.json](rule.schema.json), draft 2020-12。所有已知结构对象拒绝普通未知属性，仅以 `patternProperties` 放行 `x-*` 注解。注解值允许任意标准 JSON，仍完整检查严格编码、重复键、字节/容器深度/键数/数组项数/字符串及数字 token 限额；注解内部键不作业务未知字段或禁止能力检查。整个注解不进入运行模型，也不赋予任何能力。Schema 文件本身保持 ≤64 KiB。
@@ -36,7 +36,7 @@ Schema defaults document model defaults without mutating input. Schema string le
 
 | 字段 / Field | 类型 / Type | 必填 / Required | 取值 / Values | 缺省 / Default | 说明 / Meaning |
 |---|---|---|---|---|---|
-| `ruleVersion` | integer | 是 / yes | `1` | 无 / none | 文件协议版本，不是 app 版本 / format version, not app version |
+| `ruleVersion` | integer | 是 / yes | `2` | 无 / none | 文件协议版本，不是 app 版本 / format version, not app version |
 | `meta` | object | 是 / yes | §3 | 无 / none | 来源、适配声明 / provenance and compatibility declarations |
 | `match` | object | 是 / yes | `all`: 1–16 conditions | 无 / none | 全部成立，不执行代码 / AND-only matching |
 | `extract` | array<object> | 是 / yes | 1–32 bindings | 无 / none | 有序提取定义，id 唯一 / ordered bindings with unique ids |
@@ -66,7 +66,7 @@ Absent optional fields and null mean unknown. Never invent device/version/tag va
 |---|---|---|---|
 | `packageName` | string; yes; 255 | none | 精确包名；R 必须对照真实通知包名及用户白名单 / exact package, mandatory R gate. [Hook:6724](../app/src/main/java/com/hyperos3/focusrestore/HyperOS3FocusRestoreHook.java#L6724) |
 | `focusNotificationName` | string/null; no; 128 | unknown | 作者说明性名称，不是已核实的系统唯一字段；**待确认，不进入运行匹配白名单** / descriptive only; runtime source pending |
-| `notificationTag` | string/null; no; 255 | unknown | 目标通知 tag 声明；当前通用提取点未核实对应读取，**待确认，不进入 v1 match** / pending source, not a v1 predicate |
+| `notificationTag` | string/null; no; 255 | unknown | 目标通知 tag 声明；当前通用提取点未核实对应读取，**待确认，不进入当前 match** / pending source, not a runtime predicate |
 | `systemUiVersion` | `{name:string≤128,code:integer≥0}`/null; no | unknown | L2 环境声明；name/code 精确相等，不做字符串区间比较 / exact L2 environment. [SettingsActivity:1182–1192](../app/src/main/java/com/hyperos3/focusrestore/SettingsActivity.java#L1182) |
 | `hyperOsVersion` | string/null; no; 128 | unknown | **待确认**完整固件版本来源；首次 OS3/4 初始化不是完整 ROM 版本 / full firmware source pending. [InitialHookMode:17–49](../app/src/main/java/com/hyperos3/focusrestore/InitialHookMode.java#L17) |
 | `deviceModel` | string/null; no; 128 | unknown | 仅记录，不参与运行时 match；后续 L2 可给出可跳过的警告 / record only; optional skippable L2 warning, never a runtime predicate. [SettingsActivity:1170](../app/src/main/java/com/hyperos3/focusrestore/SettingsActivity.java#L1170) |
@@ -80,8 +80,8 @@ Absent optional fields and null mean unknown. Never invent device/version/tag va
 | `ruleDescription` | string; yes; ≤2048 | none | 纯说明文本 / description only |
 | `createdAt` | RFC3339 string; yes; ≤64 | none | 规则创建时间，不是通知捕获时间；C 必须显式校验 offset/date / creation timestamp, not capture time |
 
-`createdAt` 的 v1 子集为带秒的 RFC3339 形态：年份 0001..9999、实际合法日历日期、小时 00..23、分/秒 00..59，`T/t` 分隔；小数秒可选，存在时至少一位且总字符串 ≤64；offset 为 `Z/z` 或正负 00:00..23:59。解码器自行检查 offset 范围，不借用 Java `OffsetDateTime` 的 ±18 小时限制；未确认的闰秒 60 拒绝。Schema 的 `date-time` 仅作格式说明，pattern 检查结构，日历合法性由 C1 检查；不声称完整覆盖 RFC3339 的全部特殊情况。
-The v1 timestamp subset requires calendar-valid years 0001–9999, seconds, 00–23 hours, 00–59 minutes/seconds, `T/t`, optional fractional digits and `Z/z` or an offset up to ±23:59; total length remains 64. Leap seconds are rejected. Schema patterns check shape; handwritten calendar/offset validation completes C1 checks without claiming exhaustive RFC3339 conformance.
+`createdAt` 的 RFC3339 子集为带秒的 RFC3339 形态：年份 0001..9999、实际合法日历日期、小时 00..23、分/秒 00..59，`T/t` 分隔；小数秒可选，存在时至少一位且总字符串 ≤64；offset 为 `Z/z` 或正负 00:00..23:59。解码器自行检查 offset 范围，不借用 Java `OffsetDateTime` 的 ±18 小时限制；未确认的闰秒 60 拒绝。Schema 的 `date-time` 仅作格式说明，pattern 检查结构，日历合法性由 C1 检查；不声称完整覆盖 RFC3339 的全部特殊情况。
+The timestamp subset requires calendar-valid years 0001–9999, seconds, 00–23 hours, 00–59 minutes/seconds, `T/t`, optional fractional digits and `Z/z` or an offset up to ±23:59; total length remains 64. Leap seconds are rejected. Schema patterns check shape; handwritten calendar/offset validation completes C1 checks without claiming exhaustive RFC3339 conformance.
 
 待确认的**适配声明**若非 null，后续 L2 必须报告“无法验证”，不能静默通过；`focusNotificationName`、`ruleAuthor`、`ruleDescription` 等纯说明字段不成为适配谓词。`deviceModel` 仅记录，L2 可作警告。force 只跳 L2，不能将未核实 tag/channel/category/deviceCodename/完整固件版本或 deviceModel 升级为运行匹配来源。C1 仅严格解码这些元数据，不执行 L2。
 Non-null unsupported compatibility declarations require a later L2 unverifiable finding. Device model remains record-only and may receive a warning. Force skips only L2; neither it nor metadata creates runtime predicates for unverified sources. C1 only decodes metadata and does not perform compatibility validation.
@@ -103,7 +103,17 @@ Each condition has only the business fields `{field,op,value}`, plus optional ig
 `protocolVersion` 条件的正确示例是 `{"field":"protocolVersion","op":"equals","value": "1"}`；错误示例是 `{"field":"protocolVersion","op":"equals","value": 1}`，解码返回 `L1_TYPE`，不进行宽松转换。这里的 match.value 必须是字符串；与 §3 中允许整数的 meta.protocolVersion 声明不同。
 A protocol predicate requires a string value: `"value": "1"` is valid; numeric `"value": 1` fails with `L1_TYPE`. This differs from the integer metadata declaration and performs no loose conversion.
 
-**regex：预留、首版禁用 / RESERVED, DISABLED IN V1.** 不在 Schema 枚举，不能经 force 开启。未来若提案启用，需新协议版本、独立安全设计、执行上限证明及专门测试，并经作者另行确认；Java 线程中断不是恶意正则的可靠超时机制。
+**regex：预留、暂未启用 / RESERVED, DISABLED.** 不在 Schema 枚举，不能经 force 开启。未来若提案启用，需新协议版本、独立安全设计、执行上限证明及专门测试，并经作者另行确认；Java 线程中断不是恶意正则的可靠超时机制。
+
+### 4.1 从捕获创建的通知类型规则 / Notification types in capture-created rules
+
+`ruleVersion=2` 下，从新捕获创建的规则写入 `match.notificationType`。提供分型时，`match.all` 必须仅包含一个包名 `equals` 子句，值与 `meta.packageName` 一致。分型对象包含有内容的完整登记 `paths` 集合，以及来源具备的可选 `protocol`、`business`、`scene`。`protocol` 复用 raw root 数值规范化，写作十进制字符串 `0` 至 `2147483647`。`business`、`scene` 来自 raw root，限 1–96 个 ASCII 标识字符 `[A-Za-z0-9_.:-]`。缺失或不合约的身份值省略。身份槽位存在性及值逐项比较，所有槽位缺失时按包名和完整结构匹配。示例中的身份来自同一真实载荷的 `1/train/personal-assistant-travel`。 [铁路出行载荷](samples/notification-travel.real.json)
+
+签名使用 §5 的实际选中容器，且 `legacy` 仍从 root 读取。只计入登记的非空白文本、数字及布尔叶值。正文值变化、JSON 对象键排序及显示顺序都独立于签名。结构发生增减时须重新匹配。签名最多 106 项，解码时核验登记路径并排序，每个提取路径须包含在签名内。`templateType` 仍只控制提取范围。预览长度及分页限制可以省略某些预览值，签名仍描述原始载荷经过登记读取后的完整结构。匹配诊断只记录固定条件路径。
+
+手写规则可省略 `match.notificationType`，并继续按 `match.all` 中允许的条件执行。完整快照沿用严格身份校验和原规则字节。共享 UID 只通过已授权的 FRPJ v3 最小投影读取应用包名、所选路径次序及必要的类型身份和结构路径。投影的登记表摘要绑定结构路径索引。旧实验规则 `ruleVersion=1` 和 FRPJ v1/v2 投影均拒绝读取。规则包重新构造保留适用条件、分型及字段顺序。
+
+New capture-created rules use `ruleVersion=2` with `match.notificationType`. A typed rule requires one exact package clause equal to `meta.packageName`. Its type compares the available root protocol, business and scene identities and the full set of registered nonempty paths. Body values, object-key order and field display order do not affect the type. Structure alone identifies the type within the package when all three identities are absent. The decoder requires every extraction path to belong to the declared type. Hand-written rules may omit the type and use the allowed `match.all` conditions. The strict snapshot preserves rule bytes, and the consented shared-UID projection uses FRPJ v3 with a registry digest. Readers reject experimental `ruleVersion=1` and FRPJ v1/v2. Rule-pack export preserves conditions, type and field order.
 
 ## 5. extract 规范路径登记 / Canonical extraction-path registry
 
@@ -124,7 +134,7 @@ Binding ids are unique (1–32 ASCII characters). `path` is mandatory; `required
 - 替换前拒绝未配对代理项。按列表顺序对每对参数执行一次从左到右的字面、非重叠扫描，不递归扫描本步插入的文字。每一步替换的输出及最终绑定文本均不得超过 4096 UTF-16 单元：追加前检查容量、扫描中检查超时，超出长度报 `R_BUDGET`，不先构建超额结果、不截断以继续。原始叶字符串受 payload 上界约束，可由第一步缩至 4096 内；无替换时超长即失败。不得用替换去修复孤立代理项。C3-1 不做过滤或空白归一化。 / Reject unpaired surrogates before replacement. Apply the pairs in order, one left-to-right, literal, non-overlapping scan per pair; do not rescan text inserted during that step. Each step's output and the final binding must be at most 4096 UTF-16 units. Check capacity before appending and check the deadline during scans. A length overflow is `R_BUDGET`; do not build an oversized result or truncate it to continue. The original string leaf remains subject to the payload bound and may be shortened by the first replacement; without replacements, an oversized leaf fails. Replacement cannot repair a lone surrogate. C3-1 does not filter or normalize whitespace.
 
 `paramIsland`：图标和部分兼容模型支持此别名，但活动正文路径读取 `param_island`。因此首版 extract **不开放 `/paramIsland/...`**，也不自动重命名。106 条均为规范路径；`W_ALIAS_PATH` 仅预留、不触发。来源：[Parser:239–240](../app/src/main/java/com/hyperos3/focusrestore/IslandPayloadParser.java#L239)、[正文:152](../app/src/main/java/com/hyperos3/focusrestore/IslandPayloadParser.java#L152)。
-Some existing icon paths support the alias, but text rules do not. All 106 entries are canonical. `W_ALIAS_PATH` is reserved and never emitted in v1.
+Some existing icon paths support the alias, but text rules do not. All 106 entries are canonical. `W_ALIAS_PATH` is reserved and never emitted by the current format.
 
 ### 5.1 `baseInfo`
 
@@ -389,7 +399,7 @@ Complete rule file below; null compatibility facts remain unknown.
 
 ```json
 {
-  "ruleVersion": 1,
+  "ruleVersion": 2,
   "meta": {
     "packageName": "com.miui.personalassistant",
     "focusNotificationName": "出行 / Travel (human label)",
@@ -465,7 +475,7 @@ Each negative file is the invalid rule itself. L1 failure stops import; L3 remai
 | [invalid-01-unknown-field.json](samples/invalid-01-unknown-field.json) | root.unexpected | `L1_UNKNOWN_FIELD` | 关闭对象未知字段 / closed object |
 | [invalid-02-path.json](samples/invalid-02-path.json) | `../../secret` | `L1_PATH_ENUM` | 不在有限路径枚举；运行期亦禁止 / outside finite allowlist |
 | [invalid-03-slot.json](samples/invalid-03-slot.json) | slot=icon | `L1_SLOT_ENUM` | 越界至独立图标能力 / icon is outside text scope |
-| [invalid-04-regex.json](samples/invalid-04-regex.json) | op=regex | `L1_OPERATOR_ENUM` | 首版禁用，force 无效 / disabled in v1 |
+| [invalid-04-regex.json](samples/invalid-04-regex.json) | op=regex | `L1_OPERATOR_ENUM` | 首版禁用，force 无效 / disabled |
 | [invalid-05-capacity.json](samples/invalid-05-capacity.json) | >65,536 UTF-8 bytes | `L1_FILE_SIZE` | 字节预检先失败，描述字段亦过长 / byte preflight before field validation |
 | [invalid-06-forbidden.json](samples/invalid-06-forbidden.json) | display.intent/action/url | `L1_FORBIDDEN_FIELD` | 结构上拒绝；同能力亦属 L3 禁止 / prohibited keys and capability |
 | [invalid-07-template-path.json](samples/invalid-07-template-path.json) | baseInfo + island path | `L1_TEMPLATE_PATH` | 全局合法路径不能越过所选组 / legal global path, illegal group |
@@ -512,7 +522,7 @@ Unknown versions are rejected; migration is explicit at import, rollback retains
 
 ### 12.1 F1-A App 存储与导入事务 / App storage and import transaction
 
-- App 是唯一批准者。规则原始 UTF-8 字节位于默认凭据保护的 App 私有 `no_backup/island-rules`。锁定时拒绝打开。普通设置、设置备份和旧 `island_custom_rules` 不承载规则。App owns approvals and stores original UTF-8 bytes under credential-protected `no_backup/island-rules`.
+- App 是唯一批准者。规则原始 UTF-8 字节位于默认凭据保护的 App 私有 `no_backup/island-rules-v2`。锁定时拒绝打开。内测目录独立留存，普通设置与设置备份继续使用原有协议。旧 Provider 列 `island_custom_rules` 仅维持公开版本的占位值。 / The App owns approvals and stores original UTF-8 bytes under credential-protected `no_backup/island-rules-v2`.
 - 导入在读取前固定基线 manifest 修订，将单次有界读取的原始字节暂存为不可变文件。确认绑定原始 SHA-256（含全部规则元数据）、App 生成的 ID、规则修订、启停、优先级和声明顺序。内容替换及启停或优先级变更必须走新的校验与确认。替换保持声明顺序。基线修订或可查 SystemUI 环境变化后拒绝旧确认。Confirmations bind the original digest, app-generated ID, per-rule revision, enabled state, priority and declaration order against the captured baseline. A changed baseline or SystemUI environment invalidates the pending confirmation.
 - 既有限额为每条 65,536 UTF-8 字节、活跃规则 50 条和规则文件合计 2 MiB。统一账本同时计入当前、暂存和读者固定的旧规则文件，禁用规则也计入。同一物理不可变文件只计一次，同内容的独立文件分别计费。替换暂存与现行文件同时计费。The 2 MiB ledger includes staging, disabled entries and reader-pinned old files, charging each physical file once.
 - F1-A 新增上限为 manifest 256 KiB、每个 manifest 最多 1,024 条元数据、App ID 最多 128 UTF-8 字节（当前生成 36 字节的 UUID）。清单格式版本独立于规则 `ruleVersion`，清单和临时清单不计入规则字节账本。New F1-A bounds are 256 KiB per manifest, 1,024 entries per manifest and 128 UTF-8 bytes per app ID (currently a 36-byte UUID).
@@ -523,18 +533,20 @@ Unknown versions are rejected; migration is explicit at import, rollback retains
 
 - `com.hyperos3.focusrestore.islandrules` 是独立的凭据保护只读 Provider。以 Binder 实际 UID、框架调用包、SystemUI UID 及平台签名、同一已解锁前台 Android 用户判定访问。查询不明时拒绝，旧设置合同保持原语义。 / The independent read-only provider authenticates binder identity, SystemUI's package and platform signature, and the same unlocked foreground Android user.
 - 批次格式 1 的 Binder 头仅携带协议、App 进程会话及修订。管道固定一个正修订并传输最多 256 KiB 的清单与最多 2 MiB 的唯一规则文件，另加 28 字节固定协议开销。接收端检验起止修订、长度、清单与批准记录、每个对象的 SHA-256 和流结束，按本机环境重验 L1 → L3 → L2。已批准 force 仅适用于记录中匹配的 L2 阻断项。 / Version 1 streams one pinned positive revision, with a bounded manifest and unique rule files. The receiver verifies revision, bounds, approval, integrity, EOF and current validation.
-- 设置可导入明确的 JSON `[]`，经用户确认后原子提交新修订。通过批次验证的正修订空清单和全禁用清单都是有效快照。修订 0、读取失败及损坏来源不能转成有效空集。 / Importing `[]` requires explicit confirmation and commits a new revision atomically. Verified empty and all-disabled manifests can publish as valid snapshots.
+- 通过批次验证的正修订空清单和全禁用清单都是有效快照。导入空规则包保留当前仓库与修订。修订 0、读取失败及损坏来源不能转成有效空集。 / Verified empty and all-disabled manifests can publish as valid snapshots. Importing an empty pack preserves the current repository and revision.
 - OS4 初始化持有唯一发布者。变更通知触发失效和核对，正常调度每 15 秒对账，单次尝试限 5 秒，发布租期 30 秒。候选在私有状态加载。只有 `loaded`、`failures.isEmpty()`、同会话、同目标修订、同 generation 和时限同时成立才原子发布。`loaded` 本身仅表示加载尝试结束。 / OS4 owns one publisher. Notifications trigger invalidation and reconciliation. A fully verified, current and timely candidate is published atomically.
 - “SystemUI 已应用”表示最近确认发布了与 App 保存修订相同的快照。状态受 App 会话、SystemUI 存活及租期约束。F1-B 的输出止于快照，正文与无障碍清理属于后续消费端阶段。 / Application status describes recent publication of the saved revision. Notification rendering and accessibility cleanup belong to a later consumer stage.
 
 
 ### 12.3 F3-C 规则包与设置入口 / Rule packs in Settings
 
-- 「关于 → 自定义规则」提供 FRPK 批量导入和导出。导入通过系统文档选择器读取，最大 2,122,796 字节。后台校验并暂存一份候选，确认窗口显示基线修订、总数、启用数、按声明顺序排列的优先级及 `L2_UNVERIFIABLE` 提示。确认后重新核对基线和环境，再原子替换。空包须单独确认「清空全部规则」。 / The App stages one verified candidate and atomically replaces the repository after confirmation. An empty pack requires explicit confirmation to clear all rules.
-- 导出固定一个仓库修订，生成完整可移植包后打开系统保存选择器。遇到不支持的规则或字段时拒绝整包。成功状态显示导出修订和字节数，保存状态显示实际仓库修订和导入条目数。 / Export builds a complete portable pack from one pinned revision before opening the save picker. Unsupported rules or fields reject the entire export.
+- 「关于 → 自定义规则 → 规则迁移」使用系统文档选择器读取 FRPK v2 规则包。可移植规则及编辑示例各自受字节限额约束，示例最多 2 MiB。整包通过格式和摘要校验后，预览分别列出可新增、重复和失败条目。重复条目对照本地与导入的显示字段及顺序，由用户逐条确认，默认保留本地规则。/ The FRPK v2 import preview lists additions, duplicates and failures. The user may opt into each replacement after comparing the displayed fields and their order.
+- 按应用包名、协议／业务／场景标识及完整有值登记路径集合判重。规则示例、路径原始顺序和显示顺序不参与判重。缺少通知类型时，只有规范化规则配置相同、同样缺少类型的条目才视为重复。一包内重复类型只取首条通过校验的条目。本地有多个同类型候选时，该导入条标记失败。/ The key consists of the package and notification type. Untyped entries require exact canonical rule equivalence. Ambiguous local matches and later duplicate pack rows are reported individually.
+- 确认后自动加入预览中的有效新增条目，并以导入文件的规则内容、启停、优先级和示例覆盖选中重复条目。保留本地稳定 ID 和声明位置，既有优先级排序仍会应用导入的优先级。同一次操作重新核对仓库修订、环境和容量，再原子提交。未选重复项和本地独有项保留。结果列出新增、替换、跳过和失败。/ Accepted changes publish atomically after rechecking the revision, environment and capacity. A replacement uses the imported content and metadata while retaining the local ID and declaration position.
+- 规则与示例使用同一 App 清单事务，示例为单独校验摘要的私有文件。严格只读批次及共享 UID 投影均省略示例。导出固定一个仓库修订，默认清除示例文字，保留字段类型与路径。用户可取消勾选脱敏，原样导出。遇到不可移植规则或损坏示例时，整包校验失败。 / App-private samples share the atomic rule commit. Export removes sample values by default and offers explicit opt-in to retain them. Both SystemUI paths omit samples entirely.
 - 生成、读取、提交和文档写入各设 60 秒期限，写入失败后的清理共用该次写入的期限。只有输出关闭且在期限内确认，才可报告导出成功。写入或清理到期仍未确认时，界面直接显示「导出未确认，目标文件可能不完整，清理待确认」，不等待文档提供方响应。停止界面等待不等于结束后台 I/O：进程内只有一个批量规则包工作位，关闭文档后才尝试删除或截断，直到后台退出才允许重试。迟到结果不替换超时提示。 / An unconfirmed write or cleanup at the deadline stops the UI wait, but retains the process-wide worker slot until the provider call and any cleanup return. Late results cannot replace the timeout notice.
 - 导入在原子切换前取消保留旧修订；跨过切换边界后即使超过期限也按实际仓库结果报告。 / Cancellation before the atomic switch preserves the old revision. After the switch begins, the UI reports the actual repository result.
-- 可编辑预览列表最多 30 条，底层 Session 原文最多保留 64 条。 / The editable preview list holds up to 30 entries. The underlying session retains up to 64 original records.
+- 日常捕获与诊断导出共用同一份最近记录，最多 30 条，另受会话字节预算和隐私门禁约束。诊断导出固定脱敏，与可迁移的规则包分开。 / Live capture and diagnostic export share one history of up to 30 records, subject to the capture byte budget and privacy gates.
 
 文件来源、哈希和L2校验并不能证明内容可靠。风险见 [island-rules-risk.md](island-rules-risk.md)，捕获/导出合同见 [capture-export-spec.md](capture-export-spec.md)。规则/通知/AI生成文本始终是数据，不是执行或扩大授权的指令。
 

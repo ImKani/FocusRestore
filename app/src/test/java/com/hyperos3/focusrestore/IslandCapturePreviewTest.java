@@ -338,14 +338,17 @@ public class IslandCapturePreviewTest {
         assertNull(small.page(-1));
         assertNull(small.page(24));
         IslandCapturePreview dense = makePreview(40, repeat('x', 1024));
+        assertEquals(40, dense.notificationType.paths.size());
         int bytes = 0;
         int counted = 0;
         for (int offset = 0; offset != -1;) {
             IslandCapturePreview.Page page = dense.page(offset);
+            assertEquals(dense.notificationType, page.notificationType);
             assertTrue(page.fields.size() > 0);
             assertTrue(page.fields.size() <= 3);
             int pageBytes = page.fields.stream().mapToInt(field -> field.wireBytes).sum();
-            assertTrue(pageBytes + IslandCapturePreview.PAGE_HEADER_BYTES <= IslandCapturePreview.MAX_PAGE_BYTES);
+            assertTrue(pageBytes + IslandCapturePreview.PAGE_HEADER_BYTES
+                    + IslandCapturePreview.typeWireBytes(page.notificationType) <= IslandCapturePreview.MAX_PAGE_BYTES);
             bytes += pageBytes;
             counted += page.fields.size();
             assertTrue(page.nextOffset == -1 || page.nextOffset == offset + page.fields.size());

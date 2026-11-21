@@ -24,7 +24,7 @@ import static org.junit.Assert.*;
 public class IslandRuleCodecTest {
     private final IslandRuleCodec codec = new IslandRuleCodec();
     private static String base() {
-        return "{\"ruleVersion\":1,\"meta\":{\"packageName\":\"com.example.app\","
+        return "{\"ruleVersion\":2,\"meta\":{\"packageName\":\"com.example.app\","
                 + "\"templateType\":\"baseInfo\",\"ruleAuthor\":\"ImKani\","
                 + "\"ruleDescription\":\"\",\"createdAt\":\"2026-11-18T00:00:00+08:00\"},"
                 + "\"match\":{\"all\":[{\"field\":\"business\",\"op\":\"equals\",\"value\":\"train\"}]},"
@@ -45,7 +45,7 @@ public class IslandRuleCodecTest {
     private static String repeat(String text, int count) {
         StringBuilder out = new StringBuilder(); for (int i = 0; i < count; i++) out.append(text); return out.toString();
     }
-    private static String annotation(String value) { return base().replace("\"ruleVersion\":1", "\"x-note\":" + value + ",\"ruleVersion\":1"); }
+    private static String annotation(String value) { return base().replace("\"ruleVersion\":2", "\"x-note\":" + value + ",\"ruleVersion\":2"); }
     private static String array(int count) { return "[" + (count == 0 ? "" : "0" + repeat(",0", count - 1)) + "]"; }
     private static String keys(int count) {
         List<String> pairs = new ArrayList<>(); for (int i = 0; i < count; i++) pairs.add("\"k" + i + "\":null");
@@ -105,7 +105,7 @@ public class IslandRuleCodecTest {
         good(base().replace("\"path\":\"/baseInfo/title\"", "\"path\":\"/baseInfo/title\",\"replace\":[{\"from\":\"a\",\"to\":\"b\",\"x-note\":1}]"));
     }
     @Test public void ordinaryUnknownFieldsRejectedAtEveryObjectBoundary() {
-        String[] targets = {"\"ruleVersion\":1", "\"packageName\":", "\"all\":", "\"field\":", "\"id\":", "\"order\":", "\"slot\":"};
+        String[] targets = {"\"ruleVersion\":2", "\"packageName\":", "\"all\":", "\"field\":", "\"id\":", "\"order\":", "\"slot\":"};
         for (String target : targets) bad(IslandRuleCodec.Code.L1_UNKNOWN_FIELD, base().replace(target, "\"unexpected\":null," + target));
         bad(IslandRuleCodec.Code.L1_UNKNOWN_FIELD, base().replace("\"meta\":{", "\"meta\":{\"systemUiVersion\":{\"name\":\"test\",\"code\":1,\"oops\":2},"));
         bad(IslandRuleCodec.Code.L1_UNKNOWN_FIELD, base().replace("\"path\":\"/baseInfo/title\"", "\"path\":\"/baseInfo/title\",\"replace\":[{\"from\":\"a\",\"to\":\"b\",\"oops\":1}]"));
@@ -116,8 +116,8 @@ public class IslandRuleCodecTest {
         good(base().replace("\"train\"", "\"regex intent code\""));
     }
     @Test public void duplicateKeysIncludingEscapedAndAnnotationsRejected() {
-        bad(IslandRuleCodec.Code.L1_DUPLICATE_KEY, base().replace("\"ruleVersion\":1", "\"ruleVersion\":1,\"ruleVersion\":1"));
-        bad(IslandRuleCodec.Code.L1_DUPLICATE_KEY, base().replace("\"ruleVersion\":1", "\"ruleVersion\":1,\"rule\\u0056ersion\":1"));
+        bad(IslandRuleCodec.Code.L1_DUPLICATE_KEY, base().replace("\"ruleVersion\":2", "\"ruleVersion\":1,\"ruleVersion\":2"));
+        bad(IslandRuleCodec.Code.L1_DUPLICATE_KEY, base().replace("\"ruleVersion\":2", "\"ruleVersion\":2,\"rule\\u0056ersion\":1"));
         bad(IslandRuleCodec.Code.L1_DUPLICATE_KEY, annotation("{\"a\":null,\"a\":1}"));
     }
     @Test public void strictUtf8AndBomRejected() {
@@ -128,7 +128,7 @@ public class IslandRuleCodecTest {
     }
     @Test public void jsonGrammarDoesNotAcceptPermissiveExtensions() {
         String[] documents = {"", " ", "[]", "null", "{} trailing", "// comment\n" + base(), base() + "{}",
-                base().replace("\"ruleVersion\":1", "\"ruleVersion\":01"), base().replace("\"ruleVersion\":1", "\"ruleVersion\":+1"),
+                base().replace("\"ruleVersion\":2", "\"ruleVersion\":01"), base().replace("\"ruleVersion\":2", "\"ruleVersion\":+1"),
                 annotation("NaN"), annotation("Infinity"), annotation(".1"), annotation("1."), annotation("1e"),
                 annotation("[1,]"), annotation("{\"a\":1,}"), annotation("'single'"), annotation("\"line\nfeed\""),
                 annotation("\"\\x41\""), annotation("\"\\uD800\""), annotation("\"\\uDC00\""), annotation("\"\\uGGGG\""), annotation("tru")};
@@ -139,9 +139,9 @@ public class IslandRuleCodecTest {
         good(annotation("-1e-" + repeat("9", 4000)));
         good(annotation("1e" + repeat("9", 4094)));
         bad(IslandRuleCodec.Code.L1_CAPACITY, annotation("1e" + repeat("9", 4095)));
-        good(base().replace("\"ruleVersion\":1", "\"ruleVersion\":100e-2"));
-        bad(IslandRuleCodec.Code.L1_VERSION, base().replace("\"ruleVersion\":1", "\"ruleVersion\":1e2147483648"));
-        bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"ruleVersion\":1", "\"ruleVersion\":1e-2147483648"));
+        good(base().replace("\"ruleVersion\":2", "\"ruleVersion\":200e-2"));
+        bad(IslandRuleCodec.Code.L1_VERSION, base().replace("\"ruleVersion\":2", "\"ruleVersion\":1e2147483648"));
+        bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"ruleVersion\":2", "\"ruleVersion\":1e-2147483648"));
         good(base().replace("\"meta\":{", "\"meta\":{\"protocolVersion\":-0.0e999999999999,"));
     }
     @Test public void jsonDepthEightAllowedNineRejectedEvenInsideAnnotation() {
@@ -154,8 +154,8 @@ public class IslandRuleCodecTest {
         good(annotation(keys(64))); bad(IslandRuleCodec.Code.L1_CAPACITY, annotation(keys(65)));
         StringBuilder root = new StringBuilder();
         for (int i = 0; i < 59; i++) root.append("\"x-").append(i).append("\":null,");
-        good(base().replace("\"ruleVersion\":1", root + "\"ruleVersion\":1"));
-        bad(IslandRuleCodec.Code.L1_CAPACITY, base().replace("\"ruleVersion\":1", root + "\"x-last\":null,\"ruleVersion\":1"));
+        good(base().replace("\"ruleVersion\":2", root + "\"ruleVersion\":2"));
+        bad(IslandRuleCodec.Code.L1_CAPACITY, base().replace("\"ruleVersion\":2", root + "\"x-last\":null,\"ruleVersion\":2"));
     }
     @Test public void arrayLimitCountsAnnotations() { good(annotation(array(32))); bad(IslandRuleCodec.Code.L1_CAPACITY, annotation(array(33))); }
     @Test public void keyAndStringUtf16LimitsCountDecodedEscapesAndEmoji() {
@@ -192,20 +192,29 @@ public class IslandRuleCodecTest {
         assertEquals(IslandRuleCodec.Code.L1_TYPE, codec.decode((byte[])null).error.code);
     }
     @Test public void strictTypesDoNotCoerceStringsBooleansNumbersOrNull() {
-        bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"ruleVersion\":1", "\"ruleVersion\":\"1\""));
-        bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"ruleVersion\":1", "\"ruleVersion\":true"));
-        bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"ruleVersion\":1", "\"ruleVersion\":1.5"));
+        bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"ruleVersion\":2", "\"ruleVersion\":\"1\""));
+        bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"ruleVersion\":2", "\"ruleVersion\":true"));
+        bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"ruleVersion\":2", "\"ruleVersion\":2.5"));
         bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"value\":\"train\"", "\"value\":1"));
         bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"path\":\"/baseInfo/title\"", "\"path\":\"/baseInfo/title\",\"required\":\"true\""));
         bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"order\":", "\"dedupe\":1,\"order\":"));
         bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"ruleAuthor\":\"ImKani\"", "\"ruleAuthor\":null"));
         bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"meta\":{", "\"meta\":{\"protocolVersion\":\"1\","));
-        good(base().replace("\"ruleVersion\":1", "\"ruleVersion\":1.0"));
-        good(base().replace("\"ruleVersion\":1", "\"ruleVersion\":1e0"));
+        good(base().replace("\"ruleVersion\":2", "\"ruleVersion\":2.0"));
+        good(base().replace("\"ruleVersion\":2", "\"ruleVersion\":2e0"));
+    }
+    @Test public void currentVersionAcceptsHandwrittenConditionsWithOmittedType() {
+        IslandRule rule = good(base());
+        assertEquals(2, rule.ruleVersion);
+        assertNull(rule.notificationType);
+        assertEquals("business", rule.match.get(0).field);
+        assertEquals("train", rule.match.get(0).value);
+        bad(IslandRuleCodec.Code.L1_TYPE, base().replace("\"match\":{", "\"match\":{\"notificationType\":null,"));
     }
     @Test public void versionAndRequiredFieldsHaveExplicitErrors() {
-        bad(IslandRuleCodec.Code.L1_VERSION, base().replace("\"ruleVersion\":1", "\"ruleVersion\":2"));
-        bad(IslandRuleCodec.Code.L1_REQUIRED, base().replace("\"ruleVersion\":1,", ""));
+        bad(IslandRuleCodec.Code.L1_VERSION, base().replace("\"ruleVersion\":2", "\"ruleVersion\":3"));
+        bad(IslandRuleCodec.Code.L1_VERSION, base().replace("\"ruleVersion\":2", "\"ruleVersion\":1"));
+        bad(IslandRuleCodec.Code.L1_REQUIRED, base().replace("\"ruleVersion\":2,", ""));
         bad(IslandRuleCodec.Code.L1_REQUIRED, base().replace("\"ruleAuthor\":\"ImKani\",", ""));
     }
     @Test public void datePackageAndMetadataNumericBounds() {
@@ -322,8 +331,8 @@ public class IslandRuleCodecTest {
     }
     @Test public void schemaObjectsAllPermitOnlyAnnotationExtensionPattern() throws Exception {
         String schema = new String(Files.readAllBytes(Paths.get("docs/rule.schema.json")), StandardCharsets.UTF_8);
-        assertEquals(9, schema.split("\\\"additionalProperties\\\": false", -1).length - 1);
-        assertEquals(9, schema.split("\\\"patternProperties\\\"", -1).length - 1);
+        assertEquals(10, schema.split("\\\"additionalProperties\\\": false", -1).length - 1);
+        assertEquals(10, schema.split("\\\"patternProperties\\\"", -1).length - 1);
         assertTrue(schema.contains("\"^x-\": true"));
     }
     @Test public void fieldSpecificStringAndArrayBoundsAreStricterThanReaderBounds() {
@@ -365,17 +374,17 @@ public class IslandRuleCodecTest {
         bad(IslandRuleCodec.Code.L1_CAPACITY, base().replace("\"order\":", "\"separator\":\"" + repeat("s", 33) + "\",\"order\":"));
     }
     @Test public void errorPrecedenceIsStableAndAnnotationNumbersUseMathematicalEquality() {
-        String mixed = base().replace("\"ruleVersion\":1", "\"unexpected\":1,\"ruleVersion\":1").replace("\"order\":", "\"intent\":1,\"order\":");
+        String mixed = base().replace("\"ruleVersion\":2", "\"unexpected\":1,\"ruleVersion\":2").replace("\"order\":", "\"intent\":1,\"order\":");
         bad(IslandRuleCodec.Code.L1_FORBIDDEN_FIELD, mixed);
-        bad(IslandRuleCodec.Code.L1_VERSION, mixed.replace("\"ruleVersion\":1", "\"ruleVersion\":2"));
-        bad(IslandRuleCodec.Code.L1_DUPLICATE_KEY, mixed.replace("\"ruleVersion\":1", "\"ruleVersion\":2,\"ruleVersion\":1"));
+        bad(IslandRuleCodec.Code.L1_VERSION, mixed.replace("\"ruleVersion\":2", "\"ruleVersion\":3"));
+        bad(IslandRuleCodec.Code.L1_DUPLICATE_KEY, mixed.replace("\"ruleVersion\":2", "\"ruleVersion\":1,\"ruleVersion\":2"));
         String original = "{\"field\":\"business\",\"op\":\"equals\",\"value\":\"train\"}";
         String first = original.replace("{", "{\"x-n\":1,");
         String second = original.replace("{", "{\"x-n\":100e-2,");
         bad(IslandRuleCodec.Code.L1_CAPACITY, base().replace(original, first + "," + second));
     }
     @Test public void diagnosticsNeverEchoUnknownKeysOrIoMessages() {
-        IslandRuleCodec.DecodeResult result = decode(base().replace("\"ruleVersion\":1", "\"private-user-name\":null,\"ruleVersion\":1"));
+        IslandRuleCodec.DecodeResult result = decode(base().replace("\"ruleVersion\":2", "\"private-user-name\":null,\"ruleVersion\":2"));
         assertFalse(result.error.path.contains("private")); assertFalse(result.error.reason.contains("private"));
         assertTrue(result.error.offset >= -1);
     }
@@ -386,7 +395,7 @@ public class IslandRuleCodecTest {
         try { rule.display.order.clear(); fail(); } catch (UnsupportedOperationException expected) { }
         try { IslandRulePaths.all().clear(); fail(); } catch (UnsupportedOperationException expected) { }
         List<MatchClause> original = new ArrayList<>(rule.match);
-        IslandRule copied = new IslandRule(1, rule.meta, original, rule.extract, rule.display); original.clear(); assertEquals(1, copied.match.size());
+        IslandRule copied = new IslandRule(IslandRule.CURRENT_VERSION, rule.meta, original, rule.extract, rule.display); original.clear(); assertEquals(1, copied.match.size());
         List<IslandRuleSet.Entry> entries = new ArrayList<>(); entries.add(new IslandRuleSet.Entry("local", 1, true, rule, 600));
         IslandRuleSet set = new IslandRuleSet(2, entries); entries.clear(); assertEquals(1, set.entries.size()); assertEquals(0, set.entries.get(0).priority);
         try { set.entries.clear(); fail(); } catch (UnsupportedOperationException expected) { }

@@ -34,7 +34,7 @@ public class IslandD1ContextTest {
     }
     private static String repeat(char ch, int count) { char[] chars = new char[count]; Arrays.fill(chars, ch); return new String(chars); }
     private static String json(String value) {
-        return "{\"ruleVersion\":1,\"meta\":{\"packageName\":\"other.pkg\",\"templateType\":\"baseInfo\","
+        return "{\"ruleVersion\":2,\"meta\":{\"packageName\":\"other.pkg\",\"templateType\":\"baseInfo\","
                 + "\"ruleAuthor\":\"ImKani\",\"ruleDescription\":\"\",\"createdAt\":\"2026-11-18T00:00:00Z\"},"
                 + "\"match\":{\"all\":[{\"field\":\"protocolVersion\",\"op\":\"equals\",\"value\":" + value + "}]},"
                 + "\"extract\":[{\"id\":\"t\",\"path\":\"/baseInfo/title\"}],\"display\":{\"order\":[{\"slot\":\"title\",\"ref\":\"t\"}]}}";
@@ -76,7 +76,7 @@ public class IslandD1ContextTest {
         Result r = raw("2147483648");
         IslandRuleSet.Entry protocol = entry("\"1\"");
         IslandRule base = protocol.rule;
-        IslandRule businessRule = new IslandRule(1, base.meta,
+        IslandRule businessRule = new IslandRule(IslandRule.CURRENT_VERSION, base.meta,
                 Collections.singletonList(new MatchClause("business", "equals", "train")), base.extract, base.display);
         IslandRuleSet.Entry business = new IslandRuleSet.Entry("business", 0, true, businessRule, 100);
         assertSame(business, new IslandRuleSelector().select(Arrays.asList(protocol, business), r.context));

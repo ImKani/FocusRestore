@@ -18,6 +18,8 @@ import org.junit.Test;
 
 public class IslandRulePackTest {
     private static final int HEADER = 12;
+    private static final int ENTRY = 25;
+    private static final int SAMPLE_LENGTH = 4;
     private static final int END = 32;
     private static final byte[] TEXT = "岛".getBytes(StandardCharsets.UTF_8);
 
@@ -49,13 +51,15 @@ public class IslandRulePackTest {
                 entry(4, true, Integer.MAX_VALUE, new byte[] {'a'})));
         ByteBuffer header = ByteBuffer.wrap(encoded);
         assertEquals(0x4652504b, header.getInt());
-        assertEquals(1, header.getInt());
+        assertEquals(2, header.getInt());
         assertEquals(2, header.getInt());
         assertEquals(0, header.getLong());
         assertEquals(6, header.getLong());
         assertEquals(0, header.get());
         assertEquals(Integer.MIN_VALUE, header.getInt());
         assertEquals(TEXT.length, header.getInt());
+        header.position(header.position() + TEXT.length);
+        assertEquals(0, header.getInt());
         IslandRulePack.Decoded decoded = decode(encoded);
         assertEquals(new UUID(0, 6), decoded.entries.get(0).id);
         assertFalse(decoded.entries.get(0).enabled);
@@ -86,8 +90,11 @@ public class IslandRulePackTest {
             ByteBuffer.wrap(invalid).putInt(8, count);
             rejects(IslandRulePack.Code.ENTRY_COUNT, seal(invalid));
         }
+        byte[] old = empty.clone();
+        ByteBuffer.wrap(old).putInt(4, 1);
+        rejects(IslandRulePack.Code.VERSION, seal(old));
         byte[] invalid = empty.clone();
-        ByteBuffer.wrap(invalid).putInt(4, 2);
+        ByteBuffer.wrap(invalid).putInt(4, 3);
         rejects(IslandRulePack.Code.VERSION, seal(invalid));
         invalid[0] = 'X';
         rejects(IslandRulePack.Code.MAGIC, seal(invalid));
@@ -99,21 +106,23 @@ public class IslandRulePackTest {
         }
         invalid = single.clone();
         invalid[HEADER + 16] = 2;
-        rejects(IslandRulePack.Code.ENABLED, seal(invalid));
+        assertEquals(IslandRulePack.Code.ENABLED, decode(seal(invalid)).entries.get(0).rowError);
     }
 
-    @Test public void failsDuplicateIdInvalidUtf8EveryTruncationAndDamagedDigest() throws Exception {
+    @Test public void rejectsUnsafeFramingAndRetainsBoundedInvalidUtf8Row() throws Exception {
         byte[] normal = IslandRulePack.encode(Arrays.asList(entry(1, true, 0, TEXT), entry(2, true, 0, TEXT)));
         for (int length = 0; length < normal.length; length++) {
             rejects(IslandRulePack.Code.TRUNCATED, Arrays.copyOf(normal, length));
         }
         byte[] duplicate = normal.clone();
-        ByteBuffer.wrap(duplicate).putLong(HEADER + 25 + TEXT.length + 8, 1L);
+        ByteBuffer.wrap(duplicate).putLong(HEADER + ENTRY + TEXT.length + SAMPLE_LENGTH + 8, 1L);
         rejects(IslandRulePack.Code.DUPLICATE_ID, seal(duplicate));
         writeReject(IslandRulePack.Code.DUPLICATE_ID, Arrays.asList(entry(1, true, 0, TEXT), entry(1, false, 0, TEXT)));
         byte[] badUtf8 = normal.clone();
         badUtf8[HEADER + 25] = (byte) 0xff;
-        rejects(IslandRulePack.Code.ENCODING, seal(badUtf8));
+        IslandRulePack.Decoded damagedRow = decode(seal(badUtf8));
+        assertEquals(IslandRulePack.Code.ENCODING, damagedRow.entries.get(0).rowError);
+        assertNull(damagedRow.entries.get(1).rowError);
         writeReject(IslandRulePack.Code.ENCODING, Collections.singletonList(entry(1, true, 0, new byte[] {(byte) 0xc0, (byte) 0xaf})));
         normal[normal.length - END] ^= 1;
         rejects(IslandRulePack.Code.DIGEST, normal);
@@ -127,18 +136,20 @@ public class IslandRulePackTest {
             entries.add(entry(index, index < 50, index, index < 31 ? maximum : index == 31 ? last : new byte[1]));
         }
         byte[] exact = IslandRulePack.encode(entries);
-        assertEquals(2_122_796, IslandRulePack.MAX_BYTES);
-        assertEquals(IslandRulePack.MAX_BYTES, exact.length);
+        assertEquals(2_126_892, exact.length);
+        assertEquals(4_224_044, IslandRulePack.MAX_BYTES);
         assertEquals(1024, decode(exact).entries.size());
         assertEquals(65536, decode(exact).entries.get(0).bytes().length);
-        ByteArrayInputStream overEnvelope = new ByteArrayInputStream(Arrays.copyOf(exact, exact.length + 2));
+        ByteArrayInputStream overEnvelope = new ByteArrayInputStream(
+                Arrays.copyOf(exact, IslandRulePack.MAX_BYTES + 2));
         assertEquals(IslandRulePack.Code.PACK_SIZE,
                 assertThrows(IslandRulePack.Failure.class, () -> IslandRulePack.decode(overEnvelope)).code);
         assertEquals(1, overEnvelope.available());
         entries.set(50, entry(50, true, 0, new byte[1]));
         writeReject(IslandRulePack.Code.ACTIVE_COUNT, entries);
         byte[] activeOverflow = exact.clone();
-        int offset = HEADER + 32 * 25 + 31 * maximum.length + last.length + (50 - 32) * 26;
+        int frame = ENTRY + SAMPLE_LENGTH;
+        int offset = HEADER + 32 * frame + 31 * maximum.length + last.length + (50 - 32) * (frame + 1);
         activeOverflow[offset + 16] = 1;
         rejects(IslandRulePack.Code.ACTIVE_COUNT, seal(activeOverflow));
         entries.set(50, entry(50, false, 0, new byte[2]));
@@ -154,11 +165,11 @@ public class IslandRulePackTest {
         byte[] large = new byte[65536];
         for (int index = 0; index < 32; index++) entries.add(entry(index, false, 0, large));
         byte[] exact = IslandRulePack.encode(entries);
-        byte[] overflow = Arrays.copyOf(exact, exact.length + 26);
+        byte[] overflow = Arrays.copyOf(exact, exact.length + ENTRY + 1 + SAMPLE_LENGTH);
         ByteBuffer.wrap(overflow).putInt(8, 33).position(exact.length - END);
         ByteBuffer frame = ByteBuffer.wrap(overflow);
         frame.position(exact.length - END);
-        frame.putLong(0).putLong(32).put((byte) 0).putInt(0).putInt(1).put((byte) 'a');
+        frame.putLong(0).putLong(32).put((byte) 0).putInt(0).putInt(1).put((byte) 'a').putInt(0);
         rejects(IslandRulePack.Code.CONTENT_SIZE, seal(overflow));
     }
 }

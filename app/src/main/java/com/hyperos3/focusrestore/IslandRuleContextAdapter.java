@@ -31,6 +31,10 @@ public final class IslandRuleContextAdapter {
 
     /** raw 是调用方提供的 JSON 字符串；包名只来自参数。无 IO，无任意对象转换。 */
     public Result adapt(String notificationPackageName, String raw) {
+        return adapt(notificationPackageName, raw, true);
+    }
+
+    Result adapt(String notificationPackageName, String raw, boolean classify) {
         List<Finding> findings = new ArrayList<Finding>();
         String packageName = notificationPackageName;
         if (packageName == null) add(findings, Code.FIELD_MISSING, "notification.packageName");
@@ -57,8 +61,15 @@ public final class IslandRuleContextAdapter {
         String protocol = protocol(root, findings);
         String business = string(root, "business", findings);
         String scene = string(root, "scene", findings);
-        return result(packageName, protocol, business, scene, findings);
+        IslandNotificationType type = classify ? IslandNotificationType.classify(root, protocol, business, scene, null) : null;
+        return new Result(new IslandRuleContext(packageName, protocol, business, scene, type), findings);
     }
+    static IslandNotificationType classify(Map<?, ?> root, Runnable checkpoint) {
+        List<Finding> findings = new ArrayList<>();
+        return IslandNotificationType.classify(root, protocol(root, findings),
+                string(root, "business", findings), string(root, "scene", findings), checkpoint);
+    }
+
     private Result result(String pkg, String protocol, String business, String scene, List<Finding> findings) {
         return new Result(new IslandRuleContext(pkg, protocol, business, scene), findings);
     }

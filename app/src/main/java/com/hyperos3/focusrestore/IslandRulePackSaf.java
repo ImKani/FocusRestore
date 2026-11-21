@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.net.URI;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -190,11 +191,11 @@ final class IslandRulePackSaf {
         }
     }
 
-    static long commit(IslandRuleRepository repository, IslandRuleRepository.PendingBatch candidate,
-            IslandRuleRepository.BatchConfirmation confirmation, Environment environment, Operation operation) throws IOException {
+    static IslandRuleRepository.BatchResult commit(IslandRuleRepository repository, IslandRuleRepository.PendingBatch candidate,
+            Set<Integer> replacements, Environment environment, Operation operation) throws IOException {
         operation.check();
         IslandRuleImportValidator.Environment checked = environment.read();
-        return repository.commitBatch(candidate, confirmation, checked, new IslandRuleRepository.CommitAuthorization() {
+        return repository.commitBatch(candidate, replacements, checked, new IslandRuleRepository.CommitAuthorization() {
             @Override public void consume() throws IOException {
                 operation.check();
                 IslandRuleImportValidator.Environment latest = environment.read();
@@ -210,8 +211,13 @@ final class IslandRulePackSaf {
     }
 
     static IslandRuleRepository.PackExport prepareExport(IslandRuleRepository repository, Operation operation) throws IOException {
+        return prepareExport(repository, operation, false);
+    }
+
+    static IslandRuleRepository.PackExport prepareExport(IslandRuleRepository repository, Operation operation,
+            boolean includeSampleValues) throws IOException {
         operation.check();
-        IslandRuleRepository.PackExport exported = repository.exportPackSnapshot();
+        IslandRuleRepository.PackExport exported = repository.exportPackSnapshot(includeSampleValues);
         operation.check();
         return exported;
     }
@@ -245,30 +251,6 @@ final class IslandRulePackSaf {
         return output ? "导出未确认，目标文件可能不完整，清理待确认。" : stopped(Stop.TIMEOUT);
     }
 
-    static String summary(IslandRuleRepository.PendingBatch candidate) {
-        StringBuilder text = new StringBuilder();
-        text.append("当前已保存 ").append(candidate.previousCount)
-                .append(" 条。\n规则包 ").append(candidate.entryCount).append(" 条，启用 ").append(candidate.enabledCount).append(" 条。");
-        if (candidate.entryCount == 0) return text.append("\n\n确认后将清空全部规则，并保存一个新的空修订。").toString();
-        boolean[] unverified = new boolean[candidate.entryCount];
-        boolean anyUnverified = false;
-        for (IslandRuleRepository.BatchFinding item : candidate.warnings) {
-            if ("L2_UNVERIFIABLE".equals(item.finding.code)) {
-                unverified[item.declarationIndex] = true;
-                anyUnverified = true;
-            }
-        }
-        text.append("\n确认后将整批替换。以下按文件声明顺序排列，同优先级按声明顺序处理。\n");
-        if (anyUnverified) text.append("部分规则的设备兼容性暂时无法核实。\n");
-        for (int i = 0; i < candidate.entryCount; i++) {
-            IslandRuleRepository.BatchRow entry = candidate.row(i);
-            text.append('\n').append(i + 1).append(". ").append(entry.enabled ? "启用" : "禁用")
-                    .append(" · 优先级 ").append(entry.priority);
-            if (unverified[i]) text.append(" · 兼容性待核实");
-        }
-        return text.toString();
-    }
-
     static String failure(Throwable failure) {
         if (failure instanceof Stopped) return stopped(((Stopped) failure).reason);
         if (failure instanceof WriteFailure) {
@@ -278,21 +260,19 @@ final class IslandRulePackSaf {
         }
         if (failure instanceof IslandRulePack.Failure) {
             IslandRulePack.Code code = ((IslandRulePack.Failure) failure).code;
-            if (code == IslandRulePack.Code.PACK_SIZE) return "规则包超过 2,122,796 字节。";
+            if (code == IslandRulePack.Code.PACK_SIZE) return "规则包超过该格式的大小上限。";
             return "规则包格式或完整性校验失败，请重新选择完整的规则包。";
-        }
-        if (failure instanceof IslandRuleRepository.BatchRejected) {
-            for (IslandRuleRepository.BatchFinding item : ((IslandRuleRepository.BatchRejected) failure).findings) {
-                if (item.finding.blocking) return "规则包第 " + (item.declarationIndex + 1) + " 条未通过校验，整批未保存。";
-            }
         }
         if (failure instanceof IslandRuleRepository.Failure) {
             switch (((IslandRuleRepository.Failure) failure).code) {
                 case REPOSITORY_CAPACITY: return "规则仓库空间不足，已保留当前修订。";
+                case RULE_SIZE: return "单条规则文件超过 64 KiB。";
+                case SAMPLE_CAPACITY: return "本地示例存储空间不足，已保留当前规则。";
+                case SAMPLE_CORRUPT: return "规则示例无法读取或校验失败。";
                 case BASELINE_CHANGED: return "规则仓库已更新，请重新导入并确认。";
                 case ENVIRONMENT_CHANGED: return "SystemUI 版本信息已变化，请重新导入并确认。";
                 case UNINITIALIZED: return "App 尚无已保存的规则修订。";
-                case VALIDATION: return "规则校验失败，整批未保存。";
+                case VALIDATION: return "规则校验失败，本次导入未保存。";
                 default: return "规则仓库无法完成操作。";
             }
         }

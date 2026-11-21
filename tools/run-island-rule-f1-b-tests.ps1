@@ -30,12 +30,12 @@ $config = Join-Path $repository 'app\build\generated\source\buildConfig\debug\co
 foreach ($required in @($sdk,$resources,$config)) {
     if (!(Test-Path -LiteralPath $required -PathType Leaf)) { throw "Missing existing compiler input $required" }
 }
-$classes = @('IslandRuleRepositoryTest','IslandRuleBatchTest','IslandRuleAccessTest','IslandRuleProjectionTest','IslandRulePublisherTest','IslandRuleSetLoaderTest','IslandRuleCodecTest','IslandRuleSelectorTest','IslandRuleExtractorTest','IslandRulePostProcessorTest','IslandRuleExecutorTest','IslandRuleTextEngineTest','IslandRuleDiagnosticHistoryTest','IslandC2BoundaryTest','IslandC2IntegrationTest','HookRegistrationTest','InitialHookModeTest')
+$classes = @('IslandRuleRepositoryTest','IslandRuleBatchTest','IslandRuleAccessTest','IslandRuleProjectionTest','IslandRulePublisherTest','IslandRuleSetLoaderTest','IslandRuleCodecTest','IslandRuleSelectorTest','IslandNotificationTypeTest','IslandRuleExtractorTest','IslandRulePostProcessorTest','IslandRuleExecutorTest','IslandRuleTextEngineTest','IslandRuleDiagnosticHistoryTest','IslandC2BoundaryTest','IslandC2IntegrationTest','HookRegistrationTest','InitialHookModeTest')
 if ($Capture -or $Preview -or $Editor) {
     $classes += @('IslandCaptureRuntimeTest','IslandCaptureDocumentWriterTest','IslandCaptureSessionTest','IslandExportGeneratorTest','IslandExportBoundaryTest','IslandD2AdapterTest','IslandD2IntegrationTest','RomFocusVisibilityTest')
 }
 if ($Preview -or $Editor) { $classes += 'IslandCapturePreviewTest' }
-if ($Editor) { $classes += @('IslandCaptureEditorTest','IslandRulePostSaveTest','OS3IslandPromptRuleTest','WeakIdentityMapTest') }
+if ($Editor) { $classes += @('IslandCaptureEditorTest','IslandRulePostSaveTest','OS3IslandPromptRuleTest','WeakIdentityMapTest','IslandRuleManagerListTest','IslandSavedRuleFieldsTest') }
 if ($Pack -or $PackSaf) { $classes += @('IslandRulePackTest','IslandRulePackRepositoryTest') }
 if ($PackSaf) { $classes += 'IslandRulePackSafTest' }
 $mainSources = Get-ChildItem -LiteralPath (Join-Path $repository 'app\src\main\java') -Filter '*.java' -File -Recurse | ForEach-Object { $_.FullName }

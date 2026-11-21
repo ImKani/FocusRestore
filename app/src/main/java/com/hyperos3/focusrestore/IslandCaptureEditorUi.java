@@ -3,7 +3,6 @@
  */
 package com.hyperos3.focusrestore;
 
-import android.app.AlertDialog;
 import android.app.KeyguardManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -20,15 +19,14 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowManager;
 import android.widget.AbsListView;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.ScrollView;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.TextView;
 
 import java.io.ByteArrayInputStream;
@@ -37,7 +35,6 @@ import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,6 +50,7 @@ final class IslandCaptureEditorUi {
     private static final long VIEW_LEASE_MS = 4_000;
     private static final long PREVIEW_MS = 60_000;
     private final SettingsActivity activity;
+    private final IslandRuleEditorUi ui;
     private final Context app;
     private final Consumer<String> feedback;
     private final IslandRuleImportUi ruleUi;
@@ -81,8 +79,7 @@ final class IslandCaptureEditorUi {
         boolean confirming;
         boolean saving;
         volatile Set<Long> viewport = Collections.emptySet();
-        AlertDialog dialog;
-        LinearLayout root;
+        IslandRuleEditorUi.Page page;
         ListView list;
         Rows rows;
         TextView textPreview;
@@ -135,6 +132,7 @@ final class IslandCaptureEditorUi {
 
     IslandCaptureEditorUi(SettingsActivity activity, Consumer<String> feedback, IslandRuleImportUi ruleUi) {
         this.activity = activity;
+        this.ui = new IslandRuleEditorUi(activity);
         this.feedback = feedback;
         this.ruleUi = ruleUi;
         app = activity.getApplicationContext();
@@ -155,28 +153,16 @@ final class IslandCaptureEditorUi {
             if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(view.screen, filter, Context.RECEIVER_NOT_EXPORTED);
             else app.registerReceiver(view.screen, filter);
             view.registered = true;
-            view.root = column();
-            view.root.setPadding(dp(20), dp(8), dp(20), dp(8));
-            view.dialog = new AlertDialog.Builder(activity).setTitle("最近捕获记录")
-                    .setView(view.root).setNegativeButton("关闭", null).create();
-            Window window = view.dialog.getWindow();
-            if (window == null) throw new IllegalStateException("CAPTURE_EDITOR_WINDOW_MISSING");
-            secure(window);
-            view.dialog.setOnDismissListener(d -> revoke(view));
-            view.dialog.show();
-            window.getDecorView().getViewTreeObserver().addOnWindowFocusChangeListener(focused -> {
-                if (!focused) revoke(view);
-            });
+            view.page = ui.new Page("最近捕获记录");
+            view.page.dialog.setOnDismissListener(d -> revoke(view));
+            view.page.show();
+            view.page.watchFocus(() -> revoke(view));
             showList(view);
             checkLive();
         } catch (android.os.RemoteException | RuntimeException failure) {
             revoke(view);
             feedback.accept("最近记录暂不可用，请重新进入捕获会话。");
         }
-    }
-
-    private static void secure(Window window) {
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
     }
 
     void onStatus(IBinder bridge, IslandCaptureRuntime.Status status, boolean permitted) {
@@ -194,13 +180,14 @@ final class IslandCaptureEditorUi {
         current = null;
         main.removeCallbacks(heartbeat);
         releasePreview(view);
-        clearRows(view);
-        view.metadata = Collections.emptyList();
-        if (view.root != null) {
-            scrub(view.root);
-            view.root.removeAllViews();
+        releaseList(view);
+        if (view.page != null) {
+            view.page.release();
+            clearEditorViews(view);
+            view.page.dialog.setOnDismissListener(null);
+            view.page.dialog.dismiss();
+            view.page = null;
         }
-        if (view.dialog != null) view.dialog.dismiss();
         if (view.registered) app.unregisterReceiver(view.screen);
         if (view.linked) view.registration.bridge.unlinkToDeath(view.death, 0);
     }
@@ -209,6 +196,9 @@ final class IslandCaptureEditorUi {
         Preview preview = view.preview;
         view.preview = null;
         view.confirmation = null;
+        view.loadingDetails = false;
+        view.loadedDetails = false;
+        view.confirming = false;
         if (preview == null) return;
         main.removeCallbacks(preview.expire);
         preview.lifetime.revoke();
@@ -253,7 +243,11 @@ final class IslandCaptureEditorUi {
                 if (preview != null) IslandCaptureIpc.checkPreview(preview.ticket);
                 main.post(() -> applyMetadata(view, preview, metadata, checkedAt));
             } catch (IOException | RuntimeException denied) {
-                main.post(() -> revoke(view));
+                main.post(() -> {
+                    if (current != view) return;
+                    view.checking = false;
+                    if (preview == view.preview) revoke(view);
+                });
             }
         });
     }
@@ -280,15 +274,16 @@ final class IslandCaptureEditorUi {
     }
 
     private void showList(Viewer view) {
-        view.dialog.setTitle("最近捕获记录");
+        view.page.title("最近捕获记录");
         view.list = new ListView(activity);
         view.list.setSaveEnabled(false);
         view.rows = new Rows(view);
-        view.list.setRecyclerListener(IslandCaptureEditorUi::scrub);
+        view.list.setRecyclerListener(IslandRuleEditorUi::scrub);
         view.list.setAdapter(view.rows);
-        view.root.addView(view.list, new LinearLayout.LayoutParams(-1, dp(342)));
+        view.page.body.addView(view.list, new LinearLayout.LayoutParams(-1, 0, 1f));
         TextView empty = label("等待新的超级岛通知…", 14);
-        view.root.addView(empty);
+        view.page.body.addView(empty, ui.spaced(0));
+        view.page.action("关闭", false, () -> revoke(view));
         view.list.setEmptyView(empty);
         view.list.setOnItemClickListener((parent, row, index, id) -> {
             if (view.live() && index >= 0 && index < view.metadata.size() && view.metadata.get(index).fieldCount > 0) {
@@ -309,11 +304,14 @@ final class IslandCaptureEditorUi {
         @Override public long getItemId(int position) { return getItem(position).handle; }
         @Override public boolean hasStableIds() { return true; }
         @Override public View getView(int position, View recycled, ViewGroup parent) {
-            LinearLayout row = recycled instanceof LinearLayout ? (LinearLayout) recycled : column();
+            LinearLayout row = recycled instanceof LinearLayout ? (LinearLayout) recycled : ui.column();
             if (row.getChildCount() == 0) {
-                row.setLayoutParams(new AbsListView.LayoutParams(-1, dp(72)));
+                row.setLayoutParams(new AbsListView.LayoutParams(-1, -2));
+                row.setMinimumHeight(dp(66));
+                row.setPadding(dp(10), dp(6), dp(10), dp(6));
+                row.setBackground(activity.roundedBg(activity.COLOR_SURFACE, 10));
                 row.addView(label("", 13));
-                TextView fragment = label("", 15);
+                TextView fragment = ui.primary("", 16);
                 fragment.setMaxLines(2);
                 fragment.setEllipsize(TextUtils.TruncateAt.END);
                 row.addView(fragment);
@@ -350,12 +348,14 @@ final class IslandCaptureEditorUi {
                 .limit(IslandCaptureEditor.MAX_VISIBLE_BATCH).mapToLong(Long::longValue).toArray();
         if (handles.length == 0) return;
         view.snippetPending = true;
+        ListView requestedList = view.list;
         Set<Long> requestedViewport = view.viewport;
         worker.execute(() -> {
             try {
                 if (view.closed) return;
                 if (view.viewport != requestedViewport) {
                     main.post(() -> {
+                        if (current != view || view.list != requestedList) return;
                         view.snippetPending = false;
                         refreshRows(view);
                     });
@@ -363,7 +363,7 @@ final class IslandCaptureEditorUi {
                 }
                 List<String> snippets = IslandCaptureIpc.visibleSnippets(view.registration, view.generation, handles);
                 main.post(() -> {
-                    if (current != view) return;
+                    if (current != view || view.list != requestedList) return;
                     view.snippetPending = false;
                     if (!view.live()) { revoke(view); return; }
                     if (view.viewport == requestedViewport && view.preview == null) {
@@ -375,7 +375,12 @@ final class IslandCaptureEditorUi {
                     }
                     refreshRows(view);
                 });
-            } catch (IOException | RuntimeException denied) { main.post(() -> revoke(view)); }
+            } catch (IOException | RuntimeException denied) {
+                main.post(() -> {
+                    // 已离开该列表时，字段页通过自己的票据校验会话。
+                    if (current == view && view.list == requestedList) revoke(view);
+                });
+            }
         });
     }
 
@@ -398,16 +403,29 @@ final class IslandCaptureEditorUi {
         }
     }
 
-    private void openRecord(Viewer view, IslandCapturePreview.Summary record) {
-        if (view.preview != null || !view.live()) return;
+    private void releaseList(Viewer view) {
         clearRows(view);
-        view.list.setAdapter(null);
-        clearContent(view);
+        ListView list = view.list;
+        // setAdapter 会同步触发列表回调，先让后续工作看见该列表已失效。
         view.list = null;
         view.rows = null;
+        view.snippetPending = false;
+        if (list != null) {
+            list.setOnScrollListener(null);
+            list.setOnItemClickListener(null);
+            list.setAdapter(null);
+            list.setRecyclerListener(null);
+        }
         view.metadata = Collections.emptyList();
-        view.dialog.setTitle("编辑显示规则");
-        view.root.addView(label("正在读取登记字段…", 14));
+    }
+
+    private void openRecord(Viewer view, IslandCapturePreview.Summary record) {
+        if (view.preview != null || !view.live()) return;
+        releaseList(view);
+        clearContent(view);
+        view.page.title("编辑显示规则");
+        view.page.body.addView(label("正在读取登记字段…", 14));
+        view.page.action("取消", false, () -> revoke(view));
         long deadline = now() + PREVIEW_MS;
         Preview preview = new Preview(record, deadline, this::checkLive);
         view.preview = preview;
@@ -462,78 +480,77 @@ final class IslandCaptureEditorUi {
         clearContent(view);
         view.confirming = false;
         view.confirmation = null;
+        view.page.title("编辑显示规则");
         IslandCaptureEditor editor = preview.lifetime.editor;
-        ScrollView scroll = new ScrollView(activity);
-        scroll.setSaveEnabled(false);
-        LinearLayout fields = column();
-        scroll.addView(fields);
-        view.root.addView(label(identity(preview.record), 13));
-        view.root.addView(label("各组共选最多 16 项。长按字段名拖动，或用上下按钮排序。", 13));
-        view.textPreview = label("", 17);
+        LinearLayout content = view.page.scrolling();
+        content.addView(ui.heading(viewName(preview.record.packageName), 17), ui.spaced(4));
+        content.addView(label(IslandRuleEditorUi.typeLabel(editor.notificationType()), 13), ui.spaced(12));
+        content.addView(ui.heading("正文预览", 15), ui.spaced(4));
+        view.textPreview = ui.primary("", 17);
         view.textPreview.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
-        view.root.addView(view.textPreview);
-        view.root.addView(scroll, new LinearLayout.LayoutParams(-1, dp(320)));
-        view.selected = column();
-        fields.addView(view.selected);
-        Map<String, List<IslandCapturePreview.Field>> groups = new LinkedHashMap<>();
+        content.addView(view.textPreview, ui.spaced(12));
+        content.addView(ui.heading("显示顺序", 15), ui.spaced(4));
+        content.addView(label("长按拖动，或用上下按钮调整顺序。", 13), ui.spaced(6));
+        view.selected = ui.column();
+        content.addView(view.selected, ui.spaced(12));
+        content.addView(ui.heading("本条通知的字段", 15), ui.spaced(4));
+        content.addView(label("最多选择 " + IslandCaptureEditor.MAX_SELECTION + " 个字段。", 13), ui.spaced(8));
+        Map<IslandRulePaths.Entry, CheckBox> choices = new LinkedHashMap<>();
         for (IslandCapturePreview.Field field : editor.fields()) {
-            groups.computeIfAbsent(field.path.templateGroup, key -> new ArrayList<>()).add(field);
+            IslandRulePaths.Entry path = field.path;
+            CheckBox choice = ui.choice(IslandCaptureEditor.displayValue(field), path);
+            content.addView(choice, ui.spaced(6));
+            choices.put(path, choice);
+            choice.setOnClickListener(v -> {
+                if (current != view || view.preview != preview || view.confirming) return;
+                if (!view.live() || !preview.lifetime.live(now())) { revoke(view); return; }
+                editor.toggle(path);
+                updateChoices(editor, choices);
+                renderOrder(view, preview);
+            });
         }
-        List<CheckBox> choices = new ArrayList<>();
-        List<IslandRulePaths.Entry> paths = new ArrayList<>();
-        for (Map.Entry<String, List<IslandCapturePreview.Field>> group : groups.entrySet()) {
-            fields.addView(label(group.getKey(), 16));
-            for (IslandCapturePreview.Field field : group.getValue()) {
-                IslandRulePaths.Entry path = field.path;
-                CheckBox choice = new CheckBox(activity);
-                choice.setSaveEnabled(false);
-                choice.setText(path.path + "\n" + IslandCaptureEditor.displayValue(field));
-                choice.setChecked(editor.order().contains(path));
-                fields.addView(choice);
-                choices.add(choice);
-                paths.add(path);
-                choice.setOnClickListener(v -> {
-                    if (current != view || view.preview != preview || view.confirming) return;
-                    if (!view.live() || !preview.lifetime.live(now())) { revoke(view); return; }
-                    editor.toggle(path);
-                    renderOrder(view, preview);
-                    updateChoices(editor, choices, paths);
-                });
-            }
-        }
-        updateChoices(editor, choices, paths);
-        LinearLayout actions = new LinearLayout(activity);
-        view.root.addView(actions);
-        actions.addView(button("返回列表", () -> {
-            releasePreview(view);
-            clearContent(view);
-            showList(view);
-            checkLive();
-        }));
-        view.save = button("确认保存…", () -> prepareConfirmation(view, preview));
-        actions.addView(view.save);
         if (!canConfirmSave(view)) {
-            view.root.addView(label("当前会话仅支持查看和编辑，暂时无法保存规则。", 13));
+            content.addView(label("当前会话可预览字段。保存需要 SystemUI 授权。", 13));
         }
+        view.page.action("取消编辑", false, () -> cancelEdit(view, preview));
+        view.save = view.page.action("保存规则", true, () -> prepareConfirmation(view, preview));
+        updateChoices(editor, choices);
         renderOrder(view, preview);
     }
 
-    private static void updateChoices(IslandCaptureEditor editor, List<CheckBox> choices, List<IslandRulePaths.Entry> paths) {
-        Set<IslandRulePaths.Entry> order = new HashSet<>(editor.order());
-        for (int i = 0; i < choices.size(); i++) {
-            IslandRulePaths.Entry path = paths.get(i);
-            boolean checked = order.contains(path);
-            choices.get(i).setChecked(checked);
-            choices.get(i).setEnabled(checked || order.size() < IslandCaptureEditor.MAX_SELECTION);
+    private void cancelEdit(Viewer view, Preview preview) {
+        if (current != view || view.preview != preview || view.saving) return;
+        releasePreview(view);
+        clearContent(view);
+        showList(view);
+        checkLive();
+    }
+
+    private static void updateChoices(IslandCaptureEditor editor, Map<IslandRulePaths.Entry, CheckBox> choices) {
+        List<IslandRulePaths.Entry> order = editor.order();
+        for (Map.Entry<IslandRulePaths.Entry, CheckBox> choice : choices.entrySet()) {
+            boolean checked = order.contains(choice.getKey());
+            choice.getValue().setChecked(checked);
+            choice.getValue().setEnabled(checked || order.size() < IslandCaptureEditor.MAX_SELECTION);
         }
+    }
+
+    private static String example(IslandCaptureEditor editor, IslandRulePaths.Entry path) {
+        for (IslandCapturePreview.Field field : editor.fields()) {
+            if (field.path == path) return IslandRuleEditorUi.readableExample(IslandCaptureEditor.displayValue(field));
+        }
+        return IslandRuleEditorUi.NO_SAMPLE;
     }
 
     private void renderOrder(Viewer view, Preview preview) {
         IslandCaptureEditor editor = preview.lifetime.editor;
         String text = editor.preview();
         view.textPreview.setText(text.isEmpty() ? "预览暂无正文" : text);
-        view.save.setEnabled(view.loadedDetails && canConfirmSave(view) && !editor.order().isEmpty());
-        IslandRuleOrderUi.render(view.selected, editor.order(), (path, index) -> move(view, preview, path, index));
+        IslandRuleEditorUi.setActionEnabled(view.save,
+                view.loadedDetails && canConfirmSave(view) && !editor.order().isEmpty());
+        IslandRuleEditorUi.scrub(view.selected);
+        IslandRuleOrderUi.render(view.selected, editor.order(), path -> example(editor, path),
+                (path, index) -> move(view, preview, path, index));
     }
 
     private void move(Viewer view, Preview preview, IslandRulePaths.Entry path, int to) {
@@ -556,19 +573,24 @@ final class IslandCaptureEditorUi {
         if (!view.live() || !preview.lifetime.live(now())) { revoke(view); return; }
         IslandCaptureIpc.PreviewTicket ticket = preview.ticket;
         long createdAt = System.currentTimeMillis();
-        IslandCaptureEditor.Candidate candidate = preview.lifetime.editor.candidate(preview.record.packageName, createdAt);
+        IslandCaptureEditor editor = preview.lifetime.editor;
+        IslandCaptureEditor.Candidate candidate = editor.candidate(preview.record.packageName, createdAt);
+        IslandNotificationType type = editor.notificationType();
         if (candidate == null) { feedback.accept("当前选项无法生成规则。"); return; }
         view.confirming = true;
         clearContent(view);
-        view.root.addView(label("正在核对保存权限…", 14));
+        view.page.body.addView(label("正在核对保存权限…", 14));
+        view.page.action("取消", false, () -> cancelEdit(view, preview));
         worker.execute(() -> {
             try {
                 requireSave(view, preview, ticket);
                 IslandCaptureIpc.checkPreview(ticket);
-                IslandRuleManagerUi.Listing listing = IslandRuleManagerUi.load(app, candidate.packageName);
+                IslandRuleManagerUi.Listing listing = IslandRuleManagerUi.load(app, candidate.packageName, type);
                 Confirmation confirmation = new Confirmation(ticket, candidate, createdAt, listing);
                 main.post(() -> showConfirmation(view, preview, confirmation));
-            } catch (IOException | RuntimeException denied) { main.post(() -> denySave(view)); }
+            } catch (IOException | RuntimeException denied) {
+                main.post(() -> { if (view.preview == preview && view.confirming) denySave(view); });
+            }
         });
     }
 
@@ -577,27 +599,49 @@ final class IslandCaptureEditorUi {
         if (!view.live() || !preview.lifetime.live(now())) { revoke(view); return; }
         view.confirmation = confirmation;
         clearContent(view);
-        view.dialog.setTitle("确认单条规则");
+        view.page.title("确认保存规则");
         IslandCaptureEditor.Candidate candidate = confirmation.candidate;
-        view.root.addView(label("匹配范围为「" + viewName(candidate.packageName) + "」所有已支持的通知。缺少所选字段时可能没有匹配正文。", 14));
-        ScrollView scroll = new ScrollView(activity);
-        scroll.setSaveEnabled(false);
-        LinearLayout details = column();
-        scroll.addView(details);
-        for (IslandRulePaths.Entry path : candidate.paths) details.addView(label(path.path, 13));
-        if (!confirmation.targets.isEmpty()) {
-            details.addView(label("更新会保留原规则的位置和启停状态。新增规则可能排在原规则之后。", 14));
+        IslandCaptureEditor editor = preview.lifetime.editor;
+        LinearLayout details = view.page.scrolling();
+        details.addView(ui.heading(viewName(candidate.packageName), 17), ui.spaced(4));
+        details.addView(label(IslandRuleEditorUi.typeLabel(editor.notificationType()), 13), ui.spaced(8));
+        for (IslandRulePaths.Entry path : candidate.paths) {
+            details.addView(ui.fieldLabel(example(editor, path), path.path), ui.spaced(6));
         }
+        view.page.action("返回编辑", false, () -> {
+            if (current == view && view.confirmation == confirmation) renderEditor(view, preview);
+        });
+        details.addView(label("如果已有规则先命中，新增规则可能不会显示。可在已保存规则中管理先命中的规则。", 13),
+                ui.spaced(8));
+        if (confirmation.targets.isEmpty()) {
+            view.page.action("新增规则", true, () -> save(view, preview, confirmation, null));
+            return;
+        }
+        details.addView(ui.heading("保存方式", 15), ui.spaced(4));
+        details.addView(label("更新会保留原规则的顺序和启停状态。", 13), ui.spaced(8));
+        RadioGroup options = new RadioGroup(activity);
+        Map<Integer, String> targets = new LinkedHashMap<>();
+        details.addView(options, ui.spaced(8));
         for (IslandRuleManagerUi.Row target : confirmation.targets) {
-            details.addView(button("更新原规则 · " + target.summary, () -> save(view, preview, confirmation, target.entry.id)));
+            boolean narrow = target.notificationType == null && editor.notificationType() != null;
+            String title = narrow ? "更新应用级规则，收窄到当前通知类型 · " : "更新原规则 · ";
+            RadioButton option = ui.radio(title + target.summary, String.join(" → ", target.orderedPaths));
+            targets.put(option.getId(), target.entry.id);
+            options.addView(option, ui.spaced(6));
         }
-        view.root.addView(scroll, new LinearLayout.LayoutParams(-1, dp(220)));
-        view.root.addView(button("返回编辑", () -> {
-            if (current != view || view.confirmation != confirmation) return;
-            view.dialog.setTitle("编辑显示规则");
-            renderEditor(view, preview);
-        }));
-        view.root.addView(button("新增规则", () -> save(view, preview, confirmation, null)));
+        RadioButton create = ui.radio("新增规则", null);
+        options.addView(create, ui.spaced(6));
+        Button save = view.page.action("保存规则", true, () -> {
+            int selected = options.getCheckedRadioButtonId();
+            if (selected == create.getId() || targets.containsKey(selected)) {
+                save(view, preview, confirmation, targets.get(selected));
+            }
+        });
+        IslandRuleEditorUi.setActionEnabled(save, false);
+        options.setOnCheckedChangeListener((group, selected) -> {
+            save.setText(selected == create.getId() ? "新增规则" : "更新规则");
+            IslandRuleEditorUi.setActionEnabled(save, selected == create.getId() || targets.containsKey(selected));
+        });
     }
 
     private void requireSave(Viewer view, Preview preview, IslandCaptureIpc.PreviewTicket ticket) throws IOException {
@@ -619,6 +663,15 @@ final class IslandCaptureEditorUi {
             revoke(view);
             return;
         }
+        final IslandRuleSample sample;
+        try {
+            sample = IslandRuleSample.capture(preview.lifetime.editor.fields());
+        } catch (IOException | RuntimeException invalid) {
+            saveDiagnostic("rejected", mode, baseline, -1, "sample-invalid");
+            revoke(view);
+            feedback.accept("无法保存此通知的示例，请重新捕获后再试。");
+            return;
+        }
         view.confirmation = null;
         view.saving = true;
         IslandCaptureIpc.PreviewTicket ticket = confirmation.ticket;
@@ -627,7 +680,7 @@ final class IslandCaptureEditorUi {
                 ? new IslandCaptureEditor.LocalApproval(ticket, baseline, candidate) : null;
         saveDiagnostic("attempt", mode, baseline, -1, "none");
         clearContent(view);
-        view.root.addView(label("正在保存…", 14));
+        view.page.body.addView(label("正在保存…", 14));
         worker.execute(() -> {
             String message;
             long committedRevision = 0;
@@ -637,8 +690,8 @@ final class IslandCaptureEditorUi {
                 IslandRuleRepository repository = IslandRuleImportUi.repository(app);
                 IslandRuleImportValidator.Environment environment = IslandRuleImportUi.environment(app);
                 try (IslandRuleRepository.Pending pending = replaceId == null
-                        ? repository.prepare(new ByteArrayInputStream(candidate.bytes()), null, true, 0, environment)
-                        : repository.prepareUpdate(baseline, replaceId, candidate.bytes(), environment)) {
+                        ? repository.prepare(new ByteArrayInputStream(candidate.bytes()), null, true, 0, environment, sample)
+                        : repository.prepareUpdate(baseline, replaceId, candidate.bytes(), environment, sample)) {
                     if (pending.baselineRevision != baseline) throw new IOException("CAPTURE_SAVE_BASELINE_CHANGED");
                     if (!pending.canApprove(false) || pending.entry == null || !candidate.digest.equals(pending.entry.sha256)) {
                         throw new IOException("CAPTURE_SAVE_VALIDATION_FAILED");
@@ -720,22 +773,14 @@ final class IslandCaptureEditorUi {
     }
 
     private void clearContent(Viewer view) {
-        scrub(view.root);
-        view.root.removeAllViews();
+        view.page.clear();
+        clearEditorViews(view);
+    }
+
+    private static void clearEditorViews(Viewer view) {
         view.textPreview = null;
         view.selected = null;
         view.save = null;
-    }
-
-    private static void scrub(View view) {
-        view.setContentDescription(null);
-        view.setStateDescription(null);
-        view.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_NONE);
-        if (view instanceof TextView) ((TextView) view).setText("");
-        if (view instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) view;
-            for (int i = 0; i < group.getChildCount(); i++) scrub(group.getChildAt(i));
-        }
     }
 
     private String identity(IslandCapturePreview.Summary record) {
@@ -748,28 +793,7 @@ final class IslandCaptureEditorUi {
         return view == null ? "" : IslandRuleManagerUi.listName(app, view.names, name);
     }
 
-    private LinearLayout column() {
-        LinearLayout layout = new LinearLayout(activity);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setSaveFromParentEnabled(false);
-        return layout;
-    }
+    private TextView label(String text, int size) { return ui.secondary(text, size); }
 
-    private TextView label(String text, int size) {
-        TextView view = new TextView(activity);
-        view.setSaveEnabled(false);
-        view.setTextSize(size);
-        view.setText(text);
-        return view;
-    }
-
-    private Button button(String text, Runnable action) {
-        Button button = new Button(activity);
-        button.setSaveEnabled(false);
-        button.setText(text);
-        button.setOnClickListener(v -> action.run());
-        return button;
-    }
-
-    private int dp(int value) { return Math.round(activity.getResources().getDisplayMetrics().density * value); }
+    private int dp(int value) { return activity.dp(value); }
 }

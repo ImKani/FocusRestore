@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** v1 只由登记路径生成规则。样本值只用于当前界面预览。 */
+/** 从登记路径和通知类型生成规则。样本值只在当前预览使用。 */
 final class IslandCaptureEditor {
     static final int MAX_SELECTION = 16;
     static final int MAX_SNIPPET_UNITS = 96;
@@ -42,15 +42,22 @@ final class IslandCaptureEditor {
 
     private final List<IslandCapturePreview.Field> fields = new ArrayList<>();
     private final List<IslandRulePaths.Entry> selected = new ArrayList<>();
+    private IslandNotificationType notificationType;
+    private boolean complete;
 
     boolean append(IslandCapturePreview.Page page) {
-        if (fields.size() + page.fields.size() > IslandCapturePreview.MAX_FIELDS) return false;
+        if (complete || page == null || page.notificationType == null || page.fields.isEmpty()
+                || notificationType != null && !notificationType.equals(page.notificationType)
+                || fields.size() + page.fields.size() > IslandCapturePreview.MAX_FIELDS) return false;
         int previous = fields.isEmpty() ? -1 : IslandRulePaths.all().indexOf(fields.get(fields.size() - 1).path);
         for (IslandCapturePreview.Field field : page.fields) {
             int index = IslandRulePaths.all().indexOf(field.path);
-            if (index <= previous || !IslandRulePaths.isRuntimeAllowed(field.path)) return false;
+            if (index <= previous || !IslandRulePaths.isRuntimeAllowed(field.path)
+                    || !page.notificationType.paths.contains(field.path.path)) return false;
             previous = index;
         }
+        notificationType = page.notificationType;
+        complete = page.nextOffset == -1;
         fields.addAll(page.fields);
         return true;
     }
@@ -76,7 +83,14 @@ final class IslandCaptureEditor {
         return true;
     }
 
-    void clear() { selected.clear(); fields.clear(); }
+    IslandNotificationType notificationType() { return complete ? notificationType : null; }
+
+    void clear() {
+        selected.clear();
+        fields.clear();
+        notificationType = null;
+        complete = false;
+    }
 
     String preview() {
         if (selected.isEmpty()) return "";
@@ -97,7 +111,8 @@ final class IslandCaptureEditor {
     }
 
     Candidate candidate(String packageName, long timestamp) {
-        Candidate proposal = candidate(packageName, selected, timestamp);
+        if (!complete) return null;
+        Candidate proposal = candidate(packageName, selected, timestamp, notificationType);
         return proposal != null && new IslandRuleImportValidator().validate(proposal.bytes(), null).canApprove(false)
                 ? proposal : null;
     }
@@ -169,6 +184,11 @@ final class IslandCaptureEditor {
     }
 
     static Candidate candidate(String packageName, List<IslandRulePaths.Entry> paths, long timestamp) {
+        return candidate(packageName, paths, timestamp, null);
+    }
+
+    static Candidate candidate(String packageName, List<IslandRulePaths.Entry> paths, long timestamp,
+            IslandNotificationType notificationType) {
         if (!IslandCaptureRuntime.validPackage(packageName) || packageName.indexOf('.') < 0
                 || paths.isEmpty() || paths.size() > MAX_SELECTION || paths.get(0) == null) return null;
         String group = paths.get(0).templateGroup;
@@ -176,7 +196,8 @@ final class IslandCaptureEditor {
         StringBuilder binding = new StringBuilder();
         StringBuilder order = new StringBuilder();
         for (IslandRulePaths.Entry path : paths) {
-            if (!IslandRulePaths.isRuntimeAllowed(path) || !seen.add(path)) return null;
+            if (!IslandRulePaths.isRuntimeAllowed(path) || !seen.add(path)
+                    || notificationType != null && !notificationType.paths.contains(path.path)) return null;
             if (!group.equals(path.templateGroup)) group = IslandRulePaths.MIXED_TEMPLATE;
             String ref = "field" + seen.size();
             if (seen.size() > 1) { binding.append(','); order.append(','); }
@@ -184,10 +205,12 @@ final class IslandCaptureEditor {
             binding.append("{\"id\":\"").append(ref).append("\",\"path\":\"").append(path.path).append("\"}");
             order.append("{\"slot\":\"extra\",\"ref\":\"").append(ref).append("\"}");
         }
-        String json = "{\"ruleVersion\":1,\"meta\":{\"packageName\":\"" + packageName
+        String type = notificationType == null ? "" : ",\"notificationType\":"
+                + IslandExportJson.write(notificationType.json(), IslandRuleCodec.MAX_UTF8_BYTES);
+        String json = "{\"ruleVersion\":" + IslandRule.CURRENT_VERSION + ",\"meta\":{\"packageName\":\"" + packageName
                 + "\",\"templateType\":\"" + group + "\",\"ruleAuthor\":\"FocusRestore\",\"ruleDescription\":\"\",\"createdAt\":\""
                 + Instant.ofEpochMilli(timestamp) + "\"},\"match\":{\"all\":[{\"field\":\"packageName\",\"op\":\"equals\",\"value\":\""
-                + packageName + "\"}]},\"extract\":[" + binding + "],\"display\":{\"order\":[" + order
+                + packageName + "\"}]" + type + "},\"extract\":[" + binding + "],\"display\":{\"order\":[" + order
                 + "],\"separator\":\"" + SEPARATOR + "\"}}";
         return new Candidate(json.getBytes(StandardCharsets.UTF_8), packageName, paths);
     }

@@ -306,7 +306,7 @@ final class IslandCaptureRuntime {
         if (baseline < 0 || !previewUsable(connection, expected, handle, preview)) return 0;
         PreviewTicket source = previewTicket;
         IslandCaptureEditor.Candidate candidate = IslandCaptureEditor.candidate(
-                source.record.summary.packageName, paths, createdAt);
+                source.record.summary.packageName, paths, createdAt, source.record.notificationType);
         if (candidate == null || !candidate.digest.equals(digest) || !source.record.containsPaths(paths)
                 || !previewUsable(connection, expected, handle, preview)) return 0;
         saveTicket = new SaveTicket(++nextSaveTicket, source, digest, baseline);
