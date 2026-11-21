@@ -228,7 +228,7 @@ final class IslandRuleManagerUi {
     }
 
     enum DisplayOrder {
-        SAVED("正文最近保存"), APP("应用名"), STATE("启停状态");
+        SAVED("最近保存"), APP("应用名"), STATE("启停状态");
         final String label;
         DisplayOrder(String label) { this.label = label; }
     }
